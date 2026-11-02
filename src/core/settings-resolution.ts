@@ -207,6 +207,9 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			mode: appearance.mode ?? factoryAppearance.mode,
 			background: appearance.background ?? factoryAppearance.background,
 			fontFamily: appearance.fontFamily ?? factoryAppearance.fontFamily,
+			interfaceFontFamily: appearance.interfaceFontFamily ?? factoryAppearance.interfaceFontFamily,
+			cornerRadius: appearance.cornerRadius ?? factoryAppearance.cornerRadius,
+			contrast: appearance.contrast ?? factoryAppearance.contrast,
 			proseFontSize: appearance.proseFontSize ?? factoryAppearance.proseFontSize,
 			sessionNameSerif: appearance.sessionNameSerif ?? factoryAppearance.sessionNameSerif,
 			mdRendering: {

@@ -73,7 +73,7 @@ export function SettingsRow({
 	return (
 		<div data-testid={testid} className={cn("flex items-center justify-between gap-4 py-1", dimmed && "opacity-40")}>
 			<span className="min-w-0">
-				<span className="block font-prose text-(length:--lh-prose-size)">{label}</span>
+				<span className="block font-ui text-(length:--lh-prose-size)">{label}</span>
 				{hint && <span className="block text-xs text-muted-foreground/70">{hint}</span>}
 			</span>
 			{children}
@@ -211,6 +211,7 @@ export function CommitInput({
 	ariaLabel,
 	testid,
 	type = "text",
+	min, max, step,
 }: {
 	/** "" = unset (the factory default). Mirrors the STORED record —
 	 *  after a clamped/normalized commit this flows back and the field
@@ -222,6 +223,9 @@ export function CommitInput({
 	ariaLabel: string;
 	testid?: string;
 	type?: "text" | "number";
+	min?: number;
+	max?: number;
+	step?: number | "any";
 }) {
 	// The draft exists only while editing; a blur shows the record's value
 	// again — commit-on-blur/Enter (owner ruling), the field honest about
@@ -231,6 +235,7 @@ export function CommitInput({
 	return (
 		<input
 			type={type}
+			min={min} max={max} step={step}
 			value={editing ? draft : value}
 			placeholder={placeholder}
 			aria-label={ariaLabel}

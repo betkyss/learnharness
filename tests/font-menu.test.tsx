@@ -26,11 +26,11 @@ describe("fontMenuResults — the DEFAULT row is a candidate, never a ghost pick
 		assert.deepEqual(fontMenuResults("", families), [null, "Arial", "CMU Serif", "Georgia", "Helvetica Neue", "Menlo"]);
 	});
 
-	it("the default row matches its own identity (source/sans/default), not everything", () => {
+	it("the default row matches its own identity (system/default), not everything", () => {
 		assert.deepEqual(fontMenuResults("georgia", families), ["Georgia"]);
 		assert.deepEqual(fontMenuResults("menlo", families), ["Menlo"]);
 		// the default row is reachable by search…
-		assert.deepEqual(fontMenuResults("source", families)[0], null);
+		assert.deepEqual(fontMenuResults("system", families)[0], null);
 		assert.ok(fontMenuResults("default", families).includes(null));
 		// …and drops out of unrelated queries
 		assert.ok(!fontMenuResults("georgia", families).includes(null));
@@ -51,6 +51,12 @@ describe("composeFontFamily — null/blank = the factory family, otherwise verba
 	it("a family commits verbatim (trimmed)", () => {
 		assert.equal(composeFontFamily(undefined, " Georgia ").fontFamily, "Georgia");
 	});
+	it("interface-font edits preserve reading font and every other appearance field", () => {
+		const before = { fontFamily: "Georgia", cornerRadius: 0, contrast: "high" as const, mdRendering: { headingWeight: 900 } };
+		assert.deepEqual(composeFontFamily(before, " Arial ", "interfaceFontFamily"), { ...before, interfaceFontFamily: "Arial" });
+		assert.deepEqual(composeFontFamily(before, null, "interfaceFontFamily"), { ...before, interfaceFontFamily: null });
+	});
+
 	it("the rest of the section rides along", () => {
 		const next = composeFontFamily({ background: "#101010" }, "Menlo");
 		assert.equal(next.background, "#101010");
@@ -165,7 +171,7 @@ describe("customFamilyFor — the single-field custom escape (2026-09-26)", () =
 	it("a matching family is the better pick — no action row", () => {
 		assert.equal(customFamilyFor("georgia", families), null);
 		// the default row matches too — "source"/"sans"/"default" queries pick it
-		assert.equal(customFamilyFor("source", families), null);
+		assert.equal(customFamilyFor("system", families), null);
 	});
 
 	it("an empty query is never a custom pick", () => {

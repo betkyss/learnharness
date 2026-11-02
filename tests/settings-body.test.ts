@@ -115,6 +115,9 @@ describe("parseAppearanceSettingsBody", () => {
 			mode: "light",
 			background: "#ffffff",
 			fontFamily: "Some Font",
+			interfaceFontFamily: "Arial",
+			cornerRadius: 0,
+			contrast: "high",
 			proseFontSize: 20,
 			sessionNameSerif: false,
 			mdRendering: { headingWeight: 700, boldColor: "#ff8800", italicColor: null },
@@ -124,6 +127,9 @@ describe("parseAppearanceSettingsBody", () => {
 			mode: "light",
 			background: "#ffffff",
 			fontFamily: "Some Font",
+			interfaceFontFamily: "Arial",
+			cornerRadius: 0,
+			contrast: "high",
 			proseFontSize: 20,
 			sessionNameSerif: false,
 			mdRendering: { headingWeight: 700, boldColor: "#ff8800", italicColor: null },
@@ -137,6 +143,9 @@ describe("parseAppearanceSettingsBody", () => {
 			{ background: 42 },
 			{ fontFamily: "" },
 			{ fontFamily: 12 },
+			{ interfaceFontFamily: " " }, { interfaceFontFamily: 12 },
+			{ cornerRadius: -1 }, { cornerRadius: 17 }, { cornerRadius: null }, { cornerRadius: "8" },
+			{ cornerRadius: NaN }, { cornerRadius: Infinity }, { contrast: "High" }, { contrast: null },
 			{ proseFontSize: 30 },
 			{ proseFontSize: 64.5 },
 			{ sessionNameSerif: 1 },
@@ -154,6 +163,13 @@ describe("parseAppearanceSettingsBody", () => {
 		assert.ok(parseAppearanceSettingsBody({ background: "#abc" }));
 		// null = "the mode's default" — explicit, valid
 		assert.ok(parseAppearanceSettingsBody({ background: null, fontFamily: null }));
+	});
+
+	it("accepts radius boundaries, fractional pixels and a system-font reset", () => {
+		for (const cornerRadius of [0, 2.5, 16]) {
+			assert.deepEqual(parseAppearanceSettingsBody({ cornerRadius, interfaceFontFamily: null, contrast: "normal" }),
+				{ ok: true, settings: { cornerRadius, interfaceFontFamily: null, contrast: "normal" } });
+		}
 	});
 
 	it("rejects non-object bodies and non-object mdRendering", () => {

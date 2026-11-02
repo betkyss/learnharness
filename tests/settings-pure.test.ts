@@ -20,7 +20,7 @@ import {
 import { nextOverrides } from "../components/settings/keyboard-section.tsx";
 import { classifyKeys, keyStatusLine, type ProviderKeyInfo } from "../components/settings/keys-section.tsx";
 import type { AgentSettings, AuthKeyStatus, ModelsSettings } from "../src/core";
-import { slotsConfigured } from "../src/core";
+import { resolveSettings, slotsConfigured } from "../src/core";
 import { setupStage } from "../components/setup-dialog.tsx";
 
 describe("resolveAppearance — delta over factory", () => {
@@ -31,8 +31,8 @@ describe("resolveAppearance — delta over factory", () => {
 		assert.equal(a.background, null);
 		assert.equal(a.fontFamily, null);
 		assert.equal(a.proseFontSize, 16);
-		assert.equal(a.sessionNameSerif, true);
-		assert.deepEqual(a.mdRendering, { headingWeight: 900, boldColor: null, italicColor: null });
+		assert.equal(a.sessionNameSerif, false);
+		assert.deepEqual(a.mdRendering, { headingWeight: 600, boldColor: null, italicColor: null });
 	});
 
 	it("explicit deltas win field-by-field", () => {
@@ -43,30 +43,45 @@ describe("resolveAppearance — delta over factory", () => {
 	});
 });
 
-describe("derivedPalette — the dark curve keeps today's relationships", () => {
-	it("the factory background reproduces today's palette EXACTLY", () => {
-		assert.deepEqual(derivedPalette("#141414"), {
-			"--background": "#141414",
-			"--card": "#1c1c1c",
-			"--popover": "#1c1c1c",
-			"--secondary": "#1c1c1c",
-			"--muted": "#1c1c1c",
-			"--accent": "#2a2a2a",
-			"--border": "#434343",
-			"--input": "#434343",
-			"--primary-foreground": "#141414",
+describe("appearance compatibility and runtime reset", () => {
+	it("both resolvers agree on legacy and new overrides", () => {
+		for (const delta of [undefined, {}, { fontFamily: "Source Sans 3", sessionNameSerif: true, mdRendering: { headingWeight: 900 } },
+			{ interfaceFontFamily: "Arial", cornerRadius: 0, contrast: "high" as const }]) {
+			assert.deepEqual(resolveAppearance(delta), resolveSettings({ version: 1, appearance: delta }).appearance);
+		}
+	});
+	it("zero radius, high contrast and independent fonts apply, then all overrides clear", () => {
+		const vars = appearanceVars(resolveAppearance({ interfaceFontFamily: "Arial", fontFamily: "Georgia", cornerRadius: 0, contrast: "high" }));
+		assert.equal(vars["--radius"], "0px");
+		assert.equal(vars["--border"], "rgb(255 255 255 / 20%)");
+		assert.equal(vars["--input"], vars["--border"]);
+		assert.equal(vars["--muted-foreground"], "#d4d4d8");
+		assert.equal(vars["--font-ui"], '"Arial", ui-sans-serif, system-ui, sans-serif');
+		assert.equal(vars["--font-prose"], '"Georgia", ui-sans-serif, system-ui, sans-serif');
+		const stale = staleVarNames(Object.keys(vars), appearanceVars(resolveAppearance(undefined)));
+		for (const key of ["--radius", "--border", "--input", "--muted-foreground", "--font-ui", "--font-prose"]) assert.ok(stale.includes(key), key);
+	});
+	it("bundled families resolve case-insensitively", () => {
+		assert.match(appearanceVars(resolveAppearance({ fontFamily: "source sans 3" }))["--font-prose"]!, /var\(--font-sans3\)/);
+	});
+	it("unknown and CSS-special family names remain a single family with a system fallback", () => {
+		const vars = appearanceVars(resolveAppearance({ interfaceFontFamily: 'Unknown "Font"' }));
+		assert.equal(vars["--font-ui"], '\"Unknown \\\"Font\\\"\", ui-sans-serif, system-ui, sans-serif');
+	});
+});
+
+describe("derivedPalette — neutral surfaces with channel-specific offsets", () => {
+	it("black reproduces the approved factory palette", () => {
+		assert.deepEqual(derivedPalette("#000000"), {
+			"--background": "#000000", "--sidebar": "#09090b",
+			"--card": "#18181b", "--popover": "#18181b", "--secondary": "#18181b", "--muted": "#18181b",
+			"--accent": "#27272a", "--primary-foreground": "#000000",
 		});
 	});
-
-	it("an off-factory background shifts every surface with it (clamped at 255)", () => {
-		const p = derivedPalette("#f0f0f0");
-		assert.equal(p["--background"], "#f0f0f0");
-		assert.equal(p["--card"], "#f8f8f8"); // 240 + 8 per channel
-		assert.equal(p["--border"], "#ffffff", "240 + 47 clamps to 255 on every channel");
-	});
-
-	it("3-digit hex expands", () => {
-		assert.equal(derivedPalette("#abc")["--card"], "#b2c3d4"); // aa bb cc each +8
+	it("adds each RGB offset and clamps at 255", () => {
+		assert.equal(derivedPalette("#f0f0f0")["--card"], "#ffffff");
+		assert.equal(derivedPalette("#f0f0f0")["--sidebar"], "#f9f9fb");
+		assert.equal(derivedPalette("#abc")["--card"], "#c2d3e7");
 	});
 });
 
@@ -81,9 +96,9 @@ describe("appearanceVars — the mapping the provider applies", () => {
 	it("factory appearance: only the always-applied tokens move", () => {
 		const vars = appearanceVars(resolveAppearance(undefined));
 		assert.equal(vars["--lh-prose-size"], "16px");
-		assert.equal(vars["--lh-heading-weight"], "900");
+		assert.equal(vars["--lh-heading-weight"], "600");
 		assert.equal(vars["--font-prose"], undefined, "no font override at factory");
-		assert.equal(vars["--font-title"], undefined, "CMU stays");
+		assert.equal(vars["--font-title"], undefined, "system sans stays");
 		assert.equal(vars["--background"], undefined, "factory palette untouched");
 		assert.equal(vars["--lh-ink-strong"], undefined, "default ink");
 	});
@@ -99,18 +114,18 @@ describe("appearanceVars — the mapping the provider applies", () => {
 			}),
 		);
 		assert.equal(vars["--background"], "#101820");
-		assert.equal(vars["--card"], "#182028", "raised +8 per channel: 10→18, 18→20, 20→28");
-		assert.equal(vars["--font-prose"], `"Georgia", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`);
+		assert.equal(vars["--card"], "#28303b");
+		assert.equal(vars["--font-prose"], `"Georgia", ui-sans-serif, system-ui, sans-serif`);
 		assert.equal(vars["--lh-prose-size"], "18px");
-		assert.equal(vars["--font-title"], "var(--font-prose)", "serif off → titles follow the prose font");
+		assert.equal(vars["--font-title"], undefined, "serif off keeps the default title family");
 		assert.equal(vars["--lh-heading-weight"], "700");
 		assert.equal(vars["--lh-ink-strong"], "#ff0000");
 		assert.equal(vars["--lh-ink-italic"], "#00ff00");
 	});
 
-	it("sessionNameSerif false alone: titles move, nothing else does", () => {
-		const vars = appearanceVars(resolveAppearance({ sessionNameSerif: false }));
-		assert.equal(vars["--font-title"], "var(--font-prose)");
+	it("explicit serif titles preserve the legacy family", () => {
+		const vars = appearanceVars(resolveAppearance({ sessionNameSerif: true }));
+		assert.equal(vars["--font-title"], '"lh-cmu", serif');
 		assert.equal(Object.keys(vars).length, 4, "chat-width, prose-size, heading-weight, font-title only");
 	});
 });
@@ -121,7 +136,7 @@ describe("staleVarNames — the removal half of application (owner repro: resets
 			resolveAppearance({
 				background: "#101820",
 				fontFamily: "Georgia",
-				sessionNameSerif: false,
+				sessionNameSerif: true,
 				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
 			}),
 		);
@@ -130,7 +145,7 @@ describe("staleVarNames — the removal half of application (owner repro: resets
 		const stale = staleVarNames(applied, factory);
 		assert.ok(stale.includes("--background"));
 		assert.ok(stale.includes("--font-prose"));
-		assert.ok(stale.includes("--font-title"), "serif toggle back ON must clear the title override");
+		assert.ok(stale.includes("--font-title"), "serif toggle back OFF must clear the title override");
 		assert.ok(stale.includes("--lh-ink-strong"));
 		assert.ok(stale.includes("--lh-ink-italic"));
 		assert.ok(!stale.includes("--lh-prose-size"), "always-applied tokens never go stale");

@@ -30,6 +30,9 @@ export function resolveAppearance(delta: AppearanceSettings | undefined) {
 		mode: delta?.mode ?? f.mode,
 		background: delta?.background ?? f.background,
 		fontFamily: delta?.fontFamily ?? f.fontFamily,
+		interfaceFontFamily: delta?.interfaceFontFamily ?? f.interfaceFontFamily,
+		cornerRadius: delta?.cornerRadius ?? f.cornerRadius,
+		contrast: delta?.contrast ?? f.contrast,
 		proseFontSize: delta?.proseFontSize ?? f.proseFontSize,
 		sessionNameSerif: delta?.sessionNameSerif ?? f.sessionNameSerif,
 		mdRendering: {
@@ -40,57 +43,52 @@ export function resolveAppearance(delta: AppearanceSettings | undefined) {
 	};
 }
 
-/** One channel clamped on the dark curve: additive offsets matching today's
- *  hand-picked palette (#141414 → card #1c1c1c (+8) → accent #2a2a2a (+22)
- *  → border #434343 (+47)) — the "per-mode derivation in code" the schema
- *  promises, as the thinnest curve that keeps the palette's relationships. */
-function raise(hex: string, add: number): string {
+/** RGB offsets preserve the approved surface relationships for custom backgrounds. */
+function raise(hex: string, offsets: readonly number[]): string {
 	const n = hex.length === 4
 		? hex.slice(1).split("").map((c) => parseInt(c + c, 16))
 		: [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
-	return `#${n.map((c) => Math.min(255, c + add).toString(16).padStart(2, "0")).join("")}`;
+	return `#${n.map((c, i) => Math.min(255, c + (offsets[i] ?? 0)).toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** The derived palette a chosen background implies (dark curve): background
- *  itself, the raised surfaces (card/popover/secondary/muted, +8), the
- *  accent (+22), the edges (border/input, +47), and primary-foreground
- *  (the inverted text on primary = the background's own color, as today). */
 export function derivedPalette(background: string): Record<string, string> {
-	const card = raise(background, 8);
-	const accent = raise(background, 22);
-	const border = raise(background, 47);
+	const card = raise(background, [24, 24, 27]);
 	return {
 		"--background": background,
+		"--sidebar": raise(background, [9, 9, 11]),
 		"--card": card,
 		"--popover": card,
 		"--secondary": card,
 		"--muted": card,
-		"--accent": accent,
-		"--border": border,
-		"--input": border,
+		"--accent": raise(background, [39, 39, 42]),
 		"--primary-foreground": background,
 	};
 }
 
-/** THE mapping: resolved appearance → the CSS variables to set on <html>.
- *  Absent entries = leave the factory stylesheet value in place. Pure —
- *  exported for tests. */
+/** Escape a family as one CSS string, retaining a system fallback for unknown fonts. */
+function fontStack(family: string): string {
+	const quoted = family.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\n\r\f]/g, " ");
+	// Keep explicitly saved bundled families available after the default changes.
+	const normalized = family.toLowerCase();
+	const bundled = normalized === "source sans 3" ? "var(--font-sans3), " : normalized === "cmu serif" ? '"lh-cmu", ' : "";
+	return `"${quoted}", ${bundled}ui-sans-serif, system-ui, sans-serif`;
+}
+
+/** Only overrides are written inline; reset removes them and restores stylesheet defaults. */
 export function appearanceVars(a: ReturnType<typeof resolveAppearance>): Record<string, string> {
 	const vars: Record<string, string> = {};
 	vars["--lh-chat-max-width"] = { comfortable: "46rem", wide: "72rem", full: "100%" }[a.chatWidth];
 	if (a.background !== null) Object.assign(vars, derivedPalette(a.background));
-	if (a.fontFamily !== null) {
-		vars["--font-prose"] = `"${a.fontFamily}", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`;
+	if (a.fontFamily !== null) vars["--font-prose"] = fontStack(a.fontFamily);
+	if (a.interfaceFontFamily !== null) vars["--font-ui"] = fontStack(a.interfaceFontFamily);
+	if (a.cornerRadius !== FACTORY_SETTINGS.appearance.cornerRadius) vars["--radius"] = `${a.cornerRadius}px`;
+	if (a.contrast === "high") {
+		vars["--border"] = "rgb(255 255 255 / 20%)";
+		vars["--input"] = "rgb(255 255 255 / 20%)";
+		vars["--muted-foreground"] = "#d4d4d8";
 	}
-	// The ONE documented reading-size variable (typography round 4): prose,
-	// inputs, and session titles all read it, so one setProperty moves them.
 	vars["--lh-prose-size"] = `${a.proseFontSize}px`;
-	// Session names: CMU Serif by default; the toggle swaps the title font
-	// to the prose family — covers chat.tsx + new-session.tsx titles with
-	// zero component edits (they use the .font-title utility).
-	if (!a.sessionNameSerif) vars["--font-title"] = "var(--font-prose)";
-	// Markdown rendering: heading weight + the emphasis inks (the vars
-	// were built "ready for the settings UI").
+	if (a.sessionNameSerif) vars["--font-title"] = '"lh-cmu", serif';
 	vars["--lh-heading-weight"] = String(a.mdRendering.headingWeight);
 	if (a.mdRendering.boldColor !== null) vars["--lh-ink-strong"] = a.mdRendering.boldColor;
 	if (a.mdRendering.italicColor !== null) vars["--lh-ink-italic"] = a.mdRendering.italicColor;

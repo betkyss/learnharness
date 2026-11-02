@@ -23,7 +23,7 @@
  * it). In a plain dev browser the API is absent → a small curated list
  * + a footer that says exactly that — never a fabricated system list.
  * The custom-family input inside the menu is the manual escape path.
- * Empty/unset keeps meaning Source Sans 3.
+ * Empty/unset selects the system sans-serif.
  *
  * Emphasis inks (same wave): the factory tokens default to the regular
  * text color now (globals.css); the rows' empty-state labels say "same
@@ -45,7 +45,7 @@ import { CommitInput, SettingsMenuTrigger, SettingsRow, ThinSelect, Toggle } fro
 
 /** The factory reading family — the DEFAULT row's identity (unset =
  *  this). Exported for tests. */
-export const DEFAULT_READING_FONT = "Source Sans 3";
+export const DEFAULT_READING_FONT = "System";
 
 /** The dev-browser fallback list (queryLocalFonts is absent there):
  *  the app's own knowns plus a handful of ubiquitous macOS families,
@@ -60,6 +60,7 @@ export const CURATED_FALLBACK_FONTS: readonly string[] = [
 	"Helvetica",
 	"Helvetica Neue",
 	"Menlo",
+	"Source Sans 3",
 	"Times New Roman",
 	"Trebuchet MS",
 	"Verdana",
@@ -78,28 +79,24 @@ function localFontsApi(): LocalFontsApi | null {
 }
 
 /** Compose the reading-font pick: null (or blank) = the factory
- *  Source Sans 3; otherwise the family verbatim (trimmed — the
+ *  system sans-serif; otherwise the family verbatim (trimmed — the
  *  sanitizer trims again server-side). Pure — exported for tests. */
 export function composeFontFamily(
 	appearance: AppearanceSettings | undefined,
 	family: string | null,
+	field: "fontFamily" | "interfaceFontFamily" = "fontFamily",
 ): AppearanceSettings {
 	const value = family?.trim() ?? "";
-	return { ...appearance, fontFamily: value === "" ? null : value };
+	return { ...appearance, [field]: value === "" ? null : value };
 }
 
-export function AppearanceSection({
-	appearance,
-	onSectionChange,
-}: {
-	/** The record's appearance delta (absent = factory). */
-	appearance: AppearanceSettings | undefined;
-	/** PUT the whole appearance section; the page re-applies on success. */
-	onSectionChange: (next: AppearanceSettings) => void;
+/** Shared installed-font picker for interface and reading text. */
+function FontPicker({ family, label, testid, onPick }: {
+	family: string | null;
+	label: string;
+	testid: string;
+	onPick: (family: string | null) => void;
 }) {
-	const { appearance: resolved } = useAppearance();
-	const md = appearance?.mdRendering;
-
 	// The font dropdown's open state + its enumeration cache. undefined =
 	// not enumerated yet (desktop: click-bound queryLocalFonts pending);
 	// null = enumeration UNAVAILABLE (the API is absent in a plain
@@ -138,7 +135,7 @@ export function AppearanceSection({
 								setLocalFonts(null);
 								setEnumEmpty(true);
 							} else {
-								setLocalFonts(families);
+								setLocalFonts([...new Set([...families, "Source Sans 3", "CMU Serif"])].sort((a, b) => a.localeCompare(b)));
 							}
 						})
 						.catch(() => {
@@ -153,7 +150,7 @@ export function AppearanceSection({
 
 	const pickFont = (family: string | null) => {
 		setFontMenuOpen(false);
-		onSectionChange(composeFontFamily(appearance, family));
+		onPick(family);
 	};
 
 	// The dropdown contract (agent-section's, mirrored): any click
@@ -185,6 +182,72 @@ export function AppearanceSection({
 	}, [fontMenuOpen]);
 
 	return (
+		<span ref={fontMenuOpen ? menuAnchorRef : undefined} className="relative flex items-center gap-2">
+			{/* The shared Agent/Appearance collapsed-menu trigger.
+			    The tooltip rides the CLOSED button ONLY
+			    (owner ruling 2026-09-26: never while
+			    the dropdown is out — it popped over the open
+			    menu when the wrap covered the whole anchor
+			    span). */}
+			{(() => {
+				const triggerButton = (
+					<SettingsMenuTrigger
+						value={family || DEFAULT_READING_FONT}
+						aria-label={label}
+						aria-expanded={fontMenuOpen}
+						data-testid={`${testid}-trigger`}
+						onClick={openFontMenu}
+						className="min-w-20 max-w-40"
+					/>
+				);
+				return fontMenuOpen ? (
+					triggerButton
+				) : (
+					<Hint label="Choose from your installed fonts" side="left">
+						{triggerButton}
+					</Hint>
+				);
+			})()}
+			{fontMenuOpen && (
+				<MenuShell
+					preferredSide="down"
+					anchorTestid={`${testid}-trigger`}
+					testid={`${testid}-menu`}
+					menuClass="flex w-[18rem] flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+				>
+					<FontMenuList
+						families={localFonts === undefined ? undefined : (localFonts ?? [...CURATED_FALLBACK_FONTS])}
+						effectiveFamily={family ?? null}
+						onPick={pickFont}
+						footer={
+							localFonts === undefined
+								? undefined
+								: localFonts === null
+									? enumEmpty
+										? "Common families — installed fonts could not be read"
+										: "Common families — your installed list needs the desktop app"
+									: "Installed and bundled fonts"
+						}
+					/>
+				</MenuShell>
+			)}
+		</span>
+	);
+}
+
+export function AppearanceSection({
+	appearance,
+	onSectionChange,
+}: {
+	/** The record's appearance delta (absent = factory). */
+	appearance: AppearanceSettings | undefined;
+	/** PUT the whole appearance section; the page re-applies on success. */
+	onSectionChange: (next: AppearanceSettings) => void;
+}) {
+	const { appearance: resolved } = useAppearance();
+	const md = appearance?.mdRendering;
+
+	return (
 		<>
 			<SettingsRow label="Chat width" testid="row-chat-width">
 				<ThinSelect
@@ -205,72 +268,43 @@ export function AppearanceSection({
 			</SettingsRow>
 			<SettingsRow
 				label="Background"
-				hint={`Empty = ${resolved.background ?? "#141414"}`}
+				hint="Empty = #000000"
 				testid="row-background"
 			>
 				<CommitInput
 					value={appearance?.background ?? ""}
-					placeholder="#141414"
+					placeholder="#000000"
 					ariaLabel="background hex"
 					testid="input-background"
 					onCommit={(v) => onSectionChange({ ...appearance, background: v === "" ? null : v })}
 				/>
 			</SettingsRow>
-			<SettingsRow
-				label="Reading font"
-				hint={`Empty = ${DEFAULT_READING_FONT}`}
-				testid="row-font"
-			>
-				<span ref={fontMenuOpen ? menuAnchorRef : undefined} className="relative flex items-center gap-2">
-					{/* The shared Agent/Appearance collapsed-menu trigger.
-					    The tooltip rides the CLOSED button ONLY
-					    (owner ruling 2026-09-26: never while
-					    the dropdown is out — it popped over the open
-					    menu when the wrap covered the whole anchor
-					    span). */}
-					{(() => {
-						const triggerButton = (
-							<SettingsMenuTrigger
-								value={appearance?.fontFamily || DEFAULT_READING_FONT}
-								aria-label="Reading font"
-								aria-expanded={fontMenuOpen}
-								data-testid="font-trigger"
-								onClick={openFontMenu}
-								className="min-w-20"
-							/>
-						);
-						return fontMenuOpen ? (
-							triggerButton
-						) : (
-							<Hint label="Choose from your installed fonts" side="left">
-								{triggerButton}
-							</Hint>
-						);
-					})()}
-					{fontMenuOpen && (
-						<MenuShell
-							preferredSide="down"
-							anchorTestid="font-trigger"
-							testid="font-menu"
-							menuClass="flex w-[18rem] flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
-						>
-							<FontMenuList
-								families={localFonts === undefined ? undefined : (localFonts ?? [...CURATED_FALLBACK_FONTS])}
-								effectiveFamily={appearance?.fontFamily ?? null}
-								onPick={pickFont}
-								footer={
-									localFonts === undefined
-										? undefined
-										: localFonts === null
-											? enumEmpty
-												? "Common families — installed fonts could not be read"
-												: "Common families — your installed list needs the desktop app"
-											: "Your installed fonts"
-								}
-							/>
-						</MenuShell>
-					)}
-				</span>
+			<SettingsRow label="Interface font" hint="Empty = System" testid="row-interface-font">
+				<FontPicker family={appearance?.interfaceFontFamily ?? null} label="Interface font" testid="interface-font"
+					onPick={(family) => onSectionChange(composeFontFamily(appearance, family, "interfaceFontFamily"))} />
+			</SettingsRow>
+			<SettingsRow label="Reading font" hint={`Empty = ${DEFAULT_READING_FONT}`} testid="row-font">
+				<FontPicker family={appearance?.fontFamily ?? null} label="Reading font" testid="font"
+					onPick={(family) => onSectionChange(composeFontFamily(appearance, family))} />
+			</SettingsRow>
+			<SettingsRow label="Corner radius" hint="0–16px; empty = 8px" testid="row-corner-radius">
+				<CommitInput type="number" min={0} max={16} step="any" value={String(appearance?.cornerRadius ?? "")} placeholder="8"
+					ariaLabel="Corner radius" testid="input-corner-radius"
+					onCommit={(v) => {
+						if (v === "") {
+							onSectionChange({ ...appearance, cornerRadius: undefined });
+							return;
+						}
+						const n = Number(v);
+						if (Number.isFinite(n)) onSectionChange({ ...appearance, cornerRadius: Math.min(16, Math.max(0, n)) });
+					}} />
+			</SettingsRow>
+			<SettingsRow label="Contrast" testid="row-contrast">
+				<ThinSelect value={appearance?.contrast ?? resolved.contrast} ariaLabel="Contrast" testid="select-contrast"
+					onChange={(value) => onSectionChange({ ...appearance, contrast: value as AppearanceSettings["contrast"] })}>
+					<option value="normal">Normal</option>
+					<option value="high">High</option>
+				</ThinSelect>
 			</SettingsRow>
 			<SettingsRow label="Reading font size" hint={`${resolved.proseFontSize}px`} testid="row-prose-size">
 				<CommitInput
@@ -295,7 +329,7 @@ export function AppearanceSection({
 			</SettingsRow>
 			<SettingsRow label="Session names in serif" testid="row-session-serif">
 				<Toggle
-					checked={appearance?.sessionNameSerif ?? true}
+					checked={appearance?.sessionNameSerif ?? resolved.sessionNameSerif}
 					label="session names serif"
 					onChange={(on) => onSectionChange({ ...appearance, sessionNameSerif: on })}
 				/>
@@ -304,7 +338,7 @@ export function AppearanceSection({
 				<CommitInput
 					type="number"
 					value={String(md?.headingWeight ?? "")}
-					placeholder="900"
+					placeholder="600"
 					ariaLabel="heading weight"
 					testid="input-heading-weight"
 					onCommit={(v) => {

@@ -390,12 +390,17 @@ export interface AppearanceSettings {
 	 *  null = the mode's default background. */
 	background?: string | null;
 	/** The main reading font (everything that is Source Sans 3 today), by
-	 *  name — user-chosen from installed fonts. null = Source Sans 3. */
+	 *  name — user-chosen from installed fonts. null = system sans-serif. */
 	fontFamily?: string | null;
+	/** Interface family for menus, buttons and sidebar; null = system sans-serif. */
+	interfaceFontFamily?: string | null;
+	/** Base control radius in px (0–16); other sizes derive from this. */
+	cornerRadius?: number;
+	contrast?: "normal" | "high";
 	/** Reading font size in px (12–24, default 16). Headings render as
 	 *  multiples of this, so one knob scales the document coherently. */
 	proseFontSize?: number;
-	/** Session names in CMU Serif (default true — today's look). */
+	/** Session names in CMU Serif (default false). */
 	sessionNameSerif?: boolean;
 	mdRendering?: MdRenderingSettings;
 }
@@ -496,6 +501,9 @@ export interface FactorySettings {
 		mode: "dark" | "light";
 		background: string | null;
 		fontFamily: string | null;
+		interfaceFontFamily: string | null;
+		cornerRadius: number;
+		contrast: "normal" | "high";
 		proseFontSize: number;
 		sessionNameSerif: boolean;
 		mdRendering: {
@@ -515,11 +523,14 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	appearance: {
 		chatWidth: "comfortable",
 		mode: "dark",
-		background: null, // the dark default (#141414) lives in the mode's derivation curve
-		fontFamily: null, // Source Sans 3
+		background: null, // the dark default (#000000) lives in the mode's derivation curve
+		fontFamily: null, // System
+		interfaceFontFamily: null,
+		cornerRadius: 8,
+		contrast: "normal",
 		proseFontSize: 16,
-		sessionNameSerif: true,
-		mdRendering: { headingWeight: 900, boldColor: null, italicColor: null },
+		sessionNameSerif: false,
+		mdRendering: { headingWeight: 600, boldColor: null, italicColor: null },
 	},
 	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096 },
 	compaction: { thresholdTokens: 150_000 },
@@ -743,9 +754,14 @@ function sanitizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
 	if (raw.chatWidth === "comfortable" || raw.chatWidth === "wide" || raw.chatWidth === "full") out.chatWidth = raw.chatWidth;
 	if (raw.mode === "dark" || raw.mode === "light") out.mode = raw.mode;
 	if (raw.background !== undefined) out.background = sanitizeHexOrNull(raw.background);
-	if (raw.fontFamily !== undefined) {
-		out.fontFamily = typeof raw.fontFamily === "string" && raw.fontFamily.trim() ? raw.fontFamily : null;
+	for (const field of ["fontFamily", "interfaceFontFamily"] as const) {
+		const value = raw[field];
+		if (value !== undefined) out[field] = typeof value === "string" && value.trim() ? value.trim() : null;
 	}
+	if (typeof raw.cornerRadius === "number" && Number.isFinite(raw.cornerRadius)) {
+		out.cornerRadius = clamp(raw.cornerRadius, 0, 16);
+	}
+	if (raw.contrast === "normal" || raw.contrast === "high") out.contrast = raw.contrast;
 	if (typeof raw.proseFontSize === "number" && Number.isFinite(raw.proseFontSize)) {
 		out.proseFontSize = clamp(Math.round(raw.proseFontSize), PROSE_FONT_MIN, PROSE_FONT_MAX);
 	}

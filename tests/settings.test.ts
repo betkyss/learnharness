@@ -30,10 +30,13 @@ describe("FACTORY_SETTINGS (the compiled factory layer)", () => {
 		assert.equal(a.chatWidth, "comfortable");
 		assert.equal(a.mode, "dark");
 		assert.equal(a.background, null); // the mode's own default, not a factory hex
-		assert.equal(a.fontFamily, null); // Source Sans 3
+		assert.equal(a.fontFamily, null); // System
+		assert.equal(a.interfaceFontFamily, null);
+		assert.equal(a.cornerRadius, 8);
+		assert.equal(a.contrast, "normal");
 		assert.equal(a.proseFontSize, 16);
-		assert.equal(a.sessionNameSerif, true);
-		assert.equal(a.mdRendering.headingWeight, 900);
+		assert.equal(a.sessionNameSerif, false);
+		assert.equal(a.mdRendering.headingWeight, 600);
 		assert.equal(a.mdRendering.boldColor, null); // white
 		assert.equal(a.mdRendering.italicColor, null);
 	});
@@ -60,6 +63,18 @@ describe("sanitizeUserSettings", () => {
 		}
 		for (const chatWidth of ["narrow", "", "Wide", 72, null, {}, true]) {
 			assert.deepEqual(sanitizeUserSettings({ appearance: { chatWidth } })?.appearance, {});
+		}
+	});
+
+	it("sanitizes interface fonts, contrast and radius without adding absent overrides", () => {
+		assert.deepEqual(sanitizeUserSettings({ appearance: {} })?.appearance, {});
+		assert.deepEqual(sanitizeUserSettings({ appearance: { interfaceFontFamily: " Arial ", cornerRadius: 30, contrast: "high" } })?.appearance,
+			{ interfaceFontFamily: "Arial", cornerRadius: 16, contrast: "high" });
+		assert.equal(sanitizeUserSettings({ appearance: { cornerRadius: -2 } })?.appearance?.cornerRadius, 0);
+		assert.equal(sanitizeUserSettings({ appearance: { cornerRadius: 2.5 } })?.appearance?.cornerRadius, 2.5);
+		for (const cornerRadius of [NaN, Infinity, null, "8", true]) {
+			assert.deepEqual(sanitizeUserSettings({ appearance: { cornerRadius, contrast: "invalid", interfaceFontFamily: 1 } })?.appearance,
+				{ interfaceFontFamily: null });
 		}
 	});
 

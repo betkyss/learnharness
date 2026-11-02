@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { after, afterEach, describe, it } from "node:test";
 import { SETTINGS_FILE } from "../config.ts";
+import { resolveSettings } from "../src/core/settings-resolution.ts";
 import { readSettings, writeSettings } from "../src/store/settings.ts";
 
 // Snapshot any pre-existing record; restore in after() so the worktree's
@@ -47,6 +48,22 @@ describe("the settings store", () => {
 		const out = readSettings();
 		assert.ok(out);
 		assert.deepEqual(out.graph, { enabled: false });
+	});
+
+	it("retains appearance overrides across reads and resolves reset without rewriting disk", () => {
+		const appearance = { interfaceFontFamily: "Arial", cornerRadius: 0, contrast: "high" as const,
+			fontFamily: "Source Sans 3", sessionNameSerif: true, mdRendering: { headingWeight: 900 } };
+		writeSettings({ version: 1, appearance });
+		assert.deepEqual(readSettings()?.appearance, appearance);
+		assert.equal(resolveSettings(readSettings()).appearance.cornerRadius, 0);
+		writeSettings({ version: 1, appearance: {} });
+		const before = fs.readFileSync(SETTINGS_FILE, "utf-8");
+		const resolved = resolveSettings(readSettings()).appearance;
+		assert.equal(resolved.interfaceFontFamily, null);
+		assert.equal(resolved.cornerRadius, 8);
+		assert.equal(resolved.contrast, "normal");
+		assert.equal(resolved.sessionNameSerif, false);
+		assert.equal(fs.readFileSync(SETTINGS_FILE, "utf-8"), before);
 	});
 
 	it("a chat section on disk is IGNORED — the field died with per-session models (owner, 2026-09-28)", () => {

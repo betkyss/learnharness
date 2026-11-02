@@ -243,11 +243,25 @@ export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<A
 		if (parsed.error) return { ok: false, error: parsed.error };
 		settings.background = parsed.color ?? null;
 	}
-	if (raw.fontFamily !== undefined) {
-		if (raw.fontFamily !== null && (typeof raw.fontFamily !== "string" || !raw.fontFamily.trim())) {
-			return { ok: false, error: "fontFamily must be a non-empty string or null" };
+	for (const field of ["fontFamily", "interfaceFontFamily"] as const) {
+		const value = raw[field];
+		if (value === undefined) continue;
+		if (value !== null && (typeof value !== "string" || !value.trim())) {
+			return { ok: false, error: `${field} must be a non-empty string or null` };
 		}
-		settings.fontFamily = raw.fontFamily as string | null;
+		settings[field] = typeof value === "string" ? value.trim() : null;
+	}
+	if (raw.cornerRadius !== undefined) {
+		if (typeof raw.cornerRadius !== "number" || !Number.isFinite(raw.cornerRadius) || raw.cornerRadius < 0 || raw.cornerRadius > 16) {
+			return { ok: false, error: "cornerRadius must be a number between 0 and 16" };
+		}
+		settings.cornerRadius = raw.cornerRadius;
+	}
+	if (raw.contrast !== undefined) {
+		if (raw.contrast !== "normal" && raw.contrast !== "high") {
+			return { ok: false, error: 'contrast must be "normal" or "high"' };
+		}
+		settings.contrast = raw.contrast;
 	}
 	if (raw.proseFontSize !== undefined) {
 		if (
