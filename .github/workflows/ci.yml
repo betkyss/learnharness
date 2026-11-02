@@ -30,6 +30,11 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Mermaid browser regression
+        run: |
+          chrome_path="$(command -v google-chrome || command -v chromium || true)"
+          test -n "$chrome_path" || { echo "Chrome executable not found" >&2; exit 1; }
+          LH_TEST_CHROME="$chrome_path" node scripts/smoke-mermaid.mjs
       - run: npm run lint
 
   standalone:

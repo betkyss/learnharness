@@ -10,7 +10,9 @@
  */
 
 import { createMermaidPlugin } from "@streamdown/mermaid";
+import mermaid from "mermaid";
 import type { MermaidConfig } from "mermaid";
+import { normalizeMermaidCallEdges } from "@/src/core";
 
 /** The chart's base font size (px) — mermaid sizes ALL text relative to
  *  this, so it's the number the display-width cap (md-blocks) divides by:
@@ -36,7 +38,21 @@ const plugin = createMermaidPlugin();
  *  mermaid caches rendered ids, and a repeated id across charts/renders
  *  returns the stale svg (the bug streamdown's own id minting avoids). */
 export async function renderMermaid(chart: string): Promise<string> {
+	const renderer = plugin.getMermaid(mermaidTheme);
+	let source = chart;
+	try {
+		await mermaid.parse(source);
+	} catch (error) {
+		// Match the actual unexpected token, not an occurrence in a label or
+		// Mermaid's list of expected tokens. No retry for unrelated failures.
+		const message = error instanceof Error ? error.message : String(error);
+		if (!/\bgot ['"]CALLBACKNAME['"]\s*$/.test(message)) throw error;
+		const normalized = normalizeMermaidCallEdges(chart);
+		if (normalized === chart) throw error;
+		await mermaid.parse(normalized);
+		source = normalized;
+	}
 	const id = `lh-mermaid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
-	const { svg } = await plugin.getMermaid(mermaidTheme).render(id, chart);
+	const { svg } = await renderer.render(id, source);
 	return svg;
 }
