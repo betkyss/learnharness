@@ -32,7 +32,7 @@ export type DraftPick = { id: string; name: string; statement: string };
  * server-side (per-session models, owner 2026-09-28).
  */
 
-const DOCK = "mx-auto w-full max-w-[46rem] px-4";
+const DOCK = "mx-auto w-full max-w-(--lh-chat-max-width) px-4";
 
 /**
  * Create, safely hand over the full opening text, then return a short

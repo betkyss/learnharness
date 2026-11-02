@@ -98,6 +98,18 @@ describe("parseAgentSettingsBody", () => {
 });
 
 describe("parseAppearanceSettingsBody", () => {
+	it("accepts the three chat widths and rejects invalid values", () => {
+		for (const chatWidth of ["comfortable", "wide", "full"]) {
+			assert.deepEqual(parseAppearanceSettingsBody({ chatWidth }), { ok: true, settings: { chatWidth } });
+		}
+		for (const chatWidth of ["narrow", "", "Wide", 72, null, {}, true]) {
+			const result = parseAppearanceSettingsBody({ chatWidth });
+			assert.equal(result.ok, false, JSON.stringify(chatWidth));
+			if (!result.ok) assert.match(result.error, /chatWidth/);
+		}
+		assert.deepEqual(parseAppearanceSettingsBody({}), { ok: true, settings: {} });
+	});
+
 	it("parses every field; hex-or-null colors; clamps happen at sanitize, rejects here", () => {
 		const r = parseAppearanceSettingsBody({
 			mode: "light",

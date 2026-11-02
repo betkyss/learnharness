@@ -186,6 +186,18 @@ export function AppearanceSection({
 
 	return (
 		<>
+			<SettingsRow label="Chat width" testid="row-chat-width">
+				<ThinSelect
+					value={appearance?.chatWidth ?? resolved.chatWidth}
+					ariaLabel="Chat width"
+					testid="select-chat-width"
+					onChange={(value) => onSectionChange({ ...appearance, chatWidth: value as AppearanceSettings["chatWidth"] })}
+				>
+					<option value="comfortable">Comfortable</option>
+					<option value="wide">Wide</option>
+					<option value="full">Full</option>
+				</ThinSelect>
+			</SettingsRow>
 			<SettingsRow label="Mode" hint="Coming soon" testid="row-mode" dimmed>
 				<ThinSelect value="dark" ariaLabel="mode" onChange={() => {}} testid="select-mode" disabled>
 					<option value="dark">Dark</option>

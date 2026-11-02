@@ -382,6 +382,8 @@ export interface MdRenderingSettings {
 
 /** Appearance settings — mode, colors, type, markdown emphasis. */
 export interface AppearanceSettings {
+	/** Shared transcript/composer width; absent = comfortable (46rem). */
+	chatWidth?: "comfortable" | "wide" | "full";
 	/** "dark" | "light" (default dark). */
 	mode?: "dark" | "light";
 	/** The one user-chosen color; everything else derives per-mode in code.
@@ -490,6 +492,7 @@ export interface FactorySettings {
 	general: Required<GeneralSettings>;
 	dictation: Required<DictationSettings>;
 	appearance: {
+		chatWidth: NonNullable<AppearanceSettings["chatWidth"]>;
 		mode: "dark" | "light";
 		background: string | null;
 		fontFamily: string | null;
@@ -510,6 +513,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	general: { autoUpdate: true },
 	dictation: { language: "en" },
 	appearance: {
+		chatWidth: "comfortable",
 		mode: "dark",
 		background: null, // the dark default (#141414) lives in the mode's derivation curve
 		fontFamily: null, // Source Sans 3
@@ -736,6 +740,7 @@ function sanitizeMdRendering(raw: unknown): MdRenderingSettings {
 
 function sanitizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
 	const out: AppearanceSettings = {};
+	if (raw.chatWidth === "comfortable" || raw.chatWidth === "wide" || raw.chatWidth === "full") out.chatWidth = raw.chatWidth;
 	if (raw.mode === "dark" || raw.mode === "light") out.mode = raw.mode;
 	if (raw.background !== undefined) out.background = sanitizeHexOrNull(raw.background);
 	if (raw.fontFamily !== undefined) {

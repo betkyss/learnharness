@@ -26,6 +26,7 @@ import { FACTORY_SETTINGS, type AppearanceSettings } from "@/src/core";
 export function resolveAppearance(delta: AppearanceSettings | undefined) {
 	const f = FACTORY_SETTINGS.appearance;
 	return {
+		chatWidth: delta?.chatWidth ?? f.chatWidth,
 		mode: delta?.mode ?? f.mode,
 		background: delta?.background ?? f.background,
 		fontFamily: delta?.fontFamily ?? f.fontFamily,
@@ -76,6 +77,7 @@ export function derivedPalette(background: string): Record<string, string> {
  *  exported for tests. */
 export function appearanceVars(a: ReturnType<typeof resolveAppearance>): Record<string, string> {
 	const vars: Record<string, string> = {};
+	vars["--lh-chat-max-width"] = { comfortable: "46rem", wide: "72rem", full: "100%" }[a.chatWidth];
 	if (a.background !== null) Object.assign(vars, derivedPalette(a.background));
 	if (a.fontFamily !== null) {
 		vars["--font-prose"] = `"${a.fontFamily}", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`;

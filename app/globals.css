@@ -30,6 +30,7 @@
 /* Palette (owner's hexes): main #141414, raised #1C1C1C, edges #434343.
    Mono chrome = JetBrains Mono; prose = Source Sans 3; titles = CMU Serif. */
 :root {
+	--lh-chat-max-width: 46rem;
 	color-scheme: dark;
 	--radius: 8px;
 	--background: #141414;

@@ -26,6 +26,7 @@ import { setupStage } from "../components/setup-dialog.tsx";
 describe("resolveAppearance — delta over factory", () => {
 	it("absent everything = the factory view", () => {
 		const a = resolveAppearance(undefined);
+		assert.equal(a.chatWidth, "comfortable");
 		assert.equal(a.mode, "dark");
 		assert.equal(a.background, null);
 		assert.equal(a.fontFamily, null);
@@ -70,6 +71,13 @@ describe("derivedPalette — the dark curve keeps today's relationships", () => 
 });
 
 describe("appearanceVars — the mapping the provider applies", () => {
+	it("maps every chat width to the shared maximum and resets to Comfortable", () => {
+		for (const [chatWidth, width] of [["comfortable", "46rem"], ["wide", "72rem"], ["full", "100%"]] as const) {
+			assert.equal(appearanceVars(resolveAppearance({ chatWidth }))["--lh-chat-max-width"], width);
+		}
+		assert.equal(appearanceVars(resolveAppearance(undefined))["--lh-chat-max-width"], "46rem");
+	});
+
 	it("factory appearance: only the always-applied tokens move", () => {
 		const vars = appearanceVars(resolveAppearance(undefined));
 		assert.equal(vars["--lh-prose-size"], "16px");
@@ -103,7 +111,7 @@ describe("appearanceVars — the mapping the provider applies", () => {
 	it("sessionNameSerif false alone: titles move, nothing else does", () => {
 		const vars = appearanceVars(resolveAppearance({ sessionNameSerif: false }));
 		assert.equal(vars["--font-title"], "var(--font-prose)");
-		assert.equal(Object.keys(vars).length, 3, "prose-size, heading-weight, font-title only");
+		assert.equal(Object.keys(vars).length, 4, "chat-width, prose-size, heading-weight, font-title only");
 	});
 });
 

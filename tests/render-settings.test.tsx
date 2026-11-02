@@ -275,6 +275,20 @@ describe("KeysSection (thin SSR)", () => {
 });
 
 describe("AppearanceSection (thin SSR)", () => {
+	it("offers Chat width with the default and each saved selection", () => {
+		for (const chatWidth of [undefined, "comfortable", "wide", "full"] as const) {
+			const html = renderToStaticMarkup(
+				<AppearanceSection appearance={chatWidth ? { chatWidth } : undefined} onSectionChange={() => {}} />,
+			);
+			assert.ok(html.includes("Chat width"));
+			assert.ok(tagOf(html, "select-chat-width").includes('aria-label="Chat width"'));
+			for (const [value, label] of [["comfortable", "Comfortable"], ["wide", "Wide"], ["full", "Full"]]) {
+				const selected = value === (chatWidth ?? "comfortable") ? ' selected=""' : "";
+				assert.ok(html.includes(`<option value="${value}"${selected}>${label}</option>`));
+			}
+		}
+	});
+
 	it("mode is rendered DISABLED — dark-only this wave, no lying control", () => {
 		const html = renderToStaticMarkup(<AppearanceSection appearance={undefined} onSectionChange={() => {}} />);
 		assert.ok(tagOf(html, "select-mode").includes("disabled"), "mode select disabled");

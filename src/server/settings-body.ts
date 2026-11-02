@@ -220,12 +220,18 @@ function parseHexOrNull(value: unknown, field: string): { color?: string | null;
 	return { color: value };
 }
 
-/** appearance: { mode?, background?, fontFamily?, proseFontSize?,
+/** appearance: { chatWidth?, mode?, background?, fontFamily?, proseFontSize?,
  *  sessionNameSerif?, mdRendering? } */
 export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<AppearanceSettings> {
 	const raw = asRecord(body);
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
 	const settings: AppearanceSettings = {};
+	if (raw.chatWidth !== undefined) {
+		if (raw.chatWidth !== "comfortable" && raw.chatWidth !== "wide" && raw.chatWidth !== "full") {
+			return { ok: false, error: 'chatWidth must be "comfortable", "wide", or "full"' };
+		}
+		settings.chatWidth = raw.chatWidth;
+	}
 	if (raw.mode !== undefined) {
 		if (raw.mode !== "dark" && raw.mode !== "light") {
 			return { ok: false, error: "mode must be \"dark\" or \"light\"" };

@@ -27,6 +27,7 @@ describe("FACTORY_SETTINGS (the compiled factory layer)", () => {
 		// with the message anchors (owner, 2026-10-13)
 		assert.deepEqual(FACTORY_SETTINGS.graph, { enabled: true, rendering: true, extractionChunkTokens: 4096 });
 		const a = FACTORY_SETTINGS.appearance;
+		assert.equal(a.chatWidth, "comfortable");
 		assert.equal(a.mode, "dark");
 		assert.equal(a.background, null); // the mode's own default, not a factory hex
 		assert.equal(a.fontFamily, null); // Source Sans 3
@@ -53,6 +54,15 @@ describe("isHexColor", () => {
 });
 
 describe("sanitizeUserSettings", () => {
+	it("keeps every chat width and drops invalid overrides", () => {
+		for (const chatWidth of ["comfortable", "wide", "full"]) {
+			assert.equal(sanitizeUserSettings({ appearance: { chatWidth } })?.appearance?.chatWidth, chatWidth);
+		}
+		for (const chatWidth of ["narrow", "", "Wide", 72, null, {}, true]) {
+			assert.deepEqual(sanitizeUserSettings({ appearance: { chatWidth } })?.appearance, {});
+		}
+	});
+
 	it("round-trips a fully valid record field-for-field", () => {
 		const record = {
 			version: 1,
