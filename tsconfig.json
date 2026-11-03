@@ -44,7 +44,6 @@
   "exclude": [
     "node_modules",
     "dist",
-    ".next",
-    "_bmad-output"
+    ".next"
   ]
 }
