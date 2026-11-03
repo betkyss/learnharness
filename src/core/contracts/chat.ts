@@ -1,3 +1,4 @@
+import type { ServiceTier, ServiceTierReport } from "../service-tier.ts";
 /**
  * Chat-session contracts — records, summaries, UI extension points
  *
@@ -78,6 +79,7 @@ export interface ChatSettings {
 	/** pi thinking level — must be in the chosen model's supported list
 	 *  (getSupportedThinkingLevels; enforced by the settings route). */
 	thinkingLevel?: ThinkingLevel;
+	serviceTier?: ServiceTier;
 }
 
 
@@ -118,6 +120,7 @@ export interface ExtractionRunUsage {
  * flattened to the fields we persist (undefined = provider didn't report;
  * renderers show absent, never zero). */
 export interface CallUsage {
+	serviceTier?: ServiceTierReport;
 	/** Pi-normalized fresh input tokens; cache buckets are disjoint. */
 	inputTokens: number | undefined;
 	outputTokens: number | undefined;

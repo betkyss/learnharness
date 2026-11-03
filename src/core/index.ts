@@ -88,3 +88,4 @@ export * from "./coverage.ts";
 // export share it. Pure, browser-safe.
 export * from "./session-markdown.ts";
 export * from "./mermaid-source.ts";
+export * from "./service-tier.ts";

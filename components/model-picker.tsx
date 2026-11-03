@@ -1,4 +1,6 @@
 "use client";
+import { inheritedServiceTier, serviceTierError, serviceTierLabel, tierField } from "@/src/core";
+import { ServiceTierMenu } from "@/components/settings/service-tier-menu";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatSettings, ModelCatalogEntry, ModelCatalogResponse, ModelsSettings, UserSettings } from "@/src/core";
@@ -43,7 +45,8 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// A successful read with no settings is a legacy session; undefined
 	// means no session record is known yet, not permission to inherit Strong.
 	const [session, setSession] = useState<{ settings?: ChatSettings }>();
-	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
+	const [open, setOpen] = useState<"model" | "thinking" | "speed" | null>(null);
+	const [speedNotice, setSpeedNotice] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 
@@ -92,6 +95,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		? session ? {
 				model: session.settings?.model ?? strong?.model,
 				thinkingLevel: session.settings?.thinkingLevel ?? strong?.thinkingLevel,
+				...tierField(inheritedServiceTier(session.settings, strong)),
 			} : undefined
 		: strong;
 	const effectiveId = override?.model?.id;
@@ -212,13 +216,17 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const apply = useCallback(
 		(provider: string, id: string, level: ThinkingLevel | undefined) => {
 			if (chatId) {
-				void saveChat({ model: { provider, id }, thinkingLevel: level });
+				const previous = session?.settings?.serviceTier;
+				const incompatible = serviceTierError({ provider, id }, previous);
+				setSpeedNotice(incompatible ? "Speed reset: the selected model does not support the previous mode." : null);
+				void saveChat({ model: { provider, id }, thinkingLevel: level, ...tierField(incompatible ? undefined : previous) });
 			} else {
 				// composeSlotModel's empty-string convention: no level = unset.
+				setSpeedNotice(serviceTierError({ provider, id }, models?.strong?.serviceTier) ? "Speed reset: the selected model does not support the previous mode." : null);
 				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));
 			}
 		},
-		[chatId, models, save, saveChat],
+		[chatId, models, session, save, saveChat],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the
@@ -266,7 +274,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// Stale-while-revalidate on manual open too (⌘K covers the keyboard
 	// path above): the cached list shows instantly, the fresh federation
 	// swaps in when it lands.
-	const openMenu = (kind: "model" | "thinking") => {
+	const openMenu = (kind: "model" | "thinking" | "speed") => {
 		setOpen((o) => (o === kind ? null : kind));
 		setError(null);
 		if (kind === "model") refresh();
@@ -326,6 +334,33 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				<span aria-hidden className="text-xs text-muted-foreground">▾</span>
 			</button>
 			</Hint>
+
+
+			{effectiveProvider === "chatgpt" && entry && <>
+				<button type="button" data-testid="stats-speed" aria-label="Requested speed" aria-expanded={open === "speed"}
+					onClick={() => openMenu("speed")}
+					className="flex items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur hover:bg-muted">
+					Speed: {override?.serviceTier ? serviceTierLabel(override.serviceTier) : "Inherit"}<span aria-hidden>▾</span>
+				</button>
+				{open === "speed" && <MenuShell anchorRef={containerRef} testid="speed-menu" preferredSide="up" menuClass="flex w-64 flex-col rounded-xl border bg-card p-2 text-xs shadow-xl">
+					<ServiceTierMenu provider={effectiveProvider} id={effectiveId!}
+						value={chatId ? session?.settings?.serviceTier : strong?.serviceTier}
+						inherited={chatId ? inheritedServiceTier({ model: override?.model }, strong) : undefined}
+						onPick={(tier) => {
+							setSpeedNotice(null);
+							if (chatId) {
+								const next = { ...session?.settings };
+								delete next.serviceTier;
+								void saveChat({ ...next, ...tierField(tier) });
+							} else {
+								const next = { ...strong }; delete next.serviceTier;
+								void save({ ...models, strong: { ...next, ...tierField(tier) } });
+							}
+						}} />
+					{error && <p role="alert" className="text-destructive">{error}</p>}
+				</MenuShell>}
+			</>}
+			{speedNotice && <span role="status" className="text-xs text-muted-foreground">{speedNotice}</span>}
 
 			{/* The shared dropdown body (extracted 2026-09-20): the agent
 			    settings' slot selects and the setup dialog use the exact same

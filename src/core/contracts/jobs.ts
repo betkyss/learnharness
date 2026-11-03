@@ -1,3 +1,4 @@
+import { serviceTierUsage, type ServiceTierReport } from "../service-tier.ts";
 /**
  * Sub-agent job contracts — the async ack-and-steer protocol
  *
@@ -76,6 +77,7 @@ export interface JobUsage {
  * LanguageModelUsage narrowed structurally (no runtime "ai" import: any
  * object with these fields folds, including the real thing and test fakes). */
 export interface UsageStepLike {
+	serviceTier?: ServiceTierReport;
 	inputTokens?: number | undefined;
 	inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number; cacheWrite1hTokens?: number } | undefined;
 	outputTokens?: number | undefined;
@@ -94,6 +96,7 @@ export function piUsageToStep(usage: {
 	reasoning?: number;
 }): UsageStepLike {
 	return {
+		...serviceTierUsage(usage),
 		inputTokens: usage.input,
 		outputTokens: usage.output,
 		inputTokenDetails: { cacheReadTokens: usage.cacheRead, cacheWriteTokens: usage.cacheWrite, cacheWrite1hTokens: usage.cacheWrite1h ?? 0 },
@@ -113,6 +116,7 @@ export function accumulateJobUsage(
 	const add = (a: number | undefined, b: number | undefined): number | undefined =>
 		a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
 	const call: CallUsage = {
+		...serviceTierUsage(step),
 		inputTokens: step.inputTokens,
 		outputTokens: step.outputTokens,
 		cacheReadTokens: step.inputTokenDetails?.cacheReadTokens,

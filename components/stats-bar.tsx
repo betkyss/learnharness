@@ -1,4 +1,5 @@
 "use client";
+import { serviceTierSummary } from "@/src/core";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CLAUDE_CODE_PROVIDER, sessionCacheHitRate, subscriptionLabels, subscriptionLabel, type cliContextWindowOf, type SessionPricing, type TurnUsage } from "@/src/core";
@@ -198,6 +199,7 @@ export function StatsBar({
 											<li key={`${turn.messageId}-${i}`} className="flex items-center justify-between gap-2">
 												<span className="truncate text-muted-foreground">
 													#{i + 1} · {prettyModel(turn.model, true)}
+													{turn.steps.map((step, index) => step.serviceTier && <span key={index} data-testid="turn-service-tier" className="block whitespace-normal">Step {index + 1}: {serviceTierSummary(step.serviceTier)}</span>)}
 												</span>
 												<span className="flex shrink-0 items-center gap-2 tabular-nums text-card-foreground">
 													<span className="text-muted-foreground">{turn.steps.length} steps</span>

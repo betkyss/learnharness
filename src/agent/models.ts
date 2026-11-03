@@ -1,3 +1,4 @@
+import { serviceTierError, type ServiceTier } from "../core/service-tier.ts";
 import {
 	clampThinkingLevel,
 	createModels,
@@ -111,6 +112,7 @@ export interface ResolvedModelSpec {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
+	serviceTier?: ServiceTier;
 }
 
 /** The first entry of the baked default order the model supports (owner,
@@ -130,6 +132,8 @@ function defaultThinkingLevel(model: Model<Api>): ThinkingLevel {
  *  keys seam reflects file-saved keys into env), so the engine never
  *  hardcodes OpenRouter's. */
 export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (() => boolean) = true, lifecycle?: ChatGPTDispatchLifecycle, cacheRetention?: () => CacheRetention | undefined): PiEngine {
+	const tierError = serviceTierError(spec, spec.serviceTier);
+	if (tierError) throw new Error(tierError);
 	const models: Models = piModels();
 	const nativeId = nativeSubscriptionId(spec.provider);
 	const registeredModel = spec.provider === "chatgpt" ? chatGPTModel(spec.id) : nativeId ? nativeSubscriptionModel(spec.provider, spec.id) : models.getModel(spec.provider, spec.id);
@@ -179,7 +183,7 @@ export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (
 				return current.streamSimple(permitImages(currentModel), context, { ...requestOptions, reasoning: currentLevel === "off" ? undefined : currentLevel });
 			}
 			const purpose = typeof background === "function" ? background : () => background;
-			const stream = spec.provider === "chatgpt" ? chatGPTStream(purpose, lifecycle) : nativeId ? nativeSubscriptionStream(models.getProvider(nativeId)!, purpose, lifecycle) : models.streamSimple.bind(models);
+			const stream = spec.provider === "chatgpt" ? chatGPTStream(purpose, lifecycle, spec.serviceTier) : nativeId ? nativeSubscriptionStream(models.getProvider(nativeId)!, purpose, lifecycle) : models.streamSimple.bind(models);
 			return stream(requestModel, context, requestOptions);
 		},
 	};
