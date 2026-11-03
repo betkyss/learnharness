@@ -1,4 +1,3 @@
-import { inheritedServiceTier, tierField, type ServiceTier } from "./service-tier.ts";
 /**
  * THE SETTINGS RESOLUTION LAYER (settings-storage wave, 2026-09-19): pure
  * projection of the delta record (core/settings.ts UserSettings) into
@@ -57,7 +56,6 @@ export interface EffectiveSlot {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
-	serviceTier?: ServiceTier;
 }
 
 /** A fully-resolved model pin for one role — same shape/level semantics
@@ -67,7 +65,6 @@ export interface EffectiveModelSpec {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
-	serviceTier?: ServiceTier;
 }
 
 /** The concrete appearance view — same shape as the factory's. */
@@ -121,7 +118,6 @@ export function resolveConversationSpec(
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: chat?.thinkingLevel ?? strong?.thinkingLevel,
-		...tierField(inheritedServiceTier(chat, strong ? { model: strong, serviceTier: strong.serviceTier } : undefined)),
 	};
 }
 
@@ -145,7 +141,6 @@ export function resolveSlot(slot: ModelSlot | undefined): EffectiveSlot | null {
 	if (!slot?.model) return null;
 	return {
 		provider: slot.model.provider, id: slot.model.id, thinkingLevel: slot.thinkingLevel,
-		...tierField(slot.serviceTier),
 		...(slot.cacheRetention !== undefined ? { cacheRetention: slot.cacheRetention } : {}),
 	};
 }
@@ -169,7 +164,6 @@ export function resolveModelSpec(
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: override?.thinkingLevel ?? slot?.thinkingLevel,
-		...tierField(inheritedServiceTier(override, slot)),
 	};
 }
 

@@ -1,4 +1,3 @@
-import { resolveRoleSpec, serviceTierError, BACKGROUND_MODEL_ROLES } from "@/src/core";
 /**
  * PUT /api/settings/[section] — section-scoped record writes
  * (settings-storage wave, 2026-09-19). One PUT replaces ONE section
@@ -94,12 +93,6 @@ export async function PUT(request: Request, ctx: { params: Promise<{ section: st
 		// mirrored back by every write while the disabled toggle couldn't
 		// reach the OFF escape hatch. An ON with a real file stays valid.
 		const agent = parsed.settings as AgentSettings;
-		for (const role of BACKGROUND_MODEL_ROLES) {
-			const override = agent.models?.[role];
-			const resolved = resolveRoleSpec(role, { ...record, agent });
-			const tierError = serviceTierError(resolved, override?.serviceTier);
-			if (tierError) return Response.json({ error: tierError }, { status: 400 });
-		}
 		const segments = new Set(allSegmentPaths());
 		const orphans: string[] = [];
 		for (const [path, on] of Object.entries(agent.prompts ?? {})) {

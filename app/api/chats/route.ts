@@ -1,4 +1,3 @@
-import { tierField } from "@/src/core";
 import { chainsForSelection, formatChainLine } from "@/src/core";
 import { newGraphContextMessage, type GraphContextPick } from "@/src/core";
 import { compactionInFlight, createChat, isTurnRunning, listChats, readSettingsRecord, stores, titleFromPrompt } from "@/src/server";
@@ -39,7 +38,6 @@ export async function POST(req: Request) {
 		stores.chatStore.saveSettings(chat.id, {
 			model: { provider: strong.model.provider, id: strong.model.id },
 			thinkingLevel: strong.thinkingLevel,
-			...tierField(strong.serviceTier),
 		});
 	}
 	// The session's map context (owner, 2026-10-04): the picked

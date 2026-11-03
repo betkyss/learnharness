@@ -1,4 +1,3 @@
-import { serviceTierUsage } from "../core/service-tier.ts";
 /**
  * THE COMPACTION SERVICE (owner round 14, 2026-10-05): the trigger
  * plumbing around core/compaction's pure cuts and markers.
@@ -250,7 +249,6 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 			model: deps.modelId,
 			steps: [
 				{
-					...serviceTierUsage(usage),
 					inputTokens: usage.input,
 					outputTokens: usage.output,
 					cacheReadTokens: usage.cacheRead,

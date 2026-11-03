@@ -1,4 +1,3 @@
-import { tierField, serviceTierError } from "../core/service-tier.ts";
 /**
  * The model catalog's server surface (model-control wave, 2026-09-12;
  * federated since the model-slots wave, 2026-09-20): pi-ai's catalog for
@@ -86,7 +85,6 @@ export function catalogDefaultsFor(
 	return {
 		model,
 		...(level !== undefined ? { thinkingLevel: level } : {}),
-		...tierField(strong?.serviceTier),
 	};
 }
 
@@ -110,7 +108,6 @@ export function rolePinsFor(
 			? {
 					model: { provider: spec.provider, id: spec.id },
 					...(spec.thinkingLevel !== undefined ? { thinkingLevel: spec.thinkingLevel } : {}),
-					...tierField(spec.serviceTier),
 				}
 			: null;
 	}
@@ -138,7 +135,6 @@ export function catalogSlots(): SlotPins {
 			? {
 					model: { provider: slot.provider, id: slot.id },
 					...(slot.thinkingLevel !== undefined ? { thinkingLevel: slot.thinkingLevel } : {}),
-					...tierField(slot.serviceTier),
 					...(slot.cacheRetention !== undefined ? { cacheRetention: slot.cacheRetention } : {}),
 				}
 			: null;
@@ -250,9 +246,6 @@ export type SettingsValidation =
  *    the model the picker writes against (settings.model, else config's
  *    prober/teacher pin; one controller, so the two specs share it). */
 export function validateChatSettings(settings: ChatSettings): SettingsValidation {
-	const strong = settings.model || settings.serviceTier === undefined ? null : effectiveSettings().models.strong;
-	const tierError = serviceTierError(settings.model ?? strong ?? undefined, settings.serviceTier);
-	if (tierError) return { ok: false, error: tierError };
 	const providers = connectionProviderIds();
 	if (settings.model) {
 		const { provider, id } = settings.model;
@@ -281,8 +274,6 @@ export function validateModelsSettings(settings: ModelsSettings, stored?: Models
 	for (const name of MODEL_SLOTS) {
 		const slot = settings[name];
 		if (!slot) continue;
-		const tierError = serviceTierError(slot.model, slot.serviceTier);
-		if (tierError) return { ok: false, error: tierError };
 		const previous = stored?.[name]?.model;
 		if (slot.model && previous && slot.model.provider === previous.provider && slot.model.id === previous.id) continue;
 		const verdict = validateSlotSpec(name, slot);

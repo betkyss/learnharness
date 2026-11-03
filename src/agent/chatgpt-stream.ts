@@ -1,4 +1,3 @@
-import { serviceTierError, type ServiceTier, type ServiceTierReport } from "../core/service-tier.ts";
 import type { Api, AssistantMessage, Model, SimpleStreamOptions, StreamFunction, TranscriptContext } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/api/openai-responses";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
@@ -46,7 +45,7 @@ export function chatGPTHistory(context: TranscriptContext, logicalModel: Model<A
 function empty(model: Model<Api>): AssistantMessage {
 	return { role: "assistant", api: model.api, provider: "chatgpt", model: model.id, content: [], stopReason: "error", timestamp: Date.now(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
 }
-export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDispatchLifecycle, selectedServiceTier?: ServiceTier): StreamFunction<Api, SimpleStreamOptions> {
+export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDispatchLifecycle): StreamFunction<Api, SimpleStreamOptions> {
 	return (logicalModel, context, options) => {
 		const output = new AssistantMessageEventStream();
 		const purpose = background();
@@ -55,7 +54,6 @@ export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDisp
 		void (async () => {
 			let partial = empty(logicalModel);
 			let completed = false;
-			const tierReport: ServiceTierReport = { requestedServiceTier: selectedServiceTier, receivedServiceTier: null };
 			let failure = "";
 			let scope: AdmissionScope | undefined;
 			let committed = false;
@@ -64,8 +62,6 @@ export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDisp
 			try {
 				if (logicalModel.provider !== "chatgpt") throw new Error("ChatGPT account catalog has no selected model");
 				if (Object.keys(options?.headers ?? {}).some((key) => key.toLowerCase() === "authorization")) throw new Error("Authorization override is forbidden");
-				const tierError = serviceTierError(logicalModel, selectedServiceTier);
-				if (tierError) throw new Error(tierError);
 				scope = chatGPTScope(logicalModel.id);
 				lifecycle?.captured(scope);
 				const credentials = await chatGPTLease(scope, purpose);
@@ -89,19 +85,13 @@ export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDisp
 					onPayload: async (raw, model) => {
 						const replacement = await options?.onPayload?.(raw, model);
 						const payload = chatGPTPayload(replacement === undefined ? raw : replacement, logicalModel.id);
-						if (selectedServiceTier !== undefined) {
-							payload.service_tier = selectedServiceTier === "fast" ? "priority" : selectedServiceTier;
-						}
 						check();
 						capturePreparedBackgroundPayload(payload, logicalModel);
 						return payload;
 					},
 					onProviderStreamEvent: async (raw, model) => {
-						const event = raw as { type?: string; code?: string; error?: { code?: string }; response?: { error?: { code?: string }; status?: string; service_tier?: unknown } };
-						if (event.type === "response.completed" && event.response?.status === "completed" && !event.response?.error) {
-							completed = true;
-							tierReport.receivedServiceTier = typeof event.response.service_tier === "string" ? event.response.service_tier : null;
-						}
+						const event = raw as { type?: string; code?: string; error?: { code?: string }; response?: { error?: { code?: string }; status?: string } };
+						if (event.type === "response.completed" && event.response?.status === "completed" && !event.response?.error) completed = true;
 						if (["response.incomplete", "response.failed", "error"].includes(event.type ?? "") || event.response?.error) failure = event.code || event.error?.code || event.response?.error?.code || "incomplete terminal response";
 						await options?.onProviderStreamEvent?.(raw, model);
 					},
@@ -109,8 +99,7 @@ export function chatGPTStream(background: () => boolean, lifecycle?: ChatGPTDisp
 				for await (const event of source) {
 					const message = "partial" in event ? event.partial : event.type === "done" ? event.message : event.error;
 					// Copy the message, not its tool/reasoning blocks: IDs/signatures remain byte-for-byte intact.
-					const usage = { ...message.usage, serviceTier: { ...tierReport } };
-					partial = { ...message, provider: "chatgpt", usage };
+					partial = { ...message, provider: "chatgpt" };
 					if (event.type === "done") {
 						if (!completed || failure) throw new Error(failure || "missing terminal response.completed");
 						terminal = true;

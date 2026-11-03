@@ -1,5 +1,4 @@
 "use client";
-import { serviceTierSummary, type ServiceTierReport } from "@/src/core";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIcon, BotIcon, FileTextIcon, PenToolIcon, PlayIcon, SearchIcon, SquareIcon, WaypointsIcon } from "lucide-react";
@@ -189,7 +188,6 @@ export interface ActivityBlob {
 	model?: string;
 	/** Model calls made so far, when usage is reported. */
 	steps?: number;
-	serviceTiers?: ServiceTierReport[];
 }
 
 /** Merge the feed into one oldest-first blob list (the stable blob order). */
@@ -239,7 +237,6 @@ export function toBlobs(feed: ActivityFeed): ActivityBlob[] {
 					: (job.activity ?? ""),
 			model: usage?.model,
 			steps: usage?.steps,
-			...(usage?.calls?.some((call) => call.serviceTier) ? { serviceTiers: usage.calls.flatMap((call) => call.serviceTier ? [call.serviceTier] : []) } : {}),
 		};
 	});
 	for (const run of feed.extractions) {
@@ -484,7 +481,6 @@ function ActivityBlobRow({
 								<span className="truncate text-card-foreground">{blob.model}</span>
 							</div>
 						)}
-						{blob.serviceTiers?.map((report, index) => <div key={index} data-testid="job-service-tier">Call {index + 1}: {serviceTierSummary(report)}</div>)}
 						{blob.steps !== undefined && (
 							<div className="flex justify-between gap-2">
 								<span>Steps</span>
