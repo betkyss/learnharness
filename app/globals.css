@@ -57,12 +57,9 @@
 	   appearance settings vars. */
 	--lh-ink-strong: var(--foreground);
 	--lh-ink-italic: var(--foreground);
-	/* THE READING SIZE = the ladder's 16px rung (--text-lg). Can't be
-	   var()-linked: @theme inline inlines literals into utilities without
-	   emitting runtime vars — so this is the one documented duplication:
-	   change one, change both. (owner, typography round 4: snapped from
-	   the reskin's hand-tuned 16.5 to the ladder's 16.) */
-	--lh-prose-size: 16px;
+	/* Reading size is independent from interface labels and controls.
+	   AppearanceProvider overrides this with the saved reading size. */
+	--lh-prose-size: 1rem;
 	--lh-prose-leading: 1.5;
 	/* Markdown heading weight (appearance settings). */
 	--lh-heading-weight: 600;
@@ -93,12 +90,7 @@
 	/* Same emphasis ruling as the block above: unset = text color. */
 	--lh-ink-strong: var(--foreground);
 	--lh-ink-italic: var(--foreground);
-	/* THE READING SIZE = the ladder's 16px rung (--text-lg). Can't be
-	   var()-linked: @theme inline inlines literals into utilities without
-	   emitting runtime vars — so this is the one documented duplication:
-	   change one, change both. (owner, typography round 4: snapped from
-	   the reskin's hand-tuned 16.5 to the ladder's 16.) */
-	--lh-prose-size: 16px;
+	--lh-prose-size: 1rem;
 	--lh-prose-leading: 1.5;
 	/* Markdown heading weight (appearance settings). */
 	--lh-heading-weight: 600;
@@ -117,27 +109,24 @@
 	/* Runtime aliases: font changes must reach utilities as well as inherited text. */
 	--font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
 	--font-sans: var(--font-ui);
-	/* The modular type ladder — each size carries its own line-height.
-	   Component sizes must pull from this ladder. (owner, typography
-	   round 4: the 10px rung is merged into 11 — one pixel apart was a
-	   distinction with no visible difference, and 10px sits at the mono
-	   legibility floor; quiet labels get their quiet from color +
-	   tracking, not a notch of size. Reading prose = the 16px rung via
-	   --lh-prose-size.) */
-	--text-xs: 11px;
-	--text-xs--line-height: 1.4;
-	--text-sm: 12.5px;
-	--text-sm--line-height: 1.4;
-	--text-base: 14px;
-	--text-base--line-height: 1.45;
-	--text-lg: 16px;
-	--text-lg--line-height: 1.45;
-	--text-xl: 20px;
+	/* Shared interface ladder, matching T3's rem-based scale. At the
+	   default 16px root: metadata 12, controls 14, body 16, headings 18+.
+	   Reading prose keeps its separate user preference (--lh-prose-size).
+	   Use these tokens in components; no one-off pixel font sizes. */
+	--text-xs: 0.75rem;
+	--text-xs--line-height: calc(16 / 12);
+	--text-sm: 0.875rem;
+	--text-sm--line-height: calc(20 / 14);
+	--text-base: 1rem;
+	--text-base--line-height: 1.5;
+	--text-lg: 1.125rem;
+	--text-lg--line-height: calc(28 / 18);
+	--text-xl: 1.25rem;
 	--text-xl--line-height: 1.4;
-	--text-2xl: 25px;
-	--text-2xl--line-height: 1.3;
-	--text-3xl: 32px;
-	--text-3xl--line-height: 1.25;
+	--text-2xl: 1.5rem;
+	--text-2xl--line-height: calc(32 / 24);
+	--text-3xl: 1.875rem;
+	--text-3xl--line-height: 1.2;
 	/* Runtime scale; full circles and capsules keep Tailwind's rounded-full. */
 	--radius-xs: calc(var(--radius) * 0.25);
 	--radius-sm: calc(var(--radius) * 0.5);

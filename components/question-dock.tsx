@@ -223,7 +223,7 @@ export function QuestionDockBar({
 					<span className="block text-sm font-medium">Check your understanding</span>
 					<span className="block truncate text-xs text-muted-foreground">{teaserText(question)}</span>
 				</span>
-				<span className="flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
+				<span className="flex shrink-0 items-center gap-1 text-sm font-medium text-primary">
 					Open <ChevronRightIcon className="size-3.5" />
 				</span>
 			</button>

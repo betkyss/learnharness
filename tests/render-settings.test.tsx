@@ -93,7 +93,7 @@ describe("the shared settings dropdown trigger", () => {
 describe("Providers settings-label typography", () => {
 	it("Language uses the interface family for its label and trigger", () => {
 		const html = renderToStaticMarkup(<DictationLanguageSetting />);
-		assert.ok(html.includes('<span class="block font-ui text-(length:--lh-prose-size)">Language</span>'));
+		assert.ok(html.includes('<span class="block font-ui text-sm">Language</span>'));
 		assert.ok(tagOf(html, "dictation-language").includes("font-ui text-xs"));
 	});
 
@@ -101,7 +101,7 @@ describe("Providers settings-label typography", () => {
 		const settings = renderToStaticMarkup(<SubscriptionConnections />);
 		const setup = renderToStaticMarkup(<SubscriptionConnections setup />);
 		for (const label of ["ChatGPT", "GitHub Copilot", "Grok"]) {
-			assert.ok(settings.includes(`<span class="font-ui text-(length:--lh-prose-size) text-foreground">${label}</span>`), `${label}: settings sans label`);
+			assert.ok(settings.includes(`<span class="font-ui text-sm text-foreground">${label}</span>`), `${label}: settings sans label`);
 			assert.ok(setup.includes(`<span class="font-ui text-xs text-foreground">${label}</span>`), `${label}: unchanged setup label`);
 		}
 		assert.equal((settings.match(/>Connect<\/button>/g) ?? []).length, 3);

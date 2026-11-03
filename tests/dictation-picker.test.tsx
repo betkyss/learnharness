@@ -234,7 +234,7 @@ for (const source of ["none", "file", "env"] as const) test(`Language is below t
 	assert.equal(byTest("dictation-setup-hint").querySelector("a")!.href, "https://console.deepgram.com/");
 	assert.equal(byTest("dictation-setup-hint").querySelector("a")!.textContent, "Deepgram API key");
 	assert.equal(byTest("dictation-setup-hint").querySelectorAll("a").length, 1);
-	assert.match(rows[1]!.querySelector(".font-ui")!.className, /text-\(length:--lh-prose-size\)/);
+	assert.match(rows[1]!.querySelector(".font-ui")!.className, /\btext-sm\b/);
 	assert.equal(trigger().disabled, false, "language is independent of key ownership");
 	await click(byTest("key-deepgram_api_key-row"));
 	if (source !== "env") assert.ok(byTest("key-deepgram_api_key-editor"));

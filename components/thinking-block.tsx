@@ -100,8 +100,8 @@ export function ThinkingBlock({
 		   and the agent row flush, the chevrons line up vertically. Three
 		   (not one, owner round 5): the wider gap reads better than the
 		   cramped single-char rail. The heading
-		   register is the card eyebrows' small mono caps (text-xs = the
-		   11px rung). */
+		   register is the card eyebrows' small caps (text-xs = the
+		   12px rung). */
 		<div
 			data-testid={testId}
 			data-commit={dataCommit === undefined ? undefined : dataCommit ? "true" : "false"}
@@ -128,7 +128,7 @@ export function ThinkingBlock({
 				<ChevronDownIcon className={cn("size-4 shrink-0 transition-transform", open ? "rotate-180" : "rotate-0")} />
 			</button>
 			{open && (
-				<span className="lh-prose mt-1.5 block whitespace-pre-wrap text-[15px] italic text-foreground/50"><PathText text={text} /></span>
+				<span className="lh-prose mt-1.5 block whitespace-pre-wrap italic text-foreground/50"><PathText text={text} /></span>
 			)}
 		</div>
 	);

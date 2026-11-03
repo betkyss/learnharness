@@ -100,7 +100,7 @@ export function ClaudeCodeInstallationStatus() {
 
 	return <div className="space-y-2" data-testid="claude-code-installation">
 		<div className="flex items-center gap-3">
-			<span className="font-ui text-(length:--lh-prose-size) text-foreground">Claude Code</span>
+			<span className="font-ui text-sm text-foreground">Claude Code</span>
 			<Toggle label="Claude Code" checked={enabled} disabled={!loaded || saving} onChange={(next) => void save(next)} />
 		</div>
 		{error && <p role="alert" className="text-xs text-red-400">{error}</p>}
