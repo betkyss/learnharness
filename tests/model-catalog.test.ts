@@ -1,7 +1,9 @@
 import * as fs from "node:fs";
+import mutableFs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import { after, describe, it } from "node:test";
+import { after, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 const testData = fs.mkdtempSync(path.join(os.tmpdir(), "lh-cli-catalog-data-"));
 process.env.LH_DATA_DIR = testData;
@@ -339,22 +341,33 @@ describe("pi thinking truth (pinned against pi-ai upgrades)", () => {
 		assert.throws(() => piEngineFor("prober"), /no configured model for role "prober"/);
 	});
 });
-/** Runs fn with PATH and HOME pointed at a temp dir, so the CLI lookup only
- *  finds a claude binary when installed is true. */
+/** Isolate executable lookup as well as PATH/HOME: production also searches
+ *  system install directories that can contain the developer's real CLI. */
 function withClaudeInstalled(installed: boolean, fn: () => void, enabled = true): void {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-catalog-"));
 	const saved = { PATH: process.env.PATH, HOME: process.env.HOME, npm_config_prefix: process.env.npm_config_prefix };
 	const settings = readSettings();
 	writeSettings({ ...(settings ?? { version: 1 }), claudeCode: { enabled } });
 
-	if (installed) fs.writeFileSync(path.join(dir, "claude"), "#!/bin/sh\n", { mode: 0o755 });
+	const binary = path.join(dir, process.platform === "win32" ? "claude.exe" : "claude");
+	if (installed) fs.writeFileSync(binary, "#!/bin/sh\n", { mode: 0o755 });
 	process.env.PATH = dir;
 	process.env.HOME = dir;
 	delete process.env.npm_config_prefix;
 
+	const accessSync = mutableFs.accessSync;
+	const executableAccess = mock.method(mutableFs, "accessSync", (file: fs.PathLike, mode?: number) => {
+		if (mode === fs.constants.X_OK && file !== binary) {
+			throw new Error("Executable outside the test fixture");
+		}
+		return accessSync(file, mode);
+	});
+	syncBuiltinESMExports();
 	try {
 		fn();
 	} finally {
+		executableAccess.mock.restore();
+		syncBuiltinESMExports();
 		for (const [name, value] of Object.entries(saved)) {
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;
@@ -366,6 +379,27 @@ function withClaudeInstalled(installed: boolean, fn: () => void, enabled = true)
 }
 
 describe("the claude-code provider (native CLI authentication, no LearnHarness key)", () => {
+	it("isolates executable probes and restores filesystem exports after a callback throws", () => {
+		const outside = fs.mkdtempSync(path.join(os.tmpdir(), "claude-catalog-outside-"));
+		const binary = path.join(outside, "claude");
+		const originalAccess = fs.accessSync;
+		const originalMutableAccess = mutableFs.accessSync;
+		const failure = new Error("fixture callback failed");
+		try {
+			fs.writeFileSync(binary, "#!/bin/sh\n", { mode: 0o755 });
+			assert.doesNotThrow(() => fs.accessSync(binary, fs.constants.X_OK));
+			assert.throws(() => withClaudeInstalled(false, () => {
+				assert.throws(() => fs.accessSync(binary, fs.constants.X_OK), /outside the test fixture/);
+				throw failure;
+			}), (error) => error === failure);
+			assert.equal(fs.accessSync, originalAccess);
+			assert.equal(mutableFs.accessSync, originalMutableAccess);
+			assert.doesNotThrow(() => fs.accessSync(binary, fs.constants.X_OK));
+		} finally {
+			fs.rmSync(outside, { recursive: true, force: true });
+		}
+	});
+
 	it("modelCatalog() lists claude-code opus/sonnet/haiku when the CLI is installed", () => {
 		withClaudeInstalled(true, () => {
 			const ids = modelCatalog()
