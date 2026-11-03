@@ -1,4 +1,6 @@
 "use client";
+import { serviceTierError, serviceTierLabel, tierField } from "@/src/core";
+import { ServiceTierMenu } from "@/components/settings/service-tier-menu";
 /**
  * The Agent section (settings-app wave): the THREE MODEL SLOTS, the tool
  * toggles + the search-engine preference, and the prompt override
@@ -145,6 +147,7 @@ export function composeSlotModel(
 		return next;
 	}
 	next[slot] = {
+		...tierField(serviceTierError(provider && id ? { provider, id } : prev?.model, prev?.serviceTier) ? undefined : prev?.serviceTier),
 		...(prev?.cacheRetention !== undefined ? { cacheRetention: prev.cacheRetention } : {}),
 		...(provider && id ? { model: { provider, id } } : prev?.model ? { model: prev.model } : {}),
 		...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
@@ -317,7 +320,8 @@ export function AgentSection({
 	const [segmentStatus, setSegmentStatus] = useState<string | null>(null);
 	/** One open dropdown for the whole section: which slot (or the search
 	 *  row), which kind. */
-	const [openMenu, setOpenMenu] = useState<{ target: ModelSlotName | "search"; kind: "model" | "thinking" | "engine" | "cache" } | null>(null);
+	const [speedNotice, setSpeedNotice] = useState<string | null>(null);
+	const [openMenu, setOpenMenu] = useState<{ target: ModelSlotName | "search"; kind: "model" | "thinking" | "engine" | "cache" | "speed" } | null>(null);
 	const [advancedModels, setAdvancedModels] = useState(false);
 	const menuAnchorRef = useRef<HTMLSpanElement>(null);
 
@@ -593,6 +597,7 @@ export function AgentSection({
 	return (
 		<>
 			<SettingsGroup label="Models" testid="group-models">
+				{speedNotice && <p role="status" className="text-xs text-muted-foreground">{speedNotice}</p>}
 				<button
 					type="button"
 					data-testid="models-advanced"
@@ -661,6 +666,17 @@ export function AgentSection({
 									onClick={() => setOpenMenu(thisMenuOpen === "thinking" ? null : { target: slot, kind: "thinking" })}
 									widthClass="w-20"
 								/>
+								{provider === "chatgpt" && <MenuTrigger
+									value={`Speed: ${override?.serviceTier ? serviceTierLabel(override.serviceTier) : "Inherit"}`}
+									emptyLabel="Speed" widthClass="w-36" ariaLabel={`${SLOT_META[slot].label} requested speed`} testid={`slot-speed-${slot}`}
+									open={thisMenuOpen === "speed"} onClick={() => setOpenMenu(thisMenuOpen === "speed" ? null : { target: slot, kind: "speed" })} />}
+								{thisMenuOpen === "speed" && <MenuShell preferredSide="down" anchorTestid={`slot-speed-${slot}`} testid={`slot-speed-menu-${slot}`} menuClass="flex w-64 flex-col rounded-xl border bg-card p-2 text-xs shadow-xl">
+									<ServiceTierMenu provider={provider} id={modelId} value={override?.serviceTier} onPick={(tier) => {
+										const next = { ...override }; delete next.serviceTier;
+										onModelsChange({ ...models, [slot]: { ...next, ...tierField(tier) } });
+										setSpeedNotice(null); setOpenMenu(null);
+									}} />
+								</MenuShell>}
 								{advancedModels && <MenuTrigger
 									value={cacheRetentionLabel(override?.cacheRetention)}
 									emptyLabel="Cache: default"
@@ -699,6 +715,7 @@ export function AgentSection({
 												// fresh pick writes a level — the stored one rides as-is
 												// (the write clamps server-side), else the ordering's level.
 												const next = populateLevel(thinking || undefined, entry.supportedLevels);
+												setSpeedNotice(serviceTierError(entry, override?.serviceTier) ? "Speed reset: the selected model does not support the previous mode." : null);
 												onModelsChange(composeSlotModel(models, slot, entry.provider, entry.id, next));
 												setOpenMenu(null);
 											}}

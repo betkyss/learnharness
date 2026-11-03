@@ -1,3 +1,4 @@
+import type { ServiceTier } from "../service-tier.ts";
 /**
  * Model-catalog contracts (model-control wave, 2026-09-12) — the client-safe
  * shapes of GET /api/models and PUT /api/chats/[id]/settings responses.
@@ -35,6 +36,7 @@ export interface ModelCatalogEntry {
 export interface CatalogDefaults {
 	model: { provider: string; id: string };
 	thinkingLevel?: ThinkingLevel;
+	serviceTier?: ServiceTier;
 }
 
 /** One background role's RESOLVED pin (BYOK, owner 2026-09-22): what that
@@ -43,7 +45,7 @@ export interface CatalogDefaults {
  *  settings UI shows "not configured" from it. */
 export type RolePins = Record<
 	BackgroundModelRole,
-	{ model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel } | null
+	{ model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel; serviceTier?: ServiceTier } | null
 >;
 
 /** One slot tier's RESOLVED pin (BYOK, owner 2026-09-22): NULL = the tier

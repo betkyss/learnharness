@@ -1,3 +1,4 @@
+import { serviceTierUsage } from "../core/service-tier.ts";
 import type { Usage } from "@earendil-works/pi-ai";
 import {
 	createPracticeAgent,
@@ -393,6 +394,7 @@ export async function handleChatInput(
 	const steps: CallUsage[] = [];
 	const collectUsage = (usage: Usage) => {
 		steps.push({
+			...serviceTierUsage(usage),
 			inputTokens: usage.input,
 			outputTokens: usage.output,
 			cacheReadTokens: usage.cacheRead,

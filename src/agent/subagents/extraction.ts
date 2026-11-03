@@ -1,3 +1,4 @@
+import { serviceTierUsage } from "../../core/service-tier.ts";
 import * as crypto from "node:crypto";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -789,6 +790,7 @@ export interface ExtractionPipeline {
  *  metrics wave). Module scope: no closure deps, pure projection. */
 export function callUsage(usage: Usage): CallUsage {
 	return {
+		...serviceTierUsage(usage),
 		inputTokens: usage.input,
 		outputTokens: usage.output,
 		cacheReadTokens: usage.cacheRead,

@@ -1,3 +1,4 @@
+import { isServiceTier } from "../core/service-tier.ts";
 /**
  * The shared settings-PUT body parsers — one seam per settings surface.
  * Extracted verbatim from the per-chat route (default-settings wave,
@@ -42,8 +43,13 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 	const raw = body as {
 		model?: { provider?: unknown; id?: unknown };
 		thinkingLevel?: unknown;
+		serviceTier?: unknown;
 	};
 	const settings: ChatSettings = {};
+	if (raw.serviceTier !== undefined) {
+		if (!isServiceTier(raw.serviceTier)) return { ok: false, error: "serviceTier must be default, fast, or ultrafast" };
+		settings.serviceTier = raw.serviceTier;
+	}
 	if (raw.model !== undefined) {
 		if (
 			typeof raw.model !== "object" ||
@@ -108,6 +114,10 @@ function parseRoleOverride(value: unknown, role: string): { ok: true; override: 
 	const raw = asRecord(value);
 	if (!raw) return { ok: false, error: `${role} must be an object` };
 	const override: RoleModelOverride = {};
+	if (raw.serviceTier !== undefined) {
+		if (!isServiceTier(raw.serviceTier)) return { ok: false, error: `${role}.serviceTier must be default, fast, or ultrafast` };
+		override.serviceTier = raw.serviceTier;
+	}
 	if (raw.model !== undefined) {
 		if (
 			typeof raw.model !== "object" ||

@@ -218,9 +218,87 @@ test("case-insensitive Authorization overrides including null are refused before
 	assert.equal(requests.length, before);
 });
 
+test("only successful response.completed can report the received service tier", async () => {
+	const { serviceTierUsage } = await import("../src/core/service-tier.ts");
+	const engine = piEngineForSpec({ provider: "chatgpt", id: model.id, serviceTier: "default" }, false);
+	responseEvents = [{ type: "response.created", response: { id: "created-tier", service_tier: "ultrafast" } }, complete()];
+	let result = await engine.streamFn(engine.model, context()).result();
+	assert.equal(result.stopReason, "stop");
+	assert.equal(serviceTierUsage(result.usage).serviceTier?.receivedServiceTier, null);
+	responseEvents = [{ type: "response.incomplete", response: { status: "incomplete", service_tier: "ultrafast", output: [], usage } }];
+	result = await engine.streamFn(engine.model, context()).result();
+	assert.equal(result.stopReason, "error");
+	assert.equal(serviceTierUsage(result.usage).serviceTier?.receivedServiceTier, null);
+});
+
 test("full credential-storage invalidation aborts foreground and background controllers and clears capabilities", () => {
 	const foreground = chatGPTAbortController(false), background = chatGPTAbortController(true);
 	ipc({ channel: "lh:chatgpt", kind: "state", stamp: { epoch: 2, authorityRevision: 2, revision: 3 }, status: { ...status, available: false }, invalidate: "all" });
 	assert(foreground.controller.signal.aborted); assert(background.controller.signal.aborted); assert.equal(chatGPTModels().length, 0);
 	foreground.release(); background.release();
+});
+
+test("selected subscription speed reaches final HTTP body in chat and background; response tier stays independent", async (t) => {
+	const { serviceTierUsage } = await import("../src/core/service-tier.ts");
+	const { resolveConversationSpec, resolveSlot, resolveRoleSpec } = await import("../src/core/settings-resolution.ts");
+	const { callUsage } = await import("../src/agent/subagents/extraction.ts");
+	const { accumulateJobUsage, piUsageToStep } = await import("../src/core/contracts/jobs.ts");
+	const speedModels = ["gpt-6.1-sol", "gpt-6-astra"].map((id) => piModels().getModel("openai", id) as Model<"openai-responses">);
+	const previousSend = Object.getOwnPropertyDescriptor(process, "send")!;
+	Object.defineProperty(process, "send", { configurable: true, value: (message: any, callback?: () => void) => {
+		queueMicrotask(() => ipc({ channel: "lh:chatgpt", id: message.id, op: message.op, ok: true,
+			value: message.op === "lease" ? { accessToken: "scratch-oauth-only", accountId: "scratch-account", epoch: 100, authorityRevision: 100, revision: 100 }
+				: { epoch: 100, authorityRevision: 100, revision: 100, status: { ...status, allowBackgroundUse: true }, accountId: "scratch-account", models: speedModels.map((m) => ({ id: m.id, name: m.id })) } }));
+		callback?.(); return true;
+	} });
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lh-speed-http-"));
+	const prevDir = backgroundCaptureDir.current, prevFlag = process.env.LH_BACKGROUND_CAPTURE;
+	backgroundCaptureDir.current = dir; process.env.LH_BACKGROUND_CAPTURE = "all";
+	t.after(async () => {
+		Object.defineProperty(process, "send", previousSend);
+		await refreshChatGPTModels([model]);
+		backgroundCaptureDir.current = prevDir;
+		if (prevFlag === undefined) delete process.env.LH_BACKGROUND_CAPTURE; else process.env.LH_BACKGROUND_CAPTURE = prevFlag;
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+	await refreshChatGPTModels(speedModels);
+	let run = 0;
+	for (const selected of speedModels) for (const background of [false, true]) {
+		for (const tier of [undefined, "default", "fast", "ultrafast"] as const) {
+			for (const received of [undefined, "default", "priority", "ultrafast"] as const) {
+				const slot = { model: { provider: "chatgpt", id: selected.id }, ...(tier ? { serviceTier: tier } : {}) };
+				const spec = background ? resolveRoleSpec("auditor", { version: 1, models: { cheap: slot } })!
+					: resolveConversationSpec(undefined, resolveSlot(slot))!;
+				const engine = piEngineForSpec(spec, background);
+				const capture = background ? createBackgroundCapture({ role: "auditor", runId: `speed-${++run}` }) : undefined;
+				const completed = complete();
+				responseEvents = [{ ...completed, response: { ...completed.response, ...(received === undefined ? {} : { service_tier: received }) } }];
+				requests = [];
+				let callbackObserved = false;
+				const result = await backgroundCaptureStream(engine.streamFn, capture)(engine.model, context(), {
+					onPayload: (raw) => ({ ...raw as object, service_tier: "caller-must-not-override", store: true, stream: false }),
+					onProviderStreamEvent: async (event) => { await Promise.resolve(); callbackObserved = (event as { type: string }).type === "response.completed"; },
+				}).result();
+				assert.equal(result.stopReason, "stop"); assert(callbackObserved);
+				assert.equal(requests.length, 1);
+				const request = requests[0]!;
+				assert.equal(request.authorization, "Bearer scratch-oauth-only");
+				assert.equal(request.url, "https://api.openai.com/v1/responses");
+				assert.equal(request.body.model, selected.id);
+				assert.equal(request.body.service_tier, tier === "fast" ? "priority" : tier);
+				assert.equal(Object.hasOwn(request.body, "service_tier"), tier !== undefined);
+				assert.equal(request.body.store, false); assert.equal(request.body.stream, true);
+				const report = serviceTierUsage(result.usage).serviceTier!;
+				assert.equal(report.requestedServiceTier, tier); assert.equal(report.receivedServiceTier, received ?? null);
+				assert.deepEqual(callUsage(result.usage).serviceTier, report);
+				assert.deepEqual(accumulateJobUsage(undefined, selected.id, piUsageToStep(result.usage)).calls?.[0]?.serviceTier, report);
+				if (capture) {
+					capture.reply(result); capture.finish();
+					const record = JSON.parse(fs.readFileSync(path.join(dir, `auditor-speed-${run}.json`), "utf8"));
+					assert.deepEqual(record.request.payload, request.body);
+					assert.deepEqual(record.response.message.usage.serviceTier, JSON.parse(JSON.stringify(report)));
+				}
+			}
+		}
+	}
 });
