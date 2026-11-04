@@ -38,24 +38,21 @@ it('completed briefs expose real content, sources and pages; failures remain fai
  assert.doesNotMatch(render('research',{brief:'Research failed: unavailable',sources:[]}),/research-complete-badge/);
  assert.doesNotMatch(render('pdf',{brief:'PDF failed: unavailable',pagesRead:[],pagesConsulted:[]}),/pdf-complete-badge/);
 });
-it('question context opens locally without replacing the thinking editor or losing selection and confidence',async()=>{
+it('long questions appear once above the thinking editor and preserve draft selection and confidence',async()=>{
  const dom=parseHTML('<html><body><div id="root"></div></body></html>');
  Object.assign(globalThis,{window:dom.window,document:dom.document,HTMLElement:dom.window.HTMLElement,IS_REACT_ACT_ENVIRONMENT:true});
  const root=createRoot(document.querySelector('#root')!);
  const label='Long selected answer. '.repeat(30),question='Use the definition to decide. '.repeat(20);
  try {
   await act(async()=>root.render(<QuestionDock toolName="quiz" toolCallId="synthetic-q" input={{question,options:[{label},{label:'No'}],correctAnswer:label,explanation:'Definition'}} expanded onExpand={()=>{}} onSubmit={()=>{}} dictationClaim={false} initialDraft={{selection:{selected:new Set([0]),otherSelected:false,dontKnow:false},thinking:'My unsent reasoning',other:'',text:'',confidenceIndex:3}}/>));
-  const editor=document.querySelector('[contenteditable="true"]');
-  const context=document.querySelector<HTMLDetailsElement>('[data-testid="question-context"]')!;
-  assert.match(context.querySelector('summary')!.textContent!,/Long selected answer/);
-  await act(async()=>{ context.open=true;context.dispatchEvent(new dom.window.Event('toggle')); });
-  assert.equal(context.querySelector('.question-context-full li')?.textContent,label.trim());
-  assert.equal(document.querySelector('[contenteditable="true"]'),editor);
+  assert.equal(document.querySelector('[data-testid="question-context"]')===null,true,'question context should not be duplicated');
+  assert.equal(document.body.textContent!.split(question.trim()).length-1,1);
+  const thinkingField=document.querySelector('[data-testid="thinking-field"]')!;
+  assert.equal(thinkingField.firstElementChild?.textContent,'YOUR THINKING');
+  assert.ok(thinkingField.querySelector('[role="textbox"]'));
   assert.match(document.body.textContent!,/My unsent reasoning/);
   assert.equal(document.querySelector('[role="radio"][aria-checked="true"]')?.textContent?.includes('Long selected answer'),true);
-  await act(async()=>{context.open=false;context.dispatchEvent(new dom.window.Event('toggle'));});
-  assert.equal(document.querySelector('[contenteditable="true"]'),editor);
-  assert.match(document.body.textContent!,/My unsent reasoning/);
+  assert.equal(document.querySelector('[data-testid="confidence-value"]')?.textContent,'70%');
  } finally {await act(async()=>root.unmount());}
 });
 it('Enter on a native disclosure stays native and does not submit the lesson',async()=>{

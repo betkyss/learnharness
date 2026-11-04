@@ -324,7 +324,6 @@ function QuestionDockForm({
 	// options, and picking an option must never clear a typed custom answer.
 	const [sel, setSel] = useState<DockSelection>(() => initialDraft?.selection ?? emptyDockSelection());
 	// The learner's transfer channel — thinking, never "a note".
-	const [contextOpen, setContextOpen] = useState(false);
 	const [thinking, setThinking] = useState(initialDraft?.thinking ?? "");
 	const [other, setOther] = useState(initialDraft?.other ?? "");
 	const [text, setText] = useState(initialDraft?.text ?? "");
@@ -583,7 +582,7 @@ function QuestionDockForm({
 											: "Question"}
 					{qd.mode === "multi-select" && " · select all that apply"}
 				</div>
-				<div className="question-condition mb-3 font-medium">
+				<div className="mb-3 font-medium">
 					<ToolContentResponse>{qd.question}</ToolContentResponse>
 				</div>
 				{qd.context && (
@@ -852,18 +851,6 @@ function QuestionDockForm({
 					data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}
 					className="rounded-md border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
 				>
- <details className="question-orientation border-b border-border/60 px-2.5 py-2 text-xs" data-testid="question-context" onToggle={event => setContextOpen(event.currentTarget.open)}>
-  <summary aria-expanded={contextOpen} className="cursor-pointer list-none rounded-sm focus-visible:outline-2 focus-visible:outline-ring">
-   <span className="flex items-start gap-2"><span aria-hidden className="shrink-0">▸</span><span className="line-clamp-2 min-w-0">{teaserText(qd.question)}</span></span>
-   {qd.mode !== "text" && <span className="mt-1 line-clamp-2 break-words text-muted-foreground">Selected: {sel.dontKnow ? "I don’t know" : [...[...sel.selected].map(i => qd.options[i]?.label).filter(Boolean), ...(sel.otherSelected ? [other || "Other"] : [])].join("; ") || "No choice selected"}</span>}
-  </summary>
-  {contextOpen && <div className="question-context-full space-y-2 pt-2 text-sm">
-   <ToolContentResponse>{qd.question}</ToolContentResponse>
-   {qd.context && <ToolContentResponse>{qd.context}</ToolContentResponse>}
-   {qd.mode !== "text" && <div><span className="text-xs text-muted-foreground">Selected answer</span>{sel.dontKnow ? <p>I don’t know</p> : <ul className="space-y-2">{[...sel.selected].map(i => <li key={i}><ToolContentResponse>{qd.options[i]?.label ?? ""}</ToolContentResponse></li>)}{sel.otherSelected && <li className="whitespace-pre-wrap">{other || "Other"}</li>}</ul>}</div>}
-   <button type="button" className="min-h-8 text-xs text-muted-foreground underline underline-offset-2" onClick={() => rootRef.current?.querySelector<HTMLElement>(".question-condition")?.scrollIntoView({ block: "start" })}>Review question and choices</button>
-  </div>}
- </details>
 					<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 						{qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
 					</div>
