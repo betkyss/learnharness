@@ -1,6 +1,9 @@
 "use client";
 
 import { ChevronRight } from "lucide-react";
+import { BrailleSpinner } from "@/components/braille-spinner";
+import { Shimmer } from "@/components/ai-elements/shimmer";
+import { toolActivityLabel } from "@/src/core";
 import type { ArtifactPartProps } from "@/src/core";
 
 /**
@@ -67,16 +70,17 @@ export function ToolCallCard({ part }: ArtifactPartProps) {
 	const arg = headlineArg(tool, p.input);
 	const out = outputText(p.output);
 	const failed = p.state === "output-error" || typeof p.errorText === "string";
+	const live = p.state === "input-streaming";
 	return (
 		<details
-			data-testid="tool-call-card"
+			data-testid={live ? "live-tool-card" : "tool-call-card"}
 			data-tool={tool}
-			className="group my-1 w-full max-w-2xl select-none"
+			className="group my-1 min-w-0 w-full max-w-2xl select-none"
 		>
 			<summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-muted-foreground [&::-webkit-details-marker]:hidden">
-				<span className={`font-medium uppercase tracking-wide ${failed ? "text-red-500" : ""}`}>
-					{tool}
-				</span>
+				{live ? <><BrailleSpinner label={toolActivityLabel(tool)} /><Shimmer duration={1} className="shrink-0 text-xs">{toolActivityLabel(tool)}</Shimmer></> : (
+					<span className={`shrink-0 font-medium uppercase tracking-wide ${failed ? "text-red-500" : ""}`}>{tool}</span>
+				)}
 				{arg && <span className="truncate">{arg}</span>}
 				<ChevronRight className="size-3 shrink-0 opacity-50 transition-transform group-open:rotate-90" />
 			</summary>
@@ -84,7 +88,7 @@ export function ToolCallCard({ part }: ArtifactPartProps) {
 				{p.input != null && (
 					<div>
 						<div className="mb-1 font-medium uppercase tracking-wide text-muted-foreground">
-							Input
+							{live ? "Input (streaming)" : "Input"}
 						</div>
 						<pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-relaxed">
 							{JSON.stringify(p.input, null, 2)}
@@ -110,7 +114,7 @@ export function ToolCallCard({ part }: ArtifactPartProps) {
 						</pre>
 					</div>
 				) : (
-					p.state !== "output-available" && (
+					live && (
 						<div className="text-muted-foreground italic">running…</div>
 					)
 				)}

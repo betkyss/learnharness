@@ -179,6 +179,8 @@ function sameDetails(a: unknown, b: unknown): boolean {
 
 export interface SessionState {
 	messages: LhViewMessage[];
+	/** The native message currently receiving tokens; null during tool execution or idle. */
+	activeMessageId: string | null;
 	nativeMessages: LhMessage[];
 	/** Server-read history only; optimistic bubbles are not delivery proof. */
 	hasConfirmedConversation: boolean;
@@ -303,6 +305,7 @@ export class SessionModel {
 				: null;
 		return {
 			messages: projectView(messages, live),
+			activeMessageId: live ? this.streamingMessageId : null,
 			nativeMessages: messages,
 			hasConfirmedConversation: this.base.some(m => m.role === "user" || m.role === "assistant"),
 			contextTokens: measuredContextTokens(messages, this.incompleteUsageIds),

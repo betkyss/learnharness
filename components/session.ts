@@ -128,6 +128,7 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 
 	return {
 		messages: state.messages,
+		activeMessageId: state.activeMessageId,
 		nativeMessages: state.nativeMessages,
 		hasConfirmedConversation: state.hasConfirmedConversation,
 		contextTokens: state.contextTokens,

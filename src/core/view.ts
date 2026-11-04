@@ -229,10 +229,8 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 					reasoning.push({ type: "reasoning", id: `${m.id}-r${reasoningN++}`, text: block.thinking, state: "done" });
 				} else if (block.type === "toolCall") {
 					const part = toolPartOf(block, live, streamingMessage);
-					if ((QUESTION_TOOLS as readonly string[]).includes(block.name)) {
-						part.sourceMessageId = m.id;
-						part.sourceContentIndex = contentIndex;
-					}
+					part.sourceMessageId = m.id;
+					part.sourceContentIndex = contentIndex;
 					if (block.name === SEND_TO_USER_TOOL) {
 						// Failed/aborted generations never execute their calls;
 						// the provider error/abort UI already owns that outcome.
@@ -278,11 +276,14 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				}
 			}
 			const group = lastAssistant();
+			// Render-only identity survives empty streaming placeholders and
+			// repeated toolCallIds in older native messages.
+			for (const part of parts) part.sourceMessageId ??= m.id;
 			if (group) {
 				// Same group: the step separator renders between the steps.
-				group.parts.push({ type: "step-start" }, ...parts);
+				group.parts.push({ type: "step-start", sourceMessageId: m.id }, ...parts);
 			} else {
-				out.push({ id: m.id, role: "assistant", parts: [{ type: "step-start" }, ...parts] });
+				out.push({ id: m.id, role: "assistant", parts: [{ type: "step-start", sourceMessageId: m.id }, ...parts] });
 			}
 			continue;
 		}

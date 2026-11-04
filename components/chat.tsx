@@ -15,7 +15,8 @@ import {
 } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { PathText } from "@/components/file-path-chip";
-import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
+import { WorkGroup } from "@/components/work-group";
+import { groupWorkParts } from "@/components/work-groups";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { BrailleSpinner } from "@/components/braille-spinner";
 import { LiveToolCard } from "@/components/artifacts/live-tool-card";
@@ -249,7 +250,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { messages, activeMessageId, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
 
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
@@ -1458,7 +1459,9 @@ export function Chat({
 									})}
 								</Fragment>
 							) : (
-									<Fragment key={m.id || `m-${mi}`}>
+									// Persisting a streamed run replaces its temporary native IDs.
+									// Keep this run mounted so disclosures retain their state.
+									<Fragment key={m.role === "assistant" ? `assistant-${mi}` : m.id || `m-${mi}`}>
 									{/* THE INFERRED TEACH SEAM (owner ruling 2026-09-26, the verdict
 									death): teaching begins where the FIRST nodeId-tagged quiz is
 									posed — the fold (phaseTimeline, the same derivation the phase chip
@@ -1516,8 +1519,9 @@ export function Chat({
 									) : (
 									<Message from="assistant" className="max-w-full">
 									<MessageContent className="w-full">
-											{m.parts.map((part, pi) => {
-												const isLastPart = mi === messages.length - 1 && pi === m.parts.length - 1;
+											{groupWorkParts(m.parts, mi > 0 && phases[mi] === "teach" && phases[mi - 1] !== "teach" ? teachStepIndex(m.parts) : -1, activeMessageId).map((entry) => {
+												if (entry.type === "work") return <WorkGroup key={entry.key} entry={entry} />;
+												const { part, index: pi } = entry;
 												// The step boundary where teaching begins (round 8): when
 												// the teach flip happens in a LATER step, its PhaseDivider
 												// replaces this boundary's plain hairline.
@@ -1527,22 +1531,16 @@ export function Chat({
 													phases[mi] === "teach" &&
 													phases[mi - 1] !== "teach" &&
 													teachStepIndex(m.parts) === pi;
-												// A tool call that errored BACK TO THE AGENT (validation
-												// failure, malformed args) is invisible work — the agent
-												// reads the error and retries. Owner ruling 2026-09-26:
-												// surface the retry loop as one quiet line, any tool,
-												// instead of silence (question tools used to render null,
-												// so a flailing quiz loop read as a stall). Aborts are
-												// terminal — nothing retries — so they stay silent.
+												// A failed tool is a visible boundary. Show its reason;
+												// failure alone is not evidence that a retry is running.
 												if (
 													part.state === "output-error" &&
-													part.type.startsWith("tool-") &&
-													part.errorText !== "Operation aborted"
+													part.type.startsWith("tool-")
 												) {
 													return (
-														<SystemLine key={`retry-${pi}`} testId="tool-retry">
-															Retrying…
-														</SystemLine>
+														<div key={entry.key} data-testid="tool-error" role="alert" className="my-2 whitespace-pre-wrap break-words border-l-2 border-destructive/50 pl-3 text-sm text-destructive">
+															{part.type.slice(5)}: {part.errorText || "The tool call failed."}
+														</div>
 													);
 												}
 												switch (part.type) {
@@ -1555,13 +1553,6 @@ export function Chat({
 															</div>
 														);
 													}
-													case "reasoning":
-														return (
-															<Reasoning key={pi} isStreaming={status === "streaming" && isLastPart} className="mb-2">
-																<ReasoningTrigger />
-																<ReasoningContent>{part.text ?? ""}</ReasoningContent>
-															</Reasoning>
-														);
 													case "step-start":
 														if (teachBoundary)
 															return <PhaseDivider key={`teach-step-${pi}`} phase="teach" />;

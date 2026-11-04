@@ -196,6 +196,15 @@ export type ReasoningContentProps = ComponentProps<
   children: string;
 };
 
+/** Full Markdown for a fragment, without another disclosure heading. */
+export const ReasoningText = memo(({ children, className }: { children: string; className?: string }) => (
+  <div className={className}>
+    <Streamdown components={mdComponents} plugins={streamdownPlugins} remend={streamdownRemend}>
+      {transformMathDelimiters(children)}
+    </Streamdown>
+  </div>
+));
+
 // Shares message.tsx's Streamdown config (math delimiters, dark mermaid,
 // remark-breaks) — reasoning renders the same contract as message text.
 
@@ -209,9 +218,7 @@ export const ReasoningContent = memo(
       )}
       {...props}
     >
-      <Streamdown components={mdComponents} plugins={streamdownPlugins} remend={streamdownRemend}>
-        {transformMathDelimiters(children)}
-      </Streamdown>
+      <ReasoningText>{children}</ReasoningText>
     </CollapsibleContent>
   )
 );
