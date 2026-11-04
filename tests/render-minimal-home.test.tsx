@@ -62,14 +62,18 @@ describe("KnowledgeSummary — the quiet home summary (2026-10-06)", () => {
 		assert.ok(!html.includes("truncate"), "no truncating source rows");
 	});
 
-	it("the empty knowledge base says so, quietly — import is the entry point", () => {
+	it("the empty knowledge base points to sessions and path attachments, without dropping statistics", () => {
 		const html = render({ propositions: 0, chains: 0, teachSessions: 0, practiceSessions: 0, importedNotes: 0 });
 		assert.ok(html.includes("Start teaching"));
 		assert.ok(html.includes("/chat/new?mode=practice"), "the practice entry point is available");
+		assert.ok(html.includes("Attach your material with the paperclip or drag and drop.</p>"));
+		assert.ok(html.includes("0 propositions") && html.includes("0 imported notes"));
+		assert.ok(!html.includes("import notes to begin"));
 	});
 
 	it("non-empty shows no empty-state hint", () => {
 		const html = render();
 		assert.ok(!html.includes("Start teaching"));
+		assert.ok(!html.includes("Start a session to begin learning."));
 	});
 });

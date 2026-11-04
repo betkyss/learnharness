@@ -56,9 +56,12 @@ export function KnowledgeSummary({
 				{importedNotes} {importedNotes === 1 ? "imported note" : "imported notes"}
 			</p>
 			{empty && (
-				<p className="flex gap-4 pt-2 font-ui text-sm text-foreground">
-					<Link href="/chat/new" className="underline underline-offset-4">Start teaching</Link><Link href="/chat/new?mode=practice" className="underline underline-offset-4">Practice</Link>
-				</p>
+				<div className="pt-2">
+					<p className="flex gap-4 font-ui text-sm text-foreground">
+						<Link href="/chat/new" className="underline underline-offset-4">Start teaching</Link><Link href="/chat/new?mode=practice" className="underline underline-offset-4">Practice</Link>
+					</p>
+					<p className="mt-1 font-ui text-xs text-muted-foreground/70">Attach your material with the paperclip or drag and drop.</p>
+				</div>
 			)}
 		</div>
 	);
