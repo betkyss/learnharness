@@ -30,6 +30,8 @@
  * lands here.
  */
 
+import { BACKGROUND_MODEL_ROLES, resolveRoleSpec } from "@/src/core";
+import { validateModelSpeed } from "@/src/server";
 import type { AgentSettings, ChatSettings, ModelsSettings } from "@/src/core";
 import {
 	SETTINGS_SECTIONS,
@@ -71,7 +73,7 @@ export async function PUT(request: Request, ctx: { params: Promise<{ section: st
 	// Section-specific cross-validation (against the catalog / the prompt
 	// store) — the parsers only see shapes.
 	if (section === "chat") {
-		const verdict = validateChatSettings(parsed.settings as ChatSettings);
+		const verdict = validateChatSettings(parsed.settings as ChatSettings, effectiveSettings().models.strong);
 		if (!verdict.ok) {
 			return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
 		}
@@ -93,6 +95,19 @@ export async function PUT(request: Request, ctx: { params: Promise<{ section: st
 		// mirrored back by every write while the disabled toggle couldn't
 		// reach the OFF escape hatch. An ON with a real file stays valid.
 		const agent = parsed.settings as AgentSettings;
+		for (const role of BACKGROUND_MODEL_ROLES) {
+			const override = agent.models?.[role];
+			if (!override) continue;
+			const spec = resolveRoleSpec(role, { ...record, agent });
+			const verdict = validateModelSpeed(override, spec);
+			if (!verdict.ok) {
+				// A later slot/model change can make an existing preference inert.
+				// Preserve unrelated edits; runtime resolution falls back to Standard.
+				const previous = record.agent?.models?.[role];
+				const sameModel = previous?.model?.provider === override.model?.provider && previous?.model?.id === override.model?.id;
+				if (previous?.speed !== override.speed || !sameModel) return Response.json({ error: `${role}: ${verdict.error}` }, { status: 400 });
+			}
+		}
 		const segments = new Set(allSegmentPaths());
 		const orphans: string[] = [];
 		for (const [path, on] of Object.entries(agent.prompts ?? {})) {

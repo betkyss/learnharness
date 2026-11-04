@@ -1,3 +1,4 @@
+import type { ModelSpeed } from "../model-speed.ts";
 /**
  * Model-catalog contracts (model-control wave, 2026-09-12) — the client-safe
  * shapes of GET /api/models and PUT /api/chats/[id]/settings responses.
@@ -21,6 +22,7 @@ export interface ModelCatalogEntry {
 	 * thinkingLevelMap — e.g. GLM-5.3-flash: low|high|max). The thinking
 	 * picker lists exactly these; anything else is a lie. */
 	supportedLevels: ThinkingLevel[];
+	supportedSpeeds?: readonly ModelSpeed[];
 	/** Null when LearnHarness cannot estimate prices for this connection. */
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
 	/** Null for native CLI aliases whose effective limits are session-specific. */
@@ -35,6 +37,7 @@ export interface ModelCatalogEntry {
 export interface CatalogDefaults {
 	model: { provider: string; id: string };
 	thinkingLevel?: ThinkingLevel;
+	speed?: ModelSpeed;
 }
 
 /** One background role's RESOLVED pin (BYOK, owner 2026-09-22): what that
@@ -43,7 +46,7 @@ export interface CatalogDefaults {
  *  settings UI shows "not configured" from it. */
 export type RolePins = Record<
 	BackgroundModelRole,
-	{ model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel } | null
+	{ model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel; speed?: ModelSpeed } | null
 >;
 
 /** One slot tier's RESOLVED pin (BYOK, owner 2026-09-22): NULL = the tier

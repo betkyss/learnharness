@@ -1,3 +1,4 @@
+import { isModelSpeed, type ModelSpeed } from "./model-speed.ts";
 /**
  * THE USER SETTINGS RECORD's shape + sanitizer (settings-storage wave,
  * 2026-09-19): one versioned, DELTA-shaped record at the data-dir seam
@@ -49,6 +50,7 @@ export const BACKGROUND_MODEL_ROLES = [
 	"visualMaker",
 	"extractor",
 	"auditor",
+	"pdfReader",
 ] as const;
 
 export type BackgroundModelRole = (typeof BACKGROUND_MODEL_ROLES)[number];
@@ -60,6 +62,7 @@ export interface RoleModelOverride {
 	model?: { provider: string; id: string };
 	/** The thinking budget swap. */
 	thinkingLevel?: ThinkingLevel;
+	speed?: ModelSpeed;
 }
 
 // ─── Model slots (model slots wave, 2026-09-20) ──────────────────────────────
@@ -201,6 +204,7 @@ export interface ModelSlot {
 	model?: { provider: string; id: string };
 	/** The thinking budget swap. */
 	thinkingLevel?: ThinkingLevel;
+	speed?: ModelSpeed;
 }
 
 /** The `models` settings section (owner decision 2026-09-20: a dedicated
@@ -600,6 +604,7 @@ function sanitizeRoleOverride(raw: unknown): RoleModelOverride | undefined {
 	if (typeof r.thinkingLevel === "string" && THINKING_LEVELS.includes(r.thinkingLevel as ThinkingLevel)) {
 		out.thinkingLevel = r.thinkingLevel as ThinkingLevel;
 	}
+	if (isModelSpeed(r.speed)) out.speed = r.speed;
 	return Object.keys(out).length ? out : undefined;
 }
 

@@ -53,6 +53,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CacheRetention } from "@earendil-works/pi-ai";
+import { SpeedControl } from "./speed-menu";
+import { BACKGROUND_MODEL_ROLES, ROLE_SLOT, resolveModelSpec, resolveModelSpeed, type BackgroundModelRole } from "@/src/core";
 import { CacheRetentionMenu, cacheRetentionLabel } from "./cache-retention-menu.tsx";
 import { MenuShell } from "@/components/menu-shell";
 import { useSettingsSaved } from "@/components/settings-signal";
@@ -146,6 +148,7 @@ export function composeSlotModel(
 	}
 	next[slot] = {
 		...(prev?.cacheRetention !== undefined ? { cacheRetention: prev.cacheRetention } : {}),
+		...(prev?.speed !== undefined ? { speed: resolveModelSpeed(provider || prev.model?.provider || "", id || prev.model?.id || "", prev.speed) } : {}),
 		...(provider && id ? { model: { provider, id } } : prev?.model ? { model: prev.model } : {}),
 		...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
 	};
@@ -661,6 +664,7 @@ export function AgentSection({
 									onClick={() => setOpenMenu(thisMenuOpen === "thinking" ? null : { target: slot, kind: "thinking" })}
 									widthClass="w-20"
 								/>
+								<SpeedControl provider={coord?.provider} modelId={coord?.id} value={override?.speed} testid={`slot-speed-${slot}`} onOpen={() => setOpenMenu(null)} onPick={(speed) => onModelsChange({ ...models, [slot]: { ...override, speed } })} />
 								{advancedModels && <MenuTrigger
 									value={cacheRetentionLabel(override?.cacheRetention)}
 									emptyLabel="Cache: default"
@@ -734,6 +738,24 @@ export function AgentSection({
 					);
 				})}
 			</SettingsGroup>
+
+			{BACKGROUND_MODEL_ROLES.some(role => resolveModelSpec(role, agent?.models?.[role], models)?.provider === "chatgpt") && <SettingsGroup label="Worker speeds" testid="group-worker-speeds">
+				{BACKGROUND_MODEL_ROLES.map(role => {
+					const spec = resolveModelSpec(role, agent?.models?.[role], models);
+					if (spec?.provider !== "chatgpt") return null;
+					const slot = ROLE_SLOT[role];
+					const names: Record<BackgroundModelRole, string> = { researcher: "Researcher", demoBuilder: "Demo builder", visualMaker: "Visual maker", extractor: "Extractor", auditor: "Auditor", pdfReader: "PDF reader" };
+					return <SettingsRow key={role} label={names[role]} hint={prettyModel(spec.id)} testid={`role-row-${role}`}>
+						<SpeedControl provider={spec.provider} modelId={spec.id} value={agent?.models?.[role]?.speed} inherited={models?.[slot]?.speed} inheritLabel={SLOT_META[slot].label} testid={`role-speed-${role}`} onOpen={() => setOpenMenu(null)} onPick={(speed) => {
+							const overrides = { ...agent?.models };
+							const next = { ...overrides[role] };
+							if (speed === undefined) delete next.speed; else next.speed = speed;
+							if (Object.keys(next).length) overrides[role] = next; else delete overrides[role];
+							onSectionChange({ ...agent, models: overrides });
+						}} />
+					</SettingsRow>;
+				})}
+			</SettingsGroup>}
 
 			<SettingsGroup label="Tools" testid="group-tools">
 				{/* The prober's graph tools (wave 7, owner ruling 2026-09-23):

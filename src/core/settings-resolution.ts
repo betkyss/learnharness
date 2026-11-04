@@ -1,3 +1,4 @@
+import { resolveModelSpeed, type ModelSpeed } from "./model-speed.ts";
 /**
  * THE SETTINGS RESOLUTION LAYER (settings-storage wave, 2026-09-19): pure
  * projection of the delta record (core/settings.ts UserSettings) into
@@ -56,6 +57,7 @@ export interface EffectiveSlot {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
+	speed?: ModelSpeed;
 }
 
 /** A fully-resolved model pin for one role — same shape/level semantics
@@ -65,6 +67,7 @@ export interface EffectiveModelSpec {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
+	speed?: ModelSpeed;
 }
 
 /** The concrete appearance view — same shape as the factory's. */
@@ -118,6 +121,7 @@ export function resolveConversationSpec(
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: chat?.thinkingLevel ?? strong?.thinkingLevel,
+		...((chat?.speed ?? strong?.speed) !== undefined ? { speed: resolveModelSpeed(model.provider, model.id, chat?.speed ?? strong?.speed) } : {}),
 	};
 }
 
@@ -141,6 +145,7 @@ export function resolveSlot(slot: ModelSlot | undefined): EffectiveSlot | null {
 	if (!slot?.model) return null;
 	return {
 		provider: slot.model.provider, id: slot.model.id, thinkingLevel: slot.thinkingLevel,
+		...(slot.speed !== undefined ? { speed: resolveModelSpeed(slot.model.provider, slot.model.id, slot.speed) } : {}),
 		...(slot.cacheRetention !== undefined ? { cacheRetention: slot.cacheRetention } : {}),
 	};
 }
@@ -164,6 +169,7 @@ export function resolveModelSpec(
 		provider: model.provider,
 		id: model.id,
 		thinkingLevel: override?.thinkingLevel ?? slot?.thinkingLevel,
+		...((override?.speed ?? slot?.speed) !== undefined ? { speed: resolveModelSpeed(model.provider, model.id, override?.speed ?? slot?.speed) } : {}),
 	};
 }
 

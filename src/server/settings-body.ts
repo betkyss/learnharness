@@ -11,6 +11,7 @@
  * a different concern and are preserved by the sanitizer (core/settings.ts).
  */
 
+import { isModelSpeed } from "../core/model-speed.ts";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { isHexColor, type ChatSettings } from "../core";
 import type {
@@ -42,6 +43,7 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 	const raw = body as {
 		model?: { provider?: unknown; id?: unknown };
 		thinkingLevel?: unknown;
+		speed?: unknown;
 	};
 	const settings: ChatSettings = {};
 	if (raw.model !== undefined) {
@@ -60,6 +62,10 @@ export function parseSettingsBody(body: unknown): SettingsBodyResult<ChatSetting
 			return { ok: false, error: "thinkingLevel must be a string" };
 		}
 		settings.thinkingLevel = raw.thinkingLevel as ThinkingLevel;
+	}
+	if (raw.speed !== undefined) {
+		if (!isModelSpeed(raw.speed)) return { ok: false, error: "speed must be standard, fast, or ultrafast" };
+		settings.speed = raw.speed;
 	}
 	// Wave 7 killed the graph-context injection (owner: zero configuration
 	// beyond chat models — the prober reads its map through tools now); its
@@ -127,6 +133,10 @@ function parseRoleOverride(value: unknown, role: string): { ok: true; override: 
 			return { ok: false, error: `${role}.thinkingLevel must be a string` };
 		}
 		override.thinkingLevel = raw.thinkingLevel as ThinkingLevel;
+	}
+	if (raw.speed !== undefined) {
+		if (!isModelSpeed(raw.speed)) return { ok: false, error: `${role}.speed must be standard, fast, or ultrafast` };
+		override.speed = raw.speed;
 	}
 	return { ok: true, override };
 }

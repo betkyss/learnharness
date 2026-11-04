@@ -1,3 +1,4 @@
+import type { ModelSpeed } from "../model-speed.ts";
 /**
  * Chat-session contracts — records, summaries, UI extension points
  *
@@ -78,6 +79,7 @@ export interface ChatSettings {
 	/** pi thinking level — must be in the chosen model's supported list
 	 *  (getSupportedThinkingLevels; enforced by the settings route). */
 	thinkingLevel?: ThinkingLevel;
+	speed?: ModelSpeed;
 }
 
 

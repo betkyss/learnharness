@@ -16,6 +16,7 @@
  */
 
 export * from "./contracts.ts";
+export * from "./model-speed.ts";
 export * from "./ports.ts";
 export * from "./chains.ts";
 export * from "./source-organization.ts";

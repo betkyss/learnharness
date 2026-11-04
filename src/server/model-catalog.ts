@@ -19,6 +19,7 @@
 
 import { clampThinkingLevel, getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { supportedModelSpeeds, type ModelSpeed } from "../core/model-speed.ts";
 import { piModels } from "../agent/models.ts";
 import { customProviderAvailable } from "./custom-provider.ts";
 import { chatGPTConnected, chatGPTModel, chatGPTModels, refreshChatGPTModels } from "../agent/chatgpt-bridge.ts";
@@ -85,6 +86,7 @@ export function catalogDefaultsFor(
 	return {
 		model,
 		...(level !== undefined ? { thinkingLevel: level } : {}),
+		...(strong?.speed !== undefined ? { speed: strong.speed } : {}),
 	};
 }
 
@@ -108,6 +110,7 @@ export function rolePinsFor(
 			? {
 					model: { provider: spec.provider, id: spec.id },
 					...(spec.thinkingLevel !== undefined ? { thinkingLevel: spec.thinkingLevel } : {}),
+					...(spec.speed !== undefined ? { speed: spec.speed } : {}),
 				}
 			: null;
 	}
@@ -135,6 +138,7 @@ export function catalogSlots(): SlotPins {
 			? {
 					model: { provider: slot.provider, id: slot.id },
 					...(slot.thinkingLevel !== undefined ? { thinkingLevel: slot.thinkingLevel } : {}),
+					...(slot.speed !== undefined ? { speed: slot.speed } : {}),
 					...(slot.cacheRetention !== undefined ? { cacheRetention: slot.cacheRetention } : {}),
 				}
 			: null;
@@ -180,6 +184,7 @@ export function toModelDto(model: Model<Api>): ModelDto {
 		reasoning: model.reasoning,
 		input: [...model.input],
 		supportedLevels: getSupportedThinkingLevels(model),
+		...(model.provider === "chatgpt" ? { supportedSpeeds: supportedModelSpeeds(model.provider, model.id) } : {}),
 		cost: model.provider === CLAUDE_CODE_PROVIDER || model.provider === CUSTOM_PROVIDER.id ? null : {
 			input: model.cost.input,
 			output: model.cost.output,
@@ -245,7 +250,15 @@ export type SettingsValidation =
  *  - thinkingLevel: must be in the resolved model's supported list —
  *    the model the picker writes against (settings.model, else config's
  *    prober/teacher pin; one controller, so the two specs share it). */
-export function validateChatSettings(settings: ChatSettings): SettingsValidation {
+export function validateModelSpeed(settings: { model?: { provider: string; id: string }; speed?: ModelSpeed }, fallback?: { provider: string; id: string } | null): SettingsValidation {
+	const model = settings.model ?? fallback;
+	if (settings.speed === undefined) return { ok: true };
+	if (!model || !supportedModelSpeeds(model.provider, model.id).includes(settings.speed)) return { ok: false, error: "The selected model does not support this speed." };
+	return { ok: true };
+}
+export function validateChatSettings(settings: ChatSettings, fallback?: { provider: string; id: string } | null): SettingsValidation {
+	const speed = validateModelSpeed(settings, fallback);
+	if (!speed.ok) return speed;
 	const providers = connectionProviderIds();
 	if (settings.model) {
 		const { provider, id } = settings.model;
@@ -274,6 +287,8 @@ export function validateModelsSettings(settings: ModelsSettings, stored?: Models
 	for (const name of MODEL_SLOTS) {
 		const slot = settings[name];
 		if (!slot) continue;
+		const speed = validateModelSpeed(slot);
+		if (!speed.ok) return speed;
 		const previous = stored?.[name]?.model;
 		if (slot.model && previous && slot.model.provider === previous.provider && slot.model.id === previous.id) continue;
 		const verdict = validateSlotSpec(name, slot);

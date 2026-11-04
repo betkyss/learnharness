@@ -18,8 +18,10 @@ const originalKey = process.env.OPENAI_API_KEY;
 let leaseError: string | null = null;
 let requests: { authorization: string | null; body: Record<string, any>; url: string }[] = [];
 let responseEvents: unknown[] = [];
+let nextResponseEvents: unknown[] | undefined;
 const ipc = (value: unknown) => (process.emit as (name: string, value: unknown) => boolean)("message", value);
 const model = piModels().getModel("openai", "gpt-5") as Model<"openai-responses">;
+let accountModels = [{ id: model.id, name: "Scratch account model" }, { id: "unknown-capabilities", name: "Do not invent capabilities" }];
 const status = { available: true, pending: false, allowBackgroundUse: false, activeId: "scratch-account", accounts: [{ id: "scratch-account", email: "dummy@example.invalid", registration: "oaiapp_scratch", connected: true, planEnabled: true, background: false }], error: null };
 before(async () => {
 	process.env.LH_DESKTOP_SERVER = "1"; process.env.LH_DESKTOP_API_SECRET = "d".repeat(64);
@@ -29,7 +31,7 @@ before(async () => {
 	Object.defineProperty(process, "send", { configurable: true, value: (message: any, callback?: () => void) => {
 		queueMicrotask(() => {
 			ipc({ channel: "lh:chatgpt", id: message.id, op: message.op,
-				...(message.op === "lease" && leaseError ? { ok: false, error: leaseError, stamp: { epoch: 1, authorityRevision: 1, revision: 1 } } : { ok: true, value: message.op === "lease" ? { accessToken: "scratch-oauth-only", accountId: "scratch-account", epoch: 1, authorityRevision: 1, revision: 1 } : { epoch: 1, authorityRevision: 1, revision: 1, status, accountId: "scratch-account", models: [{ id: model.id, name: "Scratch account model" }, { id: "unknown-capabilities", name: "Do not invent capabilities" }] } }),
+				...(message.op === "lease" && leaseError ? { ok: false, error: leaseError, stamp: { epoch: 1, authorityRevision: 1, revision: 1 } } : { ok: true, value: message.op === "lease" ? { accessToken: "scratch-oauth-only", accountId: "scratch-account", epoch: 1, authorityRevision: 1, revision: 1 } : { epoch: 1, authorityRevision: 1, revision: 1, status, accountId: "scratch-account", models: accountModels } }),
 			});
 		});
 		callback?.(); return true;
@@ -38,7 +40,9 @@ before(async () => {
 	globalThis.fetch = async (input, init) => {
 		const req = new Request(input, init);
 		requests.push({ authorization: req.headers.get("authorization"), body: JSON.parse(await req.text()), url: req.url });
-		return new Response(responseEvents.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+		const emitted = responseEvents;
+		if (nextResponseEvents) { responseEvents = nextResponseEvents; nextResponseEvents = undefined; }
+		return new Response(emitted.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 	};
 });
 after(() => {
@@ -134,7 +138,7 @@ test("consent revocation cancels only applicable background streams and preserve
 });
 
 test("payload sanitizer omits unsupported fields and rejects unsupported hosted tools", () => {
-	assert.deepEqual(chatGPTPayload({ model: "scratch", input: [], stream: false, store: true, metadata: { test: true }, previous_response_id: "old", background: true }, "scratch"), { model: "scratch", input: [], stream: true, store: false });
+	assert.deepEqual(chatGPTPayload({ model: "scratch", input: [], stream: false, store: true, metadata: { test: true }, previous_response_id: "old", background: true }, "scratch"), { model: "scratch", input: [], stream: true, store: false, service_tier: "default" });
 	assert.throws(() => chatGPTPayload({ input: [], tools: [{ type: "tool_search" }] }, "scratch"), /Unsupported/);
 });
 
@@ -216,6 +220,46 @@ test("case-insensitive Authorization overrides including null are refused before
 		assert.equal((await engine.streamFn(engine.model, context(), { headers }).result()).stopReason, "error");
 	}
 	assert.equal(requests.length, before);
+});
+
+test("all worker roles and foreground preserve subscription speed through real agent loops", async () => {
+ const { runSubagent } = await import("../src/agent/subagents/pi-run.ts");
+ const { resolveRoleSpec } = await import("../src/core/settings-resolution.ts");
+ const { BACKGROUND_MODEL_ROLES } = await import("../src/core/settings.ts");
+ const originalModels = accountModels;
+ const oldConsent = status.allowBackgroundUse;
+ try {
+  status.allowBackgroundUse = true;
+  const sol = piModels().getModel("openai", "gpt-6.1-sol")!;
+  const astra = piModels().getModel("openai", "gpt-6-astra")!;
+  accountModels = [model, sol, astra].map(m => ({ id: m.id, name: m.name }));
+  await refreshChatGPTModels([model, sol, astra] as Model<"openai-responses">[]);
+  for (const selected of [sol, astra]) for (const [speed, tier] of [["standard", "default"], ["fast", "priority"], ["ultrafast", "ultrafast"]] as const) {
+   requests = []; responseEvents = [complete()];
+   const pin = { model: { provider: "chatgpt", id: selected.id }, speed, thinkingLevel: "low" as const };
+   const record = { version: 1, models: { strong: pin, cheap: pin, vision: pin } };
+   for (const role of BACKGROUND_MODEL_ROLES) {
+    const spec = resolveRoleSpec(role, record)!;
+    const tool = { type: "function_call", id: "fc_speed", call_id: "call_speed", name: "speed_probe", namespace: "learnharness", arguments: "{}", status: "completed" };
+    responseEvents = [{ type: "response.output_item.added", output_index: 0, item: tool }, { type: "response.output_item.done", output_index: 0, item: tool }, complete([tool])];
+    nextResponseEvents = [complete()];
+    const before = requests.length;
+    await runSubagent([{ name: "speed_probe", label: "Speed probe", description: "Isolated local probe", parameters: Type.Object({}), execute: async () => ({ content: [{ type: "text", text: "OK" }], details: {} }) }], { role, engine: piEngineForSpec(spec, true), systemPrompt: "Isolated speed verification", prompt: "Reply OK", maxTurns: 2 });
+    assert.equal(requests.length - before, 2, "tool continuation must make a second request");
+    assert.equal(requests[before]!.body.service_tier, tier);
+    assert.equal(requests.at(-1)!.body.service_tier, tier, `${role} ${selected.id} ${speed}`);
+    assert.equal(requests.at(-1)!.body.reasoning.effort, "low");
+    assert.equal(requests.at(-1)!.authorization, "Bearer scratch-oauth-only");
+   }
+   const engine = piEngineForSpec({ provider: "chatgpt", id: selected.id, speed, thinkingLevel: "low" }, false);
+   await engine.streamFn(engine.model, context(), { onPayload: raw => ({ ...raw as object, service_tier: "caller-forged" }) }).result();
+   assert.equal(requests.at(-1)!.body.service_tier, tier);
+  }
+ } finally {
+  status.allowBackgroundUse = oldConsent;
+  accountModels = originalModels;
+  await refreshChatGPTModels([model]);
+ }
 });
 
 test("full credential-storage invalidation aborts foreground and background controllers and clears capabilities", () => {

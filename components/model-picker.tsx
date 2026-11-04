@@ -10,6 +10,8 @@ import { MenuShell } from "@/components/menu-shell";
 import { Hint } from "@/components/ui/hint";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
 import { useModelCatalog } from "@/components/model-catalog";
+import { resolveModelSpeed } from "@/src/core";
+import { SpeedControl } from "./settings/speed-menu";
 export { useModelCatalog } from "@/components/model-catalog";
 import { defaultOrderLevel, populateLevel, THINKING_LABEL } from "@/components/thinking-default";
 
@@ -92,6 +94,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		? session ? {
 				model: session.settings?.model ?? strong?.model,
 				thinkingLevel: session.settings?.thinkingLevel ?? strong?.thinkingLevel,
+				speed: session.settings?.speed ?? strong?.speed,
 			} : undefined
 		: strong;
 	const effectiveId = override?.model?.id;
@@ -212,13 +215,13 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const apply = useCallback(
 		(provider: string, id: string, level: ThinkingLevel | undefined) => {
 			if (chatId) {
-				void saveChat({ model: { provider, id }, thinkingLevel: level });
+				void saveChat({ model: { provider, id }, thinkingLevel: level, ...(session?.settings?.speed !== undefined ? { speed: resolveModelSpeed(provider, id, session.settings.speed) } : {}) });
 			} else {
 				// composeSlotModel's empty-string convention: no level = unset.
 				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));
 			}
 		},
-		[chatId, models, save, saveChat],
+		[chatId, models, session, save, saveChat],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the
@@ -326,6 +329,16 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				<span aria-hidden className="text-xs text-muted-foreground">▾</span>
 			</button>
 			</Hint>
+
+			<SpeedControl provider={effectiveProvider} modelId={effectiveId}
+				value={chatId ? session?.settings?.speed : strong?.speed}
+				inherited={strong?.speed} inheritLabel={chatId ? "Strong" : undefined}
+				testid="stats-speed" compact onOpen={() => setOpen(null)}
+				onPick={(speed) => {
+					if (chatId) void saveChat({ ...session?.settings, ...(speed !== undefined ? { speed } : { speed: undefined }) });
+					else if (strong?.model) void save({ ...models, strong: { ...strong, speed } });
+				}}
+			/>
 
 			{/* The shared dropdown body (extracted 2026-09-20): the agent
 			    settings' slot selects and the setup dialog use the exact same

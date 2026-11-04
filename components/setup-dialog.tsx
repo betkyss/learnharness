@@ -36,6 +36,7 @@
  * CMU title, z-50.
  */
 
+import { resolveModelSpeed } from "@/src/core";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
@@ -410,6 +411,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 		for (const slot of SLOT_ORDER) {
 			const level = levels[slot];
 			models[slot] = {
+				...(catalog?.slots[slot]?.speed !== undefined ? { speed: resolveModelSpeed(picked[slot]!.provider, picked[slot]!.id, catalog.slots[slot]!.speed) } : {}),
 				// Advanced controls stay out of setup; never erase their saved choice.
 				...(catalog?.slots[slot]?.cacheRetention !== undefined ? { cacheRetention: catalog.slots[slot]!.cacheRetention } : {}),
 				model: { provider: picked[slot]!.provider, id: picked[slot]!.id },
