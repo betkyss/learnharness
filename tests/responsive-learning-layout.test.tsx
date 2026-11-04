@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { dockHeightBudget } from '../components/dock-height';
-import { fitVisibleGraph } from '../components/graph-canvas';
 import { teaserText } from '../components/question-dock';
 import { GraphCostPanel } from '../components/graph-view';
 import { SettingsRow } from '../components/settings/controls';
@@ -17,13 +16,6 @@ it('uses a single form scroll at keyboard-like heights despite a small answer fo
   assert.ok(budget.viewportMaxHeight <= columnHeight-32);
  }
  assert.equal(dockHeightBudget({columnHeight:780,outsideHeight:60,beforeShellHeight:0,shellBorderHeight:2,contentHeight:600,questionHeight:450,questionPaddingHeight:12}).scrollWholeContent,false);
-});
-it('offers a readable Fit with pan when actual available height cannot contain a large graph',()=>{
- const box={minX:-600,maxX:600,minY:-400,maxY:400};
- const camera=fitVisibleGraph(box,390,420,{top:122,bottom:130},.35);
- assert.equal(camera.k,.35);
- assert.equal(camera.x,195);
- assert.equal(camera.y,206);
 });
 it('keeps prices inside the shell width, preserving full amounts and unknown pricing',()=>{
  const tokens={inputTokens:12345,outputTokens:678,cacheReadTokens:0,cacheWriteTokens:0,reasoningTokens:0};

@@ -1367,12 +1367,6 @@ export function GraphView({
 				},
 			},
 			initialCamera,
-   () => {
-    const rect = canvas.getBoundingClientRect();
-    const toolbar = canvas.parentElement?.parentElement?.querySelector(".graph-toolbar")?.getBoundingClientRect();
-    const dock = document.querySelector("[data-home-dock]")?.getBoundingClientRect();
-    return { top: toolbar ? Math.max(0, toolbar.bottom - rect.top + 16) : 56, bottom: dock ? Math.max(0, rect.bottom - dock.top + 24) : 24 };
-   },
 		);
 		rendererRef.current = renderer;
 		return () => {
@@ -1415,7 +1409,6 @@ export function GraphView({
 				edge: tokenHex("--ring"),
 				label: tokenHex("--muted-foreground"),
 				hoverText: tokenHex("--foreground"),
-				background: tokenHex("--background"),
 			},
 			// Match the app typography (Geist via the body's stack).
 			fontFamily: getComputedStyle(document.body).fontFamily,
@@ -1636,7 +1629,7 @@ export function GraphView({
 					className="graph-detail lh-no-drag absolute z-10 flex w-80 max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-xl border bg-card text-left shadow-lg"
 				>
 					<header className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1">
- <span className="text-xs text-muted-foreground">Proposition</span><button type="button" onClick={() => { setSelected(null); rendererRef.current?.clearSelection(); }} className="min-h-8 rounded px-2 text-xs hover:bg-accent">Close</button>
+ <span className="text-xs text-muted-foreground">Proposition</span><button type="button" onClick={() => { setSelected(null); }} className="min-h-8 rounded px-2 text-xs hover:bg-accent">Close</button>
  </header><div className="min-h-0 overflow-y-auto overscroll-contain p-3">
  <div className="text-sm font-medium leading-snug">{selected.node.name}</div>
 					<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{selected.node.statement}</div>
