@@ -26,9 +26,9 @@ export function QueuedSteersBody({ steers }: { steers: QueuedSteerLine[] }) {
 				<span
 					key={s.id}
 					title={s.text}
-					className="block max-w-[240px] truncate font-ui text-xs text-muted-foreground/60"
+					className="block max-w-[240px] truncate font-ui text-xs text-muted-foreground"
 				>
-					{s.text}
+					Queued: {s.text}
 				</span>
 			))}
 		</div>

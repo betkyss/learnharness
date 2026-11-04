@@ -194,9 +194,10 @@ describe("practice display surfaces", () => {
 		}
 	});
 
-	it("does not change the collapsed preview, dismissal or global prose renderer", () => {
+	it("uses a plain-text collapsed preview while preserving dismissal and global prose rendering", () => {
 		const preview = renderToStaticMarkup(dock({ statement: doubled }, false));
-		assert.ok(preview.includes(doubled));
+		assert.ok(!preview.includes("$"));
+		assert.ok(preview.includes("nabla"));
 		assert.deepEqual(math(preview).annotations, []);
 		const dismissed = renderToStaticMarkup(<ConcludeCard part={part({ outcome: "dismissed", verdict: doubled }, { reveal: doubled })} />);
 		assert.ok(dismissed.includes("Problem dismissed."));

@@ -73,7 +73,7 @@ describe("the shared settings dropdown trigger", () => {
 		for (const [html, id] of surfaces) {
 			const tag = tagOf(html, id);
 			const classes = tag.match(/class="([^"]+)"/)![1]!.split(" ");
-			for (const token of ["h-7", "rounded-sm", "border", "border-border", "bg-background", "px-1.5", "font-ui", "text-xs", "hover:border-muted-foreground/50"]) {
+			for (const token of ["h-8", "rounded-sm", "border", "border-border", "bg-background", "px-1.5", "font-ui", "text-xs", "hover:border-muted-foreground/50"]) {
 				assert.ok(classes.includes(token), `${id}: ${token}`);
 			}
 			assert.ok(html.includes("▾"), `${id}: shared dropdown indicator`);
@@ -126,7 +126,8 @@ describe("AgentSection (thin SSR)", () => {
 		// carries a Default row (menu-default testid is retired).
 		assert.equal((html.match(/>Default<\/span>/g) ?? []).length, 0, "no Default trigger");
 		assert.ok(!html.includes('data-testid="menu-default"'), "no Default row");
-		assert.equal((html.match(/>—<\/span>/g) ?? []).length, 6, "three slots × two — triggers");
+		assert.equal((html.match(/>Model<\/span>/g) ?? []).length, 3);
+		assert.equal((html.match(/>Thinking<\/span>/g) ?? []).length, 3);
 		// the per-role rows are GONE (slots-only)
 		for (const role of ["researcher", "demoBuilder", "visualMaker"]) {
 			assert.ok(!html.includes(`data-testid="role-row-${role}"`), `${role} retired`);
@@ -255,7 +256,7 @@ describe("GraphSection — master switch + chunk budget (wave 7 + 2026-10-02)", 
 		const input = tagOf(html, "input-chunk-tokens");
 		assert.ok(input.includes('placeholder="4096"'), "the placeholder IS the resolved factory default");
 		assert.ok(!/value="\d/.test(input), "unset renders EMPTY, not a materialized 4096");
-		assert.ok(html.includes(">4096 tok</"), "the hint reports the resolved truth");
+		assert.ok(html.includes(">4096 tokens. Larger chunks give more context and may cost more.</"), "the hint reports the resolved truth");
 	});
 
 	it("a stored budget shows its value and denominates the hint", () => {
@@ -263,7 +264,7 @@ describe("GraphSection — master switch + chunk budget (wave 7 + 2026-10-02)", 
 			<GraphSection graph={{ enabled: true, extractionChunkTokens: 6000 }} onSectionChange={() => {}} />,
 		);
 		assert.ok(tagOf(html, "input-chunk-tokens").includes('value="6000"'));
-		assert.ok(html.includes(">6000 tok</"));
+		assert.ok(html.includes(">6000 tokens. Larger chunks give more context and may cost more.</"));
 	});
 });
 
@@ -313,7 +314,7 @@ describe("AppearanceSection (thin SSR)", () => {
 		// inks' empty state is "same as text" (the old hexes died with
 		// the factory token change).
 		assert.ok(html.includes('data-testid="font-trigger"'));
-		assert.equal((html.match(/Empty = same as text/g) ?? []).length, 2);
+		assert.equal((html.match(/placeholder="same as text"/g) ?? []).length, 2);
 		assert.ok(html.includes("16px"));
 	});
 

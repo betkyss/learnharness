@@ -1,6 +1,7 @@
 "use client";
 
-import { CheckIcon, CircleX } from "lucide-react";
+import { useState } from "react";
+import { ChevronRightIcon, CircleX } from "lucide-react";
 import type { PdfResult, ResearchResult, SubagentArtifactData } from "@/src/core";
 import type { LhViewMessage } from "@/src/core";
 import { isSubagentFailure } from "@/src/core";
@@ -69,7 +70,7 @@ function AbortedBadge({ kind }: { kind: string }) {
 	return (
 		<div data-testid="job-aborted-badge" className="flex items-center gap-2 text-xs text-muted-foreground">
 			<CircleX className="size-3.5" />
-			<span className="font-medium uppercase tracking-wide">{kind}</span>
+			<span className="font-medium">{kind}</span>
 			<span>aborted by the learner</span>
 		</div>
 	);
@@ -80,22 +81,23 @@ function AbortedBadge({ kind }: { kind: string }) {
  * the badge marks delivery, the collapsed details carries the full text
  * + consulted pages. */
 function PdfCompleteBadge({ result }: { result: PdfResult }) {
+ const [open, setOpen] = useState(false);
 	// The honest count is READ pages (extract/render — sources v1 split);
 	// the ?? is runtime tolerance for pre-split persisted steers.
 	const readPages = result.pagesRead ?? result.pagesConsulted;
 	return (
-		<details data-testid="pdf-complete-badge" className="group w-full text-xs text-muted-foreground">
-			<summary className="flex cursor-pointer select-none list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-				<CheckIcon className="size-3.5" />
-				<span className="font-medium uppercase tracking-wide">PDF</span>
+		<details data-testid="pdf-complete-badge" className="completed-brief group w-full text-sm" onToggle={event => setOpen(event.currentTarget.open)}>
+			<summary aria-expanded={open} className="flex min-h-9 cursor-pointer select-none list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-sm py-1 text-foreground focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+				<ChevronRightIcon aria-hidden className="size-4 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />
+				<span className="font-medium">PDF</span>
 				<span>reading complete</span>
 				{readPages.length > 0 && (
 					<span>
 						· read {readPages.length} page{readPages.length === 1 ? "" : "s"}
 					</span>
 				)}
-				<span className="ml-1 text-xs text-muted-foreground/70 group-open:hidden">view brief</span>
-				<span className="ml-1 hidden text-xs text-muted-foreground/70 group-open:inline">hide brief</span>
+				<span className="ml-1 text-xs text-muted-foreground/70 group-open:hidden">Read brief</span>
+				<span className="ml-1 hidden text-xs text-muted-foreground/70 group-open:inline">Hide brief</span>
 			</summary>
 			<div className="mt-2">
 				<PdfBriefCard output={result} />
@@ -110,15 +112,16 @@ function PdfCompleteBadge({ result }: { result: PdfResult }) {
  * affordance): full markdown + sources, one click away, no extra fetch —
  * the artifact part in the record is the single source of truth. */
 function ResearchCompleteBadge({ result }: { result: ResearchResult }) {
+ const [open, setOpen] = useState(false);
 	return (
-		<details data-testid="research-complete-badge" className="group w-full text-xs text-muted-foreground">
-			<summary className="flex cursor-pointer select-none list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-				<CheckIcon className="size-3.5" />
-				<span className="font-medium uppercase tracking-wide">Research</span>
+		<details data-testid="research-complete-badge" className="completed-brief group w-full text-sm" onToggle={event => setOpen(event.currentTarget.open)}>
+			<summary aria-expanded={open} className="flex min-h-9 cursor-pointer select-none list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-sm py-1 text-foreground focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+				<ChevronRightIcon aria-hidden className="size-4 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />
+				<span className="font-medium">Research</span>
 				<span>complete</span>
-				{result.sources.length > 0 && <span>· {result.sources.length} sources</span>}
-				<span className="ml-1 text-xs text-muted-foreground/70 group-open:hidden">view brief</span>
-				<span className="ml-1 hidden text-xs text-muted-foreground/70 group-open:inline">hide brief</span>
+				{result.sources.length > 0 && <span>· {result.sources.length} {result.sources.length === 1 ? "source" : "sources"}</span>}
+				<span className="ml-1 text-xs text-muted-foreground/70 group-open:hidden">Read brief</span>
+				<span className="ml-1 hidden text-xs text-muted-foreground/70 group-open:inline">Hide brief</span>
 			</summary>
 			<div className="mt-2">
 				<ResearchBriefCard output={result} />

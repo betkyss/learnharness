@@ -192,16 +192,20 @@ export function SettingsDialogBody({
 	// Fetch once per dialog mount. 200 {settings: null} is FIRST BOOT
 	// (no record = factory everything), not a failure — the error state is
 	// a non-200 or a network throw only.
+	const [loadAttempt, setLoadAttempt] = useState(0);
 	useEffect(() => {
+		let cancelled = false;
+		setRecord(undefined);
 		fetch("/api/settings")
 			.then((r) =>
 				r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)),
 			)
 			.then((body: { settings: UserSettings | null }) =>
-				setRecord(body.settings ?? { version: CURRENT_SETTINGS_VERSION }),
+				!cancelled && setRecord(body.settings ?? { version: CURRENT_SETTINGS_VERSION }),
 			)
-			.catch(() => setRecord(null));
-	}, []);
+			.catch(() => { if (!cancelled) setRecord(null); });
+		return () => { cancelled = true; };
+	}, [loadAttempt]);
 
 	// Escape closes — the layered-dismiss convention (Esc is dead for the
 	// sections' own editors while they hold focus; this listener is the
@@ -209,6 +213,7 @@ export function SettingsDialogBody({
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === "Escape") {
+				if (e.defaultPrevented || document.querySelector("[data-lh-menu]")) return;
 				// THE ONE-ESC LAW (owner, keyboard round 2026-10-06): claim
 				// at the document level — the window chain (dictation →
 				// abort) must not also act. One Esc, one action.
@@ -299,13 +304,16 @@ export function SettingsDialogBody({
 					</Hint>
 			</header>
 
-			<div className="flex min-h-0 flex-1">
+			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
 				{/* Left nav — text-only, the session-list mono language,
 					    active = bg-accent. */}
-				<nav
+				<select aria-label="Settings section" data-testid="settings-section-select" value={active} onChange={(event) => setActive(event.target.value as SectionId)} className="m-2 h-8 rounded-sm border bg-card px-2 text-sm md:hidden">
+{SECTIONS.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
+</select>
+<nav
 					aria-label="Settings sections"
 					data-testid="settings-nav"
-					className="flex w-44 shrink-0 flex-col gap-1 border-r border-border p-2"
+					className="hidden min-h-0 w-full shrink-0 gap-1 overflow-x-auto md:flex border-b border-border p-2 md:w-44 md:flex-col md:overflow-y-auto md:border-r md:border-b-0"
 				>
 					{SECTIONS.map((s) => (
 						<button
@@ -313,7 +321,7 @@ export function SettingsDialogBody({
 							type="button"
 							data-testid={`settings-nav-${s.id}`}
 							aria-current={active === s.id}
-							className={`rounded-sm px-3 py-1.5 text-left font-ui text-sm transition-colors ${
+							className={`shrink-0 whitespace-nowrap rounded-sm px-3 py-1.5 text-left font-ui text-sm transition-colors ${
 								active === s.id
 									? "bg-accent text-foreground"
 									: "text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -333,7 +341,7 @@ export function SettingsDialogBody({
 				    nothing may shift when the lock engages. */}
 				<div
 					ref={contentRef}
-					className="min-w-0 flex-1 overflow-y-auto"
+					className="settings-content min-h-0 min-w-0 flex-1 overflow-y-auto"
 					data-testid="settings-content"
 				>
 					{error && (
@@ -350,9 +358,9 @@ export function SettingsDialogBody({
 							Loading settings…
 						</p>
 					) : record === null ? (
-						<p className="px-6 py-5 text-xs text-muted-foreground/70">
-							Settings could not be loaded — refresh to retry.
-						</p>
+						<div role="alert" className="px-6 py-5 text-sm text-muted-foreground">
+							Settings could not be loaded. <button type="button" className="underline text-foreground" onClick={() => setLoadAttempt((n) => n + 1)}>Retry</button>
+						</div>
 					) : (
 						<div>
 							{active === "general" && (

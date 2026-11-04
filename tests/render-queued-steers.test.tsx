@@ -24,7 +24,8 @@ describe("QueuedSteersBody (the quiet queue above the composer)", () => {
 		assert.match(html, /truncate/, "single-line truncation with ellipsis");
 		assert.match(html, /items-end/, "right-aligned stack");
 		assert.match(html, /max-w-\[240px\]/, "fixed-width stash");
-		assert.match(html, /muted-foreground\/60/, "quiet, roughly half opacity");
+		assert.match(html, /text-muted-foreground/, "readable secondary text");
+		assert.match(html, /Queued: short one/, "pending work is labeled as queued");
 		assert.doesNotMatch(html, /bg-|border|rounded/, "no background, no container");
 		assert.match(html, /also cover Venus/, "the text rides the line");
 	});

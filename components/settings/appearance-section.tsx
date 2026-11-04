@@ -249,62 +249,9 @@ export function AppearanceSection({
 
 	return (
 		<>
-			<SettingsRow label="Chat width" testid="row-chat-width">
-				<ThinSelect
-					value={appearance?.chatWidth ?? resolved.chatWidth}
-					ariaLabel="Chat width"
-					testid="select-chat-width"
-					onChange={(value) => onSectionChange({ ...appearance, chatWidth: value as AppearanceSettings["chatWidth"] })}
-				>
-					<option value="comfortable">Comfortable</option>
-					<option value="wide">Wide</option>
-					<option value="full">Full</option>
-				</ThinSelect>
-			</SettingsRow>
-			<SettingsRow label="Mode" hint="Coming soon" testid="row-mode" dimmed>
-				<ThinSelect value="dark" ariaLabel="mode" onChange={() => {}} testid="select-mode" disabled>
-					<option value="dark">Dark</option>
-				</ThinSelect>
-			</SettingsRow>
-			<SettingsRow
-				label="Background"
-				hint="Empty = #000000"
-				testid="row-background"
-			>
-				<CommitInput
-					value={appearance?.background ?? ""}
-					placeholder="#000000"
-					ariaLabel="background hex"
-					testid="input-background"
-					onCommit={(v) => onSectionChange({ ...appearance, background: v === "" ? null : v })}
-				/>
-			</SettingsRow>
-			<SettingsRow label="Interface font" hint="Empty = System" testid="row-interface-font">
-				<FontPicker family={appearance?.interfaceFontFamily ?? null} label="Interface font" testid="interface-font"
-					onPick={(family) => onSectionChange(composeFontFamily(appearance, family, "interfaceFontFamily"))} />
-			</SettingsRow>
-			<SettingsRow label="Reading font" hint={`Empty = ${DEFAULT_READING_FONT}`} testid="row-font">
+			<SettingsRow label="Reading font"  testid="row-font">
 				<FontPicker family={appearance?.fontFamily ?? null} label="Reading font" testid="font"
 					onPick={(family) => onSectionChange(composeFontFamily(appearance, family))} />
-			</SettingsRow>
-			<SettingsRow label="Corner radius" hint="0–16px; empty = 8px" testid="row-corner-radius">
-				<CommitInput type="number" min={0} max={16} step="any" value={String(appearance?.cornerRadius ?? "")} placeholder="8"
-					ariaLabel="Corner radius" testid="input-corner-radius"
-					onCommit={(v) => {
-						if (v === "") {
-							onSectionChange({ ...appearance, cornerRadius: undefined });
-							return;
-						}
-						const n = Number(v);
-						if (Number.isFinite(n)) onSectionChange({ ...appearance, cornerRadius: Math.min(16, Math.max(0, n)) });
-					}} />
-			</SettingsRow>
-			<SettingsRow label="Contrast" testid="row-contrast">
-				<ThinSelect value={appearance?.contrast ?? resolved.contrast} ariaLabel="Contrast" testid="select-contrast"
-					onChange={(value) => onSectionChange({ ...appearance, contrast: value as AppearanceSettings["contrast"] })}>
-					<option value="normal">Normal</option>
-					<option value="high">High</option>
-				</ThinSelect>
 			</SettingsRow>
 			<SettingsRow label="Reading font size" hint={`${resolved.proseFontSize}px`} testid="row-prose-size">
 				<CommitInput
@@ -327,6 +274,60 @@ export function AppearanceSection({
 					}}
 				/>
 			</SettingsRow>
+			<SettingsRow label="Chat width" testid="row-chat-width">
+				<ThinSelect
+					value={appearance?.chatWidth ?? resolved.chatWidth}
+					ariaLabel="Chat width"
+					testid="select-chat-width"
+					onChange={(value) => onSectionChange({ ...appearance, chatWidth: value as AppearanceSettings["chatWidth"] })}
+				>
+					<option value="comfortable">Comfortable</option>
+					<option value="wide">Wide</option>
+					<option value="full">Full</option>
+				</ThinSelect>
+			</SettingsRow>
+			<SettingsRow label="Contrast" testid="row-contrast">
+				<ThinSelect value={appearance?.contrast ?? resolved.contrast} ariaLabel="Contrast" testid="select-contrast"
+					onChange={(value) => onSectionChange({ ...appearance, contrast: value as AppearanceSettings["contrast"] })}>
+					<option value="normal">Normal</option>
+					<option value="high">High</option>
+				</ThinSelect>
+			</SettingsRow>
+			<SettingsRow label="Interface font"  testid="row-interface-font">
+				<FontPicker family={appearance?.interfaceFontFamily ?? null} label="Interface font" testid="interface-font"
+					onPick={(family) => onSectionChange(composeFontFamily(appearance, family, "interfaceFontFamily"))} />
+			</SettingsRow>
+			<SettingsRow
+				label="Background"
+
+				testid="row-background"
+			>
+				<CommitInput
+					value={appearance?.background ?? ""}
+					placeholder="#000000"
+					ariaLabel="background hex"
+					testid="input-background"
+					onCommit={(v) => onSectionChange({ ...appearance, background: v === "" ? null : v })}
+				/>
+			</SettingsRow>
+			<SettingsRow label="Corner radius" hint="0–16px" testid="row-corner-radius">
+				<CommitInput type="number" min={0} max={16} step="any" value={String(appearance?.cornerRadius ?? "")} placeholder="8"
+					ariaLabel="Corner radius" testid="input-corner-radius"
+					onCommit={(v) => {
+						if (v === "") {
+							onSectionChange({ ...appearance, cornerRadius: undefined });
+							return;
+						}
+						const n = Number(v);
+						if (Number.isFinite(n)) onSectionChange({ ...appearance, cornerRadius: Math.min(16, Math.max(0, n)) });
+					}} />
+			</SettingsRow>
+<details className="py-2"><summary className="cursor-pointer text-sm text-muted-foreground">Unavailable options</summary>
+			<SettingsRow label="Mode" hint="Coming soon" testid="row-mode" dimmed>
+				<ThinSelect value="dark" ariaLabel="mode" onChange={() => {}} testid="select-mode" disabled>
+					<option value="dark">Dark</option>
+				</ThinSelect>
+			</SettingsRow></details>
 			<SettingsRow label="Session names in serif" testid="row-session-serif">
 				<Toggle
 					checked={appearance?.sessionNameSerif ?? resolved.sessionNameSerif}
@@ -334,7 +335,8 @@ export function AppearanceSection({
 					onChange={(on) => onSectionChange({ ...appearance, sessionNameSerif: on })}
 				/>
 			</SettingsRow>
-			<SettingsRow label="Heading weight" hint={`${resolved.mdRendering.headingWeight}`} testid="row-heading-weight">
+			<details className="py-2"><summary className="cursor-pointer text-sm text-muted-foreground">Advanced typography</summary>
+<SettingsRow label="Heading weight" hint={`${resolved.mdRendering.headingWeight}`} testid="row-heading-weight">
 				<CommitInput
 					type="number"
 					value={String(md?.headingWeight ?? "")}
@@ -360,7 +362,7 @@ export function AppearanceSection({
 			{/* The emphasis inks default to the REGULAR TEXT COLOR now
 			    (appearance wave, 2026-09-26) — the empty-state labels say
 			    so; explicit hex overrides ride unchanged. */}
-			<SettingsRow label="Bold color" hint="Empty = same as text" testid="row-bold-color">
+			<SettingsRow label="Bold color"  testid="row-bold-color">
 				<CommitInput
 					value={md?.boldColor ?? ""}
 					placeholder="same as text"
@@ -369,7 +371,7 @@ export function AppearanceSection({
 					onCommit={(v) => onSectionChange({ ...appearance, mdRendering: { ...md, boldColor: v === "" ? null : v } })}
 				/>
 			</SettingsRow>
-			<SettingsRow label="Italic color" hint="Empty = same as text" testid="row-italic-color">
+			<SettingsRow label="Italic color"  testid="row-italic-color">
 				<CommitInput
 					value={md?.italicColor ?? ""}
 					placeholder="same as text"
@@ -378,6 +380,8 @@ export function AppearanceSection({
 					onCommit={(v) => onSectionChange({ ...appearance, mdRendering: { ...md, italicColor: v === "" ? null : v } })}
 				/>
 			</SettingsRow>
+</details>
+<p className="text-xs text-muted-foreground">Empty fields use the default values shown.</p>
 		</>
 	);
 }
@@ -433,8 +437,8 @@ export function GraphSection({
 				/>
 			</SettingsRow>
 			<SettingsRow
-				label="Extraction chunk budget"
-				hint={`${resolved.extractionChunkTokens} tok`}
+				label="Text per extraction"
+				hint={`${resolved.extractionChunkTokens} tokens. Larger chunks give more context and may cost more.`}
 				testid="graph-row-chunk-tokens"
 			>
 				<CommitInput

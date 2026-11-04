@@ -1,5 +1,7 @@
 "use client";
 
+import { clearChatQuestionDraft } from "./question-draft-storage";
+
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
@@ -107,6 +109,7 @@ export function DeleteSessionDialog({
 				setBusy(false);
 				return;
 			}
+			clearChatQuestionDraft(chat.id);
 			onDeleted(chat.id, mode, body.graphRevision ?? 0);
 		} catch {
 			setFailure({ code: "network", error: "Delete failed — network error. Try again." });
@@ -162,19 +165,11 @@ export function DeleteSessionBody({
 			aria-label="Delete session"
 			data-testid="delete-session-dialog"
 			onClick={(e) => e.stopPropagation()}
-			className="w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl"
+			className="lh-confirm w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl"
 		>
-			<h2 className="text-sm font-semibold text-destructive">Delete session?</h2>
-			{/* The session name below the title in JetBrains Mono (owner,
-			    2026-09-24): no code-block chrome — the font already says
-			    code. Owner, 2026-10-13 polish: normal text-sm size (was
-			    sized-up text-lg), still white. Same shape as the node
-			    dialog. */}
-			<div className="mt-1.5">
-				<code data-testid="session-name-code" className="font-mono text-sm text-foreground">
-					{chat.title}
-				</code>
-			</div>
+			<h2 className="text-sm font-semibold text-destructive">Delete this session and its messages?</h2>
+<div className="lh-confirm-body">
+
 			<p className="mt-2 text-sm text-muted-foreground">
 				This permanently removes the session — its messages, background jobs, and extraction records. Everything
 				it added to the graph stays unless you check below. This cannot be undone.
@@ -196,6 +191,10 @@ export function DeleteSessionBody({
 					<span className="mt-1 block text-xs text-muted-foreground">{TRACES_COPY.body}</span>
 				</span>
 			</label>
+ <div className="mt-3" data-testid="session-title-preview">
+  <p className="line-clamp-2 text-sm text-foreground">{chat.title}</p>
+  {chat.title.length > 100 && <details className="mt-1 text-sm"><summary className="cursor-pointer text-xs text-muted-foreground">Show full title</summary><p data-testid="session-name-code" className="mt-2 whitespace-pre-wrap break-words">{chat.title}</p></details>}
+ </div>
 			{failure && (
 				<div
 					role="alert"
@@ -217,7 +216,8 @@ export function DeleteSessionBody({
 			{/* The node dialog's exact bottom row: quiet Cancel, destructive
 			    red Delete (border + text, fill on hover — the app's
 			    established destructive pair). */}
-			<div className="mt-4 flex justify-end gap-2">
+			</div>
+<div className="lh-confirm-actions mt-4 flex justify-end gap-2">
 				<button
 					type="button"
 					data-testid="delete-cancel"

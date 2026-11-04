@@ -3,10 +3,10 @@
 import type { CacheRetention } from "@earendil-works/pi-ai";
 
 const OPTIONS = [
-	{ value: undefined, compact: "default", label: "Pi default", description: "Leave the option unset. Pi’s normal behavior and environment override apply." },
-	{ value: "none", compact: "not requested", label: "Don’t request caching", description: "Pass Pi’s native none preference. Providers may still cache automatically." },
-	{ value: "short", compact: "short", label: "Short retention", description: "Pass Pi’s native short preference. The duration depends on the provider and model." },
-	{ value: "long", compact: "long", label: "Long retention", description: "Pass Pi’s native long preference. Cache-write costs may be higher." },
+	{ value: undefined, compact: "default", label: "Default", description: "Use the provider’s default cache preference. Application configuration may override it." },
+	{ value: "none", compact: "not requested", label: "Don’t request caching", description: "Request no caching. Providers may still cache automatically." },
+	{ value: "short", compact: "short", label: "Short retention", description: "Request short retention. Duration depends on the provider and model." },
+	{ value: "long", compact: "long", label: "Long retention", description: "Request long retention. Cache-write costs may be higher." },
 ] as const;
 
 export function cacheRetentionLabel(value: CacheRetention | undefined): string {
@@ -20,7 +20,7 @@ export function CacheRetentionMenu({ value, onPick }: {
 	return <>
 		<div className="border-b border-border px-2 pb-2">
 			<p className="text-card-foreground">Cache retention</p>
-			<p className="mt-1 text-muted-foreground">Controls the cache-retention preference sent to Pi. Support and duration depend on the provider and model. This does not guarantee a cache hit.</p>
+			<p className="mt-1 text-muted-foreground">Reuse recent input when supported. Support and duration depend on the provider and model. This does not guarantee a cache hit.</p>
 		</div>
 		{OPTIONS.map((option) => <button
 			key={option.value ?? "default"}

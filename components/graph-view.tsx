@@ -64,8 +64,9 @@
  */
 
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { NotesImportControl, NotesImportErrors, NotesImportNotices, useNotesImport } from "@/components/notes-import.tsx";
+import { NotesImportControl, NotesImportErrors, NotesImportNotices, NotesImportProgress, useNotesImport } from "@/components/notes-import.tsx";
 import Link from "next/link";
+import { GraphOutline } from "./graph-outline";
 import { FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, WaypointsIcon } from "lucide-react";
 import { incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
 import { planCostLabel } from "@/components/usage-format";
@@ -344,7 +345,7 @@ export function GraphCostControl({ costs }: { costs: GraphCostSummary }) {
 	// Click anywhere outside (or Escape) closes the panel — the root
 	// wraps button + panel, so the toggle itself keeps working.
 	const rootRef = useRef<HTMLDivElement>(null);
-	usePopoverDismiss(rootRef, open, () => setOpen(false));
+	usePopoverDismiss(rootRef, open, () => setOpen(false), "graph-cost-menu");
 	return (
 		<div ref={rootRef} className="relative">
 			<Hint
@@ -364,9 +365,7 @@ export function GraphCostControl({ costs }: { costs: GraphCostSummary }) {
 			</button>
 			</Hint>
 			{open && (
-				<div className="absolute right-0 top-full mt-2 max-h-[60vh] overflow-y-auto">
-					<GraphCostPanel costs={costs} />
-				</div>
+				<MenuShell anchorRef={rootRef} testid="graph-cost-menu" preferredSide="down" menuClass="w-80"><GraphCostPanel costs={costs} /></MenuShell>
 			)}
 		</div>
 	);
@@ -382,7 +381,7 @@ export function GraphCostControl({ costs }: { costs: GraphCostSummary }) {
  * not tracked anymore — the headline sums the displayed stages only and
  * naming-kind runs never reach the list.
  */
-function GraphCostPanel({ costs }: { costs: GraphCostSummary }) {
+export function GraphCostPanel({ costs }: { costs: GraphCostSummary }) {
 	const stageRows: [string, GraphCostSummary["stages"]["extraction"]][] = [
 		["Extraction", costs.stages.extraction],
 		["Audit", costs.stages.audit],
@@ -391,8 +390,8 @@ function GraphCostPanel({ costs }: { costs: GraphCostSummary }) {
 	// the pill and this panel must agree).
 	const { unpricedRuns } = displayCostTotals(costs);
 	return (
-		<div className="w-80 max-w-[calc(100vw-1.5rem)] rounded-xl border bg-card/95 p-3 text-xs shadow-lg backdrop-blur">
-			<div className="mb-2 flex items-baseline justify-between">
+		<div className="graph-cost-panel w-full min-w-0 max-w-full rounded-xl border bg-card/95 p-3 text-xs shadow-lg backdrop-blur">
+			<div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
 				<span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					Graph pipeline costs
 				</span>
@@ -458,7 +457,7 @@ function GraphSettingsControl({
 	// Click anywhere outside (or Escape) closes the panel (2026-09-17) —
 	// the root wraps button + panel, so the toggle itself keeps working.
 	const rootRef = useRef<HTMLDivElement>(null);
-	usePopoverDismiss(rootRef, open, () => setOpen(false));
+	usePopoverDismiss(rootRef, open, () => setOpen(false), "graph-display-menu");
 	const regionTuning = settings.regions;
 	const physicsTuning = settings.physics;
 	return (
@@ -471,7 +470,8 @@ function GraphSettingsControl({
 				<button
 				type="button"
 				aria-expanded={open}
-				onClick={() => setOpen((o) => !o)}
+				aria-label="Graph display settings"
+				onClick={() => { window.dispatchEvent(new Event("lh:graph-display-open")); setOpen((o) => !o); }}
 				className={`flex size-9 items-center justify-center rounded-xl border bg-card/85 shadow-lg backdrop-blur transition-colors hover:bg-accent ${
 					open ? "text-foreground" : "text-muted-foreground hover:text-foreground"
 				}`}
@@ -491,7 +491,7 @@ function GraphSettingsControl({
 				// (pr-2.5) -> scrollbar -> 10px (p-2.5) -> panel edge. The
 				// scrollbar itself does NOT move: it stays pinned at the same
 				// distance from the panel's right border.
-				<div className="absolute right-0 top-full mt-2 flex max-h-[60vh] w-72 flex-col rounded-xl border bg-card/85 p-2.5 shadow-lg backdrop-blur">
+				<MenuShell anchorRef={rootRef} testid="graph-display-menu" preferredSide="down" menuClass="flex w-72 flex-col rounded-xl border bg-card p-2.5 shadow-lg">
 					<div className="flex flex-col gap-2 overflow-y-auto pr-2.5">
 							{/* Size/zoom/region sliders: LADDER-mapped 0-100, step 10 (11
 							    stops, every DEFAULT dead-center at 50, every value a nice
@@ -548,6 +548,7 @@ function GraphSettingsControl({
 								onChange={(p) =>
 									changeSettings((cur) => ({ ...cur, labelZoom: fromLadderPosition(p, LABEL_ZOOM_LADDER) }))}
 							/>
+<details className="mt-2"><summary className="cursor-pointer py-1 text-xs font-medium">Advanced</summary>
 							{/* Regions: the blurred cluster tints. Sliders + a fixed-set
 						    dropdown for the bitmap resolution (it's a discrete
 						    choice, not a free number). Server-persisted like the
@@ -822,8 +823,9 @@ function GraphSettingsControl({
 									}))}
 							/>
 						</div>
+</details>
 					</div>
-				</div>
+				</MenuShell>
 			)}
 		</div>
 	);
@@ -848,11 +850,12 @@ export function GraphChromeRow({
 	settings,
 	changeSettings,
 	onOpenChains,
+ onFit,
 }: {
 	isEmpty: boolean;
 	query: string;
 	onQuery: (v: string) => void;
-	/** The search panel's "No matching nodes." note (computed by the
+	/** The search panel's "No matching knowledge." note (computed by the
 	 *  wrapper — it owns visibleIds + the snapshot). */
 	noMatch: boolean;
 	importing: boolean;
@@ -863,14 +866,15 @@ export function GraphChromeRow({
 	/** Opens the chain table overlay (the chains-overlay plan,
 	 *  2026-09-29). */
 	onOpenChains: () => void;
+ onFit?: () => void;
 }) {
 	return (
 		<>
 			{!isEmpty && (
-				<div className="graph-chrome-fade-in w-56 min-w-0 shrink rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
+				<div className="graph-search graph-chrome-fade-in w-56 min-w-0 shrink rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
 					<Hint
 						// ⌘F focuses node search (surface-scoped registry action).
-						label="Search nodes"
+						label="Search knowledge"
 						action="find"
 						side="bottom"
 					>
@@ -880,22 +884,22 @@ export function GraphChromeRow({
 							ref={searchInputRef}
 							value={query}
 							onChange={(e) => onQuery(e.target.value)}
-							placeholder="Search nodes…"
-							aria-label="Search nodes"
+							placeholder="Search knowledge…"
+							aria-label="Search knowledge"
 							spellCheck={false}
 							className="h-7 w-full rounded-lg border bg-background pl-8 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
 						/>
 					</div>
 					</Hint>
 					{noMatch && (
-						<div className="px-1.5 pt-1 text-xs text-muted-foreground">No matching nodes.</div>
+						<div className="px-1.5 pt-1 text-xs text-muted-foreground">No matching knowledge.</div>
 					)}
 				</div>
 			)}
 			{/* The chain table (chains overlay, owner plan 2026-09-29). Own
 			    container (36px band), between the search and Import. */}
 			<div className="graph-chrome-fade-in shrink-0 rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
-					<Hint label="Every reasoning chain" side="bottom">
+					<Hint label="Saved sources and reasoning chains" side="bottom">
 						<button
 							type="button"
 							onClick={onOpenChains}
@@ -903,13 +907,14 @@ export function GraphChromeRow({
 							className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent"
 						>
 							<ListTreeIcon className="size-3" />
-							Chains
+							Sources
 						</button>
 					</Hint>
 				</div>
 			{/* Import notes — its own container (36px, header band); ALWAYS
 			    rendered (the empty-graph ruling above — the entry point). */}
 			<NotesImportControl importing={importing} onImportFiles={onImportFiles} />
+ { !isEmpty && <button type="button" onClick={onFit} aria-label="Fit graph" className="h-9 shrink-0 rounded-lg border bg-card px-2 text-xs text-muted-foreground hover:text-foreground">Fit</button> }
 			{!isEmpty && (
 				// Rendering settings — own component; the gear toggles it. The
 				// gear sits at the far right (owner, round 3) so its panel drops
@@ -945,6 +950,7 @@ export function GraphView({
 	const cardRef = useRef<HTMLDivElement | null>(null);
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
 	const [selected, setSelected] = useState<Selection | null>(null);
+	useEffect(() => { const close = () => setSelected(null); window.addEventListener("lh:graph-display-open", close); return () => window.removeEventListener("lh:graph-display-open", close); }, []);
 	// The latest snapshot for the renderer's click callbacks (they are
 	// constructed once, so they read through this ref, never a closure).
 	const snapshotRef = useRef<GraphSnapshot | null>(null);
@@ -1361,6 +1367,12 @@ export function GraphView({
 				},
 			},
 			initialCamera,
+   () => {
+    const rect = canvas.getBoundingClientRect();
+    const toolbar = canvas.parentElement?.parentElement?.querySelector(".graph-toolbar")?.getBoundingClientRect();
+    const dock = document.querySelector("[data-home-dock]")?.getBoundingClientRect();
+    return { top: toolbar ? Math.max(0, toolbar.bottom - rect.top + 16) : 56, bottom: dock ? Math.max(0, rect.bottom - dock.top + 24) : 24 };
+   },
 		);
 		rendererRef.current = renderer;
 		return () => {
@@ -1403,6 +1415,7 @@ export function GraphView({
 				edge: tokenHex("--ring"),
 				label: tokenHex("--muted-foreground"),
 				hoverText: tokenHex("--foreground"),
+				background: tokenHex("--background"),
 			},
 			// Match the app typography (Geist via the body's stack).
 			fontFamily: getComputedStyle(document.body).fontFamily,
@@ -1439,29 +1452,27 @@ export function GraphView({
 		rendererRef.current?.setPhysicsTuning(physicsTuning);
 	}, [physicsTuning, isEmpty]);
 
-	// Position the detail card: below the clicked node, flipped above near
-	// the bottom edge, clamped horizontally. Imperative (ref + layout effect,
-	// before paint) because the flip needs the card's measured height.
 	useLayoutEffect(() => {
-		const card = cardRef.current;
-		const container = containerRef.current;
-		if (!selected || !card || !container) return;
-		const width = card.offsetWidth;
-		const height = card.offsetHeight;
-		const margin = 8;
-		const gap = 12;
-		const left = Math.min(
-			Math.max(selected.anchor.x - width / 2, margin),
-			Math.max(container.clientWidth - width - margin, margin),
-		);
-		let top = selected.anchor.y + gap;
-		if (top + height > container.clientHeight - margin) {
-			top = Math.max(selected.anchor.y - gap - height, margin);
-		}
-		card.style.left = `${left}px`;
-		card.style.top = `${top}px`;
-		card.style.visibility = "visible";
-	}, [selected]);
+ const card = cardRef.current, container = containerRef.current;
+ if (!selected || !card || !container) return;
+ const place = () => {
+  const rect = container.getBoundingClientRect();
+  const toolbar = container.parentElement?.querySelector(".graph-toolbar")?.getBoundingClientRect();
+  const dock = document.querySelector("[data-home-dock]")?.getBoundingClientRect();
+  const top = Math.max(8, (toolbar?.bottom ?? rect.top + 56) - rect.top + 8);
+  const bottom = Math.min(rect.height - 8, (dock?.top ?? rect.bottom) - rect.top - 8);
+  const available = Math.max(64, bottom - top);
+  card.style.maxHeight = `${available * (window.innerHeight <= 500 ? 0.8 : 0.85)}px`;
+  card.style.left = `${Math.max(8, Math.min(selected.anchor.x - card.offsetWidth / 2, container.clientWidth - card.offsetWidth - 8))}px`;
+  card.style.top = `${Math.max(top, Math.min(selected.anchor.y + 12, bottom - card.offsetHeight))}px`;
+  card.style.visibility = "visible";
+ };
+ place(); const observer = new ResizeObserver(place); observer.observe(container);
+ const toolbar = container.parentElement?.querySelector(".graph-toolbar"); if (toolbar) observer.observe(toolbar);
+ const dock = document.querySelector("[data-home-dock]"); if (dock) observer.observe(dock);
+ window.addEventListener("resize", place);
+ return () => { observer.disconnect(); window.removeEventListener("resize", place); };
+ }, [selected]);
 
 	return (
 		<div className="relative h-full w-full">
@@ -1563,13 +1574,13 @@ export function GraphView({
 			    against the full-bleed parent) — the row NEVER wraps (owner
 			    rejected the two-row fold); in narrow windows the search is
 			    the flexible element and shrinks instead. */}
-			<div className="lh-no-drag lh-wco-floating absolute right-2 top-2 z-10 flex max-w-[calc(100%-5.5rem)] flex-col items-end gap-2">
+			<div className="graph-toolbar lh-no-drag lh-wco-floating absolute right-2 top-2 z-10 flex max-w-[calc(100%-5.5rem)] flex-col items-end gap-2">
 			{/* z-20 (2026-09-20): the row paints above the cost number below
 			    it — without this, the later-in-DOM cost control layered over
 			    the settings/coverage dropdowns (owner report), still hoverable
 			    and clickable on top of them. The row is a stacking context, so
 			    its open dropdowns cover the number; clicks land on the panel. */}
-			<div className="relative z-20 flex min-w-0 items-start gap-2">
+			<div className="graph-toolbar-row relative z-20 flex min-w-0 items-start gap-2">
 				{/* The actions row (empty-graph chrome wave, owner 2026-09-25):
 				    Import Notes always — the empty graph's entry point; search +
 				    settings only when nodes exist, fading in on their mount. */}
@@ -1584,17 +1595,21 @@ export function GraphView({
 					settings={settings}
 					changeSettings={changeSettings}
 					onOpenChains={() => setChainsOpen(true)}
+ onFit={() => rendererRef.current?.fit()}
 				/>
 			</div>
 
+			{snapshot && <p className="graph-overview-hint text-xs text-muted-foreground">{snapshot.propositions.length} nodes · {snapshot.chains.length} chains · Pan to explore</p>}
 			<NotesImportErrors errors={notesImport.errors} />
-			<NotesImportNotices notices={notesImport.notices} />
+			<NotesImportProgress progress={notesImport.progress} />
+<NotesImportNotices notices={notesImport.notices} />
 			{/* Top-right tail (owner, 2026-09-20): the pipeline cost number —
 			    just a number, hover-highlighted, dropdown breakdown — then
 			    the running-pipeline pills under it. Lives BELOW the actions
 			    row so narrow windows can never push it over the composer
 			    the way the old bottom-left stack did; the whole top-right
 			    cluster is one column, right-aligned. */}
+{snapshot && snapshot.propositions.length > 30 && <GraphOutline snapshot={snapshot} query={query} visibleIds={visibleIds} onFocus={(ids, selectNode) => { setQuery(""); setSelected(null); requestAnimationFrame(() => rendererRef.current?.focusNodes(ids, selectNode)); }} />}
 			{costs && costs.runs.length > 0 && <GraphCostControl costs={costs} />}
 			{pipelineRuns.map((run) => (
 				<div
@@ -1618,13 +1633,16 @@ export function GraphView({
 					// lh-no-drag: the card is placed anywhere on the canvas —
 					// when it lands in the top strip it must stay interactive
 					// over home.tsx's drag surface (2026-09-17).
-					className="lh-no-drag absolute z-10 w-80 max-w-[calc(100%-1rem)] rounded-xl border bg-card p-4 text-left shadow-lg"
+					className="graph-detail lh-no-drag absolute z-10 flex w-80 max-w-[calc(100%-1rem)] flex-col overflow-hidden rounded-xl border bg-card text-left shadow-lg"
 				>
-					<div className="text-sm font-medium leading-snug">{selected.node.name}</div>
+					<header className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1">
+ <span className="text-xs text-muted-foreground">Proposition</span><button type="button" onClick={() => { setSelected(null); rendererRef.current?.clearSelection(); }} className="min-h-8 rounded px-2 text-xs hover:bg-accent">Close</button>
+ </header><div className="min-h-0 overflow-y-auto overscroll-contain p-3">
+ <div className="text-sm font-medium leading-snug">{selected.node.name}</div>
 					<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{selected.node.statement}</div>
 					{selected.sourceIds.length > 0 ? (
 						<div className="mt-3 flex flex-col gap-1">
-							<div className="text-xs text-muted-foreground">Sessions</div>
+							<div className="text-xs text-muted-foreground">Sources</div>
 							{selected.sourceIds.map((sourceId) => {
 								// An imported-notes file: a STATIC entry — the path,
 								// plain text, never a link (no session to open).
@@ -1632,7 +1650,7 @@ export function GraphView({
 									return (
 										<div key={sourceId} className="flex items-center gap-1.5">
 											<FileTextIcon className="size-3.5 shrink-0 text-muted-foreground" />
-											<span className="min-w-0 flex-1 truncate px-2 py-1.5 text-sm text-muted-foreground">
+											<span className="min-w-0 flex-1 break-words px-2 py-1.5 text-sm text-muted-foreground">
 												{snapshot.fileSources[sourceId]}
 											</span>
 										</div>
@@ -1644,7 +1662,7 @@ export function GraphView({
 										<Link
 											href={propositionSessionHref(selected.node, sourceId)}
 											scroll={false}
-											className="min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
+											className="min-w-0 flex-1 break-words rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
 										>
 											{snapshot?.sessions[sourceId] ?? sourceId}
 										</Link>
@@ -1653,8 +1671,9 @@ export function GraphView({
 							})}
 						</div>
 					) : (
-						<div className="mt-3 text-xs text-muted-foreground">No sessions recorded.</div>
+						<div className="mt-3 text-xs text-muted-foreground">No sources recorded.</div>
 					)}
+</div>
 				</div>
 			)}
 			{/* The chain table overlay (chains-overlay plan, 2026-09-29):

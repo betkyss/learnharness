@@ -450,12 +450,12 @@ const BOX: Record<PlanNodeStatus, string> = {
 	visited: "fill-background/50 stroke-white",
 	current: "fill-background/50 stroke-white",
 	// The grayed-out not-yet-visited look stays as-is (owner).
-	upcoming: "fill-card stroke-border",
+	upcoming: "fill-card stroke-muted-foreground",
 };
 const TEXT: Record<PlanNodeStatus, string> = {
 	visited: "fill-white text-xs",
 	current: "fill-white text-xs font-medium",
-	upcoming: "fill-muted-foreground/80 text-xs",
+	upcoming: "fill-muted-foreground text-xs",
 };
 // The in-chat block speaks the dock language now (owner, plan-hug
 // round 2026-10-07): boxes in the lighter background variant like
@@ -604,7 +604,7 @@ export function PlanDiagram({
 					<path
 						key={`${e.from}->${e.to}`}
 						d={edgePathD(pts, target)}
-						className={dim ? "fill-none stroke-border" : "fill-none stroke-white"}
+						className={dim ? "fill-none stroke-muted-foreground" : "fill-none stroke-white"}
 						strokeWidth={STROKE_W}
 						markerEnd={`url(#${markerId}${dim ? "-dim" : ""})`}
 					/>
@@ -626,6 +626,7 @@ export function PlanDiagram({
 						data-testid={`plan-node-${n.id}`}
 						data-status={status}
 					>
+						<title>{`${n.title}: ${status}`}</title>
 						{/* Rectangular — no corner rounding (owner). */}
 						<rect
 							width={w}
@@ -884,7 +885,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 			// SESSION-SCOPED (absolute, not fixed): the chat page mounts this
 			// INSIDE the session-area div — below the drag bar, right of the
 			// sidebar. 80% + blur: the transcript ghosts through.
-			className="absolute inset-0 z-40 flex flex-col bg-background/80 p-4 backdrop-blur-sm"
+			className="absolute inset-0 z-40 flex flex-col bg-background p-4"
 			role="dialog"
 			aria-modal="true"
 			aria-label="The full plan"
@@ -892,9 +893,9 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 				if (e.target === e.currentTarget) onClose();
 			}}
 		>
-			<div className="mb-2 flex items-center gap-2">
+			<div className="mb-2 flex flex-wrap items-center gap-2">
 				<span className="text-sm font-medium">The plan</span>
-				<span className="text-xs text-muted-foreground">live — statuses derive from your check outcomes</span>
+				<span className="order-last w-full text-xs text-muted-foreground sm:order-none sm:w-auto">Current: yellow halo · Visited: white outline · Upcoming: gray outline</span>
 				<Hint label="Close" binding="escape" side="left">
 <button
 					type="button"

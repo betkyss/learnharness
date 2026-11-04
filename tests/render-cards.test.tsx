@@ -522,8 +522,8 @@ describe("probe-done card", () => {
 				} as never}
 			/>,
 		);
-		assert.match(html, /malformed/);
-		assert.match(html, /retried/);
+		assert.match(html, /could not be completed/);
+		assert.doesNotMatch(html, /retried/);
 		assert.ok(!html.includes("strands:"), "the rejected input never renders");
 	});
 

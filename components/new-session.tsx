@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
+import { ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { Composer } from "@/components/composer";
 import { DictationBar, joinDictation, useDictation } from "@/components/dictation";
 import { useFieldCycle } from "@/components/field-cycle";
@@ -166,9 +166,8 @@ export function DraftShell({
 					{/* The pointer-events pattern (953b22b): the sticky wrapper is
 					    pointer-events-none so nothing here blocks the empty-state
 					    area; the blob and the stats row re-enable it themselves. */}
-					<div className="pointer-events-none sticky bottom-0 mt-auto w-full">
-						<Conversation className="h-full min-w-0 flex-1" initial="instant">
-							<ConversationContent className="min-h-full gap-0 p-0">
+					<div className="my-auto max-h-full w-full overflow-y-auto py-16">
+						<div className="draft-invitation mx-auto max-w-(--lh-chat-max-width) px-4 pb-6">
 								<ConversationEmptyState
 									title={mode === "practice" ? "New practice session" : "New session"}
 									description={
@@ -177,9 +176,7 @@ export function DraftShell({
 											: "The teacher will open by probing what you already know."
 									}
 								/>
-							</ConversationContent>
-						</Conversation>
-						<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent" />
+							</div>
 						<div className="bg-background pb-4">
 							<div className={DOCK}>
 								<ComposerActions

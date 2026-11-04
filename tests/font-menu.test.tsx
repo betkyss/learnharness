@@ -154,7 +154,7 @@ describe("the emphasis-ink factory ruling (globals.css)", () => {
 		const html = renderToStaticMarkup(
 			<AppearanceSection appearance={undefined} onSectionChange={() => {}} />,
 		);
-		assert.equal((html.match(/Empty = same as text/g) ?? []).length, 2, "bold + italic rows");
+		assert.equal((html.match(/placeholder="same as text"/g) ?? []).length, 2, "bold + italic rows");
 		assert.ok(!html.includes("#ee928c"));
 		assert.ok(!html.includes("#6fa9d6"));
 	});

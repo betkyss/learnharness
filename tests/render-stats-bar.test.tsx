@@ -41,8 +41,8 @@ describe("stats bar", () => {
 		// no turns, no settings, catalog not loaded → both control labels
 		// "—" (the thinking button shows just the level, like the model
 		// button shows just the model name — no prefix, no dot separator)
-		assert.match(html, /data-testid="stats-model"[^>]*>\s*<span[^>]*>—<\/span>/);
-		assert.match(html, /data-testid="stats-thinking"[^>]*>\s*<span[^>]*>—<\/span>/);
+		assert.match(html, /data-testid="stats-model"[^>]*>\s*<span[^>]*>Model<\/span>/);
+		assert.match(html, /data-testid="stats-thinking"[^>]*>\s*<span[^>]*>Thinking<\/span>/);
 		assert.ok(!html.includes("aria-hidden>·"), "no dot between the controls");
 		// the control reads as a button: pill border + dropdown chevron
 		assert.match(html, /data-testid="stats-model"[^>]*rounded-full[^>]*>/);
@@ -64,7 +64,7 @@ describe("stats bar", () => {
 		// model button label: SSR (record fetch not run yet) reads "—" —
 		// the strong slot arrives client-side via GET /api/settings; the
 		// turn log below still folds the ACTUAL models billed
-		assert.match(html, /data-testid="stats-model"[^>]*>\s*<span[^>]*>—<\/span>/);
+		assert.match(html, /data-testid="stats-model"[^>]*>\s*<span[^>]*>Model<\/span>/);
 	});
 
 	it("shows — for cost when every turn is unpriceable, never a fake $0", () => {

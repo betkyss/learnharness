@@ -54,11 +54,12 @@ export function DeleteNodeBody({
 			aria-label="Delete node"
 			data-testid="delete-node-dialog"
 			onClick={(e) => e.stopPropagation()}
-			className="w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl"
+			className="lh-confirm w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl"
 		>
 			<h2 className="text-sm font-semibold text-destructive">
 				{folders.length > 0 ? (nodes.length > 0 ? "Delete nodes and remove empty folders?" : "Remove empty folders?") : nodes.length === 1 ? "Delete node?" : `Delete ${nodes.length} nodes?`}
 			</h2>
+<div className="lh-confirm-body">
 			{/* The node name(s) below the title in JetBrains Mono (owner,
 			    2026-09-24): the name is the payload — mono suits it, and
 			    NO code-block chrome (the font already says code). Owner,
@@ -79,6 +80,7 @@ export function DeleteNodeBody({
 						{nodes.length > 8 ? `, and ${nodes.length - 8} more` : ""}
 					</code>
 				)}
+{nodes.length > 8 && <details className="mt-2 text-sm"><summary className="cursor-pointer">Show all {nodes.length} node names</summary><ul className="mt-2 space-y-2">{nodes.map(node => <li key={node.id}>{node.name}</li>)}</ul></details>}
 			</div>
 			{folders.length > 0 && <p className="mt-2 text-sm" data-testid="folder-removal-names">Empty folders: {folders.map((f) => f.name).join(", ")}</p>}
 			{nodes.length > 0 && <p className="mt-2 text-sm text-muted-foreground" data-testid="node-permanence-line">
@@ -109,7 +111,8 @@ export function DeleteNodeBody({
 					</button>
 				</div>
 			)}
-			<div className="mt-4 flex justify-end gap-2">
+			</div>
+<div className="lh-confirm-actions mt-4 flex justify-end gap-2">
 				<button
 					type="button"
 					data-testid="node-delete-cancel"

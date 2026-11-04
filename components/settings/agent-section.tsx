@@ -12,7 +12,7 @@
  * slot row carries the shared dropdown (fuzzy search, arrow-walk, Enter
  * pick — ModelMenuList/ThinkingMenuList from ./model-menu.tsx) over the
  * FEDERATED catalog (/api/models serves only keyed providers, fresh per
- * call — saving a key in Keys immediately widens this picker). The
+ * call — saving a key in Providers immediately widens this picker). The
  * vision slot filters to image-capable models (Model.input). The slots
  * live in the `models` settings section (PUT /api/settings/models — slot
  * pins are engine-level, not per-chat); the rest of the section writes
@@ -489,9 +489,9 @@ export function AgentSection({
 		const draft = segmentDraft[info.path] ?? info.overrideText ?? "";
 		const dirty = draft !== (info.overrideText ?? "");
 		return (
-			<div key={info.path} data-testid={`prompt-segment-${info.path}`}>
+			<div key={info.path} data-testid={`prompt-segment-${info.path}`} title={info.path}>
 				<SettingsRow
-					label={info.path}
+					label={info.path.split("/").at(-1)!.replace(/\.(md|txt)$/, "").replace(/[-_]/g, " ")}
 					// Overhaul rulings (2026-09-26, refined): the small text
 					// states WHICH VERSION IS IN USE — nothing when the
 					// default composes (even with a saved override sitting
@@ -526,7 +526,7 @@ export function AgentSection({
 				{open && (
 					<div className="mt-1 flex flex-col gap-2">
 						<div>
-							<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Source</p>
+							<p className="mb-1 text-xs text-muted-foreground/70">Source</p>
 							<textarea
 								readOnly
 								value={info.sourceText}
@@ -535,7 +535,7 @@ export function AgentSection({
 							/>
 						</div>
 						<div>
-							<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Override</p>
+							<p className="mb-1 text-xs text-muted-foreground/70">Override</p>
 							<textarea
 								value={segmentDraft[info.path] ?? info.overrideText ?? ""}
 								onChange={(e) => setSegmentDraft({ ...segmentDraft, [info.path]: e.target.value })}
@@ -633,7 +633,7 @@ export function AgentSection({
 							    span holding BOTH triggers of the open menu. */}
 							<span
 								ref={thisMenuOpen ? menuAnchorRef : undefined}
-								className={`relative flex items-center gap-2 ${advancedModels ? "shrink-0" : ""}`}
+								className={`relative flex min-w-0 max-w-full flex-wrap items-center gap-2 `}
 								onKeyDown={(event) => {
 									// Portal events bubble here too: close this menu, not the dialog.
 									if (thisMenuOpen === "cache" && event.key === "Escape") {
@@ -645,7 +645,7 @@ export function AgentSection({
 								<MenuTrigger
 									value={modelId ? prettyModel(modelId) : ""}
 									hint={modelId ? `${provider}:${modelId}` : undefined}
-									emptyLabel="—"
+									emptyLabel="Model"
 									ariaLabel={`${SLOT_META[slot].label} model`}
 									testid={`slot-model-${slot}`}
 									open={thisMenuOpen === "model"}
@@ -657,7 +657,7 @@ export function AgentSection({
 									// model → the RESOLVED level (the ordering's first supported —
 									// what the engine build runs). Display-only until a pick writes.
 									value={thinking || (chosen ? defaultOrderLevel(levels) : "")}
-									emptyLabel="—"
+									emptyLabel="Thinking"
 									ariaLabel={`${SLOT_META[slot].label} thinking`}
 									testid={`slot-thinking-${slot}`}
 									open={thisMenuOpen === "thinking"}
@@ -708,7 +708,7 @@ export function AgentSection({
 											}}
 											footer={
 												catalog && catalog.length === 0
-													? "No models — add a provider key in Keys"
+													? "No models — add a provider key in Providers"
 													: "Runs every agent of this tier"
 											}
 										/>
@@ -916,7 +916,7 @@ export function AgentSection({
 				</SettingsRow>
 			</SettingsGroup>
 
-			<SettingsGroup label="System prompts" testid="group-prompts">
+			<details className="mt-5 border-t border-border/60 pt-4" data-testid="group-prompts"><summary className="cursor-pointer text-sm font-medium text-muted-foreground">System prompts</summary><div className="mt-3">
 				{prompts === null ? (
 					<p className="text-xs text-muted-foreground/70">Loading prompt segments…</p>
 				) : (
@@ -927,7 +927,7 @@ export function AgentSection({
 						    order. */}
 						{sectionedSegments(prompts).map((section) => (
 							<div key={section.id} data-testid={`prompt-section-${section.id}`}>
-								<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">
+								<p className="mb-1 text-xs text-muted-foreground/70">
 									{section.label}
 								</p>
 								{section.hint && (
@@ -940,7 +940,7 @@ export function AgentSection({
 						))}
 					</div>
 				)}
-			</SettingsGroup>
+			</div></details>
 		</>
 	);
 }

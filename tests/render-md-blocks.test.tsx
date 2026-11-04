@@ -114,8 +114,8 @@ describe("session-scoped overlays (chrome-melt wave, 2026-09-19)", () => {
 	it("mermaid overlay mounts inside the session area — absolute (not fixed), 80% + blur, closeable", () => {
 		const html = renderToStaticMarkup(<MermaidOverlay chart="graph TD\nA --> B" onClose={() => {}} />);
 		assert.match(html, /class="absolute inset-0[^"]*z-40/, "absolute inset-0 z-40 — scoped, not fullscreen");
-		assert.ok(html.includes("bg-background/80"), "80% background: the transcript ghosts through");
-		assert.ok(html.includes("backdrop-blur"), "blur surface");
+		assert.ok(html.includes("bg-background"), "opaque focus surface");
+		assert.ok(!html.includes("bg-background/80"), "the transcript cannot show through");
 		assert.ok(!html.includes("fixed inset-0"), "never fixed — the drag bar stays uncovered");
 		assert.ok(html.includes('data-testid="mermaid-overlay-close"'), "the close X is present");
 		assert.match(html, /role="dialog"/, "dialog semantics for Esc/aria");
@@ -125,8 +125,8 @@ describe("session-scoped overlays (chrome-melt wave, 2026-09-19)", () => {
 		const html = renderToStaticMarkup(<PlanPopup messages={[]} onClose={() => {}} />);
 		assert.match(html, /data-testid="plan-popup"/);
 		assert.match(html, /class="absolute inset-0[^"]*z-40/, "absolute inset-0 z-40 — scoped, not fullscreen");
-		assert.ok(html.includes("bg-background/80"), "80% background");
-		assert.ok(html.includes("backdrop-blur"), "blur surface");
+		assert.ok(html.includes("bg-background"), "opaque background");
+		assert.ok(!html.includes("bg-background/80"), "the transcript cannot show through");
 		assert.ok(!html.includes("fixed inset-0"), "never fixed — the drag bar stays uncovered");
 	});
 

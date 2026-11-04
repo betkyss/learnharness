@@ -1,28 +1,12 @@
 "use client";
 
-/**
- * THE MINIMAL HOME (owner, 2026-10-06 — the no-graph home, take two):
- * when GRAPH RENDERING is off (graph.rendering in settings), the home's
- * main view is this — deliberately quiet, deliberately minimal. The
- * eventual plan is the DATA VIEW as home; until that is designed and
- * built, this is the placeholder that asks for nothing new: the SAME
- * composer blob home already floats (teach/practice switcher + pick
- * pill — untouched), the graph chrome's survivors in the SAME places
- * the graph view keeps them (top-right column: actions row, cost pill
- * BELOW it), and a centered, quiet summary of the knowledge base in
- * numbers. No recent sessions (the sidebar owns that), no canvas, no
- * list scrolling under the composer.
- *
- * The CHAIN TABLE stays behind its button exactly as on the graph view:
- * the standard overlay, unchanged — this component owns only the button.
- * The practice pick flow mirrors GraphView's contract verbatim (home
- * lifts the pick set; the chip opens the overlay in select mode).
- */
+/** Rendering-off home: counts, recent sessions, and access to saved knowledge. */
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { ListTreeIcon } from "lucide-react";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { GraphCostControl } from "@/components/graph-view.tsx";
-import { NotesImportControl, NotesImportErrors, NotesImportNotices, useNotesImport } from "@/components/notes-import.tsx";
+import { NotesImportControl, NotesImportErrors, NotesImportNotices, NotesImportProgress, useNotesImport } from "@/components/notes-import.tsx";
 import { Hint } from "@/components/ui/hint";
 import type { ChatSummary, GraphCostSummary, GraphSnapshot } from "@/src/core";
 
@@ -45,7 +29,7 @@ export function KnowledgeSummary({
 	const empty =
 		propositions === 0 && chains === 0 && teachSessions === 0 && practiceSessions === 0 && importedNotes === 0;
 	return (
-		<div data-testid="knowledge-summary" className="flex flex-col items-center text-center">
+		<div data-testid="knowledge-summary" className="w-full max-w-sm flex flex-col items-start text-left">
 			{/* Own-line law (owner, 2026-10-06): every count sits on its own
 			    row — no dot separators; the two blocks (graph, sessions)
 			    part with one empty line; the notes COUNT (never the file
@@ -72,8 +56,8 @@ export function KnowledgeSummary({
 				{importedNotes} {importedNotes === 1 ? "imported note" : "imported notes"}
 			</p>
 			{empty && (
-				<p className="pt-2 font-ui text-xs text-muted-foreground/70">
-					Nothing here yet — import notes to begin building the graph.
+				<p className="flex gap-4 pt-2 font-ui text-sm text-foreground">
+					<Link href="/chat/new" className="underline underline-offset-4">Start teaching</Link><Link href="/chat/new?mode=practice" className="underline underline-offset-4">Practice</Link>
 				</p>
 			)}
 		</div>
@@ -134,7 +118,7 @@ export function MinimalHome({
 	return (
 		<div className="relative h-full">
 			{/* The quiet summary — centered, biased up off the composer. */}
-			<div className="pointer-events-none flex h-full items-center justify-center pb-40">
+			<div className="minimal-summary flex h-full flex-col items-center justify-center gap-5 overflow-y-auto px-6 pb-6 pt-24">
 				<KnowledgeSummary
 					propositions={snapshot?.propositions.length ?? 0}
 					chains={snapshot?.chains.length ?? 0}
@@ -142,6 +126,11 @@ export function MinimalHome({
 					practiceSessions={practiceSessions}
 					importedNotes={Object.keys(snapshot?.fileSources ?? {}).length}
 				/>
+				<div className="w-full max-w-sm space-y-2 text-sm" data-testid="recent-sessions">
+{chats.length > 0 && <h2 className="text-sm font-medium text-muted-foreground">Recent sessions</h2>}
+					{[...chats].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3).map((chat) => <Link key={chat.id} href={`/chat/${chat.id}`} className="block break-words py-1 text-foreground underline underline-offset-4 hover:text-muted-foreground">{chat.title}</Link>)}
+					<button type="button" onClick={() => setChainsOpen(true)} className="py-1 text-muted-foreground underline underline-offset-4 hover:text-foreground">Sources</button>
+				</div>
 			</div>
 
 			{/* The chrome survivors in the graph view's own places (owner,
@@ -156,7 +145,7 @@ export function MinimalHome({
 			<div className="lh-no-drag lh-wco-floating absolute right-2 top-2 z-10 flex max-w-[calc(100%-5.5rem)] flex-col items-end gap-2">
 				<div className="flex min-w-0 items-start gap-2">
 					<div className="graph-chrome-fade-in shrink-0 rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
-						<Hint label="Every reasoning chain" side="bottom">
+						<Hint label="Saved sources and reasoning chains" side="bottom">
 							<button
 								type="button"
 								onClick={() => setChainsOpen(true)}
@@ -164,14 +153,15 @@ export function MinimalHome({
 								className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent"
 							>
 								<ListTreeIcon className="size-3" />
-								Chains
+								Sources
 							</button>
 						</Hint>
 					</div>
 					<NotesImportControl importing={importing} onImportFiles={onImportFiles} />
 				</div>
 				<NotesImportErrors errors={notesImport.errors} />
-				<NotesImportNotices notices={notesImport.notices} />
+				<NotesImportProgress progress={notesImport.progress} />
+<NotesImportNotices notices={notesImport.notices} />
 				{costs && costs.runs.length > 0 && <GraphCostControl costs={costs} />}
 			</div>
 

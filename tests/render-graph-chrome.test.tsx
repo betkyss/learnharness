@@ -38,7 +38,7 @@ describe("GraphChromeRow — the empty-graph ruling (owner, 2026-09-25)", () => 
 		const html = renderToStaticMarkup(createElement(GraphChromeRow, { ...PROPS, isEmpty: true }));
 		assert.ok(html.includes('data-testid="import-notes"'));
 		assert.ok(html.includes("Import notes…"));
-		assert.ok(!html.includes("Search nodes…"), "search is a lie on an empty graph");
+		assert.ok(!html.includes("Search knowledge…"), "search is a lie on an empty graph");
 		// the settings gear is the lucide-settings svg (tooltip wave: its old
 		// native title is gone — the styled tooltip carries the label now)
 		assert.ok(!html.includes("lucide-settings"), "settings is a lie on an empty graph");
@@ -49,7 +49,7 @@ describe("GraphChromeRow — the empty-graph ruling (owner, 2026-09-25)", () => 
 	it("POPULATED graph: all four render, the gated trio carries the fade", () => {
 		const html = renderToStaticMarkup(createElement(GraphChromeRow, { ...PROPS, isEmpty: false }));
 		assert.ok(html.includes('data-testid="import-notes"'));
-		assert.ok(html.includes("Search nodes…"));
+		assert.ok(html.includes("Search knowledge…"));
 		assert.ok(html.includes("lucide-settings"), "the settings gear renders");
 		assert.ok(html.includes('data-testid="open-chain-table"'), "the chains entry renders");
 		// the appear-once fade rides exactly the three gated controls, never Import Notes
@@ -60,10 +60,10 @@ describe("GraphChromeRow — the empty-graph ruling (owner, 2026-09-25)", () => 
 		const html = renderToStaticMarkup(
 			createElement(GraphChromeRow, { ...PROPS, isEmpty: false, query: "zzz", noMatch: true }),
 		);
-		assert.ok(html.includes("No matching nodes."));
+		assert.ok(html.includes("No matching knowledge."));
 		const quiet = renderToStaticMarkup(
 			createElement(GraphChromeRow, { ...PROPS, isEmpty: false, query: "zzz", noMatch: false }),
 		);
-		assert.ok(!quiet.includes("No matching nodes."));
+		assert.ok(!quiet.includes("No matching knowledge."));
 	});
 });

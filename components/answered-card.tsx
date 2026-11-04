@@ -26,7 +26,7 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 	if (answer.dismissed) {
 		return (
 			<div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
-				<span className="font-medium">{answer.questionText}</span> — skipped
+				<ToolContentResponse className="inline font-medium [&_p]:inline">{answer.questionText}</ToolContentResponse> · skipped
 			</div>
 		);
 	}
@@ -211,7 +211,7 @@ export function AnsweredCard({ answer: savedAnswer, input }: { answer: QuestionA
 						{whyOpen ? "Hide why" : "Why"}
 					</button>
 					{whyOpen && (
-						<div className="mt-1.5 rounded-lg bg-muted py-2 text-sm text-foreground/50">
+						<div className="mt-1.5 rounded-lg bg-muted py-2 text-sm text-foreground">
 							<span className="font-medium text-muted-foreground">Why: </span>
 							{/* Keep the first paragraph beside the label, not every paragraph:
 							   later paragraphs must retain their recovered document structure. */}

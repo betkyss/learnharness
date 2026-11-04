@@ -12,9 +12,13 @@ export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSes
 	const chats = sources.filter((s) => s.kind === "chat");
 	const names = [...sources.map((s) => s.label ?? s.id), ...folders.map((f) => f.name)];
 	return <div role="dialog" aria-modal="true" aria-label="Delete sources" data-testid="delete-source-dialog"
-		onClick={(e) => e.stopPropagation()} className="w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl">
-		<h2 className="text-sm font-semibold text-destructive">Delete selected sources and folders?</h2>
-		<p className="mt-1.5 font-mono text-sm" data-testid="source-deletion-names">{names.slice(0, 8).join(", ")}{names.length > 8 ? `, and ${names.length - 8} more` : ""}</p>
+		onClick={(e) => e.stopPropagation()} className="lh-confirm w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl">
+		<h2 className="text-sm font-semibold text-destructive">{sources.length ? "Remove these sources from the graph?" : folders.length === 1 ? "Delete this empty folder?" : "Delete these empty folders?"}</h2>
+<div className="lh-confirm-body">
+		<details className="mt-2" data-testid="source-deletion-names">
+ <summary className="cursor-pointer text-sm">{sources.length} {sources.length === 1 ? "source" : "sources"}, {folders.length} {folders.length === 1 ? "folder" : "folders"}. Show names</summary>
+ <ul className="mt-2 space-y-2 text-sm">{names.map((name, i) => <li key={i} className="break-words">{name}</li>)}</ul>
+ </details>
 		{sources.length > 0 && <p className="mt-2 text-sm text-muted-foreground" data-testid="source-deletion-contributions">
 			Removes these sources’ contributions to propositions and reasoning chains. Knowledge supported by other sources survives; knowledge supported only by these sources is removed.
 		</p>}
@@ -27,7 +31,8 @@ export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSes
 			</span>
 		</label>}
 		{failure && <p role="alert" data-testid="source-delete-failure" className="mt-3 text-xs text-foreground">{failure}</p>}
-		<div className="mt-4 flex justify-end gap-2">
+		</div>
+<div className="lh-confirm-actions mt-4 flex justify-end gap-2">
 			<button type="button" data-testid="source-delete-cancel" disabled={busy} onClick={onClose} className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40">Cancel</button>
 			<button type="button" data-testid="source-delete-confirm" disabled={busy} onClick={onRun} className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40">{busy ? "Deleting…" : failure ? "Try again" : "Delete"}</button>
 		</div>

@@ -137,6 +137,7 @@ export function SetupKeysBody({
 	menuAnchor,
 	isCustom,
 	onCustomSaved,
+ onCancel,
 }: {
 	/** The full provider roster (GET /api/keys providers) — undefined
 	 *  while it loads; the picker renders an honest empty state then. */
@@ -158,9 +159,11 @@ export function SetupKeysBody({
 	 *  field. All three optional so plain-key callers (and tests) stay unchanged. */
 	isCustom?: boolean;
 	onCustomSaved?: () => void;
+ onCancel?: () => void;
 }) {
 	return (
-		<div className="flex flex-col gap-3 px-6 py-5" data-testid="setup-stage-keys">
+		<div className="flex min-h-0 flex-col overflow-hidden" data-testid="setup-stage-keys">
+<div className="min-h-0 overflow-y-auto px-6 py-5 space-y-3">
 			<p className="text-xs text-muted-foreground">
 				Choose your AI provider and paste its API key. You’ll pick your models next.
 			</p>
@@ -208,15 +211,6 @@ export function SetupKeysBody({
 								autoFocus
 								className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 							/>
-							<button
-								type="button"
-								onClick={onSave}
-								disabled={saving || !value.trim()}
-								data-testid="setup-key-save"
-								className="shrink-0 rounded-sm border border-border bg-background px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-40"
-							>
-								{saving ? "Saving…" : "Save key"}
-							</button>
 						</div>
 					</div>
 				))}
@@ -227,6 +221,16 @@ export function SetupKeysBody({
 				)}
 			</div>
 			<div className="mt-2 border-t border-border/60 pt-4"><h3 className="mb-3 font-ui text-xs text-muted-foreground">Subscriptions</h3><SubscriptionConnections setup /></div>
+</div><div className="flex shrink-0 justify-end gap-2 border-t px-6 py-3">{onCancel && <button type="button" onClick={onCancel} className="px-3 py-1.5 text-xs text-muted-foreground">Cancel</button>}{!isCustom && <>
+							<button
+								type="button"
+								onClick={onSave}
+								disabled={saving || !provider || !value.trim()}
+								data-testid="setup-key-save"
+								className="shrink-0 rounded-sm border border-border bg-background px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								{saving ? "Saving…" : "Save key"}
+							</button></>}</div>
 		</div>
 	);
 }
@@ -446,6 +450,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 		onPick={(p) => { setKeyProvider(p); setKeyMenuOpen(false); setKeyError(null); }}
 		onValue={setKeyValue}
 		onSave={() => void saveKey()}
+ onCancel={onClose}
 	/>;
 
 	return createPortal(
@@ -485,9 +490,9 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 				{stage === "loading" ? (
 					!failed && <p data-testid="setup-stage-loading" role="status" className="px-6 py-5 text-xs text-muted-foreground">Loading models…</p>
 				) : stage === "keys" ? (
-					<div className="flex flex-col px-6 py-5">{keysBody}</div>
+					<div className="min-h-0 flex flex-col">{keysBody}</div>
 				) : (
-					<div className="flex flex-col gap-4 overflow-y-auto px-6 py-5" data-testid="setup-stage-pickers">
+					<><div className="min-h-0 flex flex-col gap-4 overflow-y-auto px-6 py-5" data-testid="setup-stage-pickers">
 						<p className="text-xs text-muted-foreground">
 							Pick the model for each tier. All three are required before chats can start.
 						</p>
@@ -616,10 +621,11 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 								</div>
 							);
 						})}
-						<div className="flex items-center gap-3">
-							<button
-								type="button"
-								data-testid="setup-save"
+						</div><div className="lh-confirm-actions flex shrink-0 items-center justify-end gap-3 border-t px-6 py-3">
+<button type="button" onClick={onClose} className="px-3 py-1.5 text-xs text-muted-foreground">Cancel</button>
+<button
+ type="button"
+ data-testid="setup-save"
 								disabled={!allPicked || saving}
 								onClick={() => void save()}
 								className="rounded-sm border border-border bg-background px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-40"
@@ -627,8 +633,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 								{saving ? "Saving…" : "Save models"}
 							</button>
 							{error && <p className="text-xs text-red-400">{error}</p>}
-						</div>
-					</div>
+</div></>
 				)}
 			</div>
 		</div>,

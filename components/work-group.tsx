@@ -19,7 +19,7 @@ export function WorkGroup({ entry }: { entry: Extract<WorkEntry, { type: "work" 
 				className="flex min-h-9 w-full cursor-pointer items-center gap-2 text-left font-ui text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring max-sm:min-h-11"
 				onClick={blurAfterPointerClick}
 			>
-				{entry.activity ? <><BrailleSpinner label={entry.activity} /><Shimmer duration={1}>{entry.activity}</Shimmer></> : "Worked"}
+				{entry.activity ? <><BrailleSpinner label={entry.activity} /><Shimmer duration={1}>{entry.activity}</Shimmer></> : "Activity"}
 				<ChevronRight aria-hidden="true" className={`size-3.5 shrink-0 transition-transform motion-reduce:transition-none ${open ? "rotate-90" : ""}`} />
 			</CollapsibleTrigger>
 			<CollapsibleContent className="min-w-0 border-l border-border pl-4 pb-1 mt-1 mb-3 space-y-4" data-testid="work-details">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useContext } from "react";
-import { CheckIcon, SettingsIcon, XIcon } from "lucide-react";
+import { CheckIcon, CircleX, SettingsIcon, XIcon } from "lucide-react";
 import { JobsContext } from "@/components/jobs-context";
 import { ChatActionsContext } from "@/components/chat";
 import { isModelsRefusal, isProviderKeyRefusal, type JobKind, type JobRecord } from "@/src/core";
@@ -46,15 +46,16 @@ export function DispatchCard({ toolCallId, kind }: { toolCallId: string; kind: J
 	if (isProviderKeyRefusal(job.error)) {
 		return <DispatchRefusedCard label={label} line="needs a provider key" button="Add a key" />;
 	}
-	const failed = job.status === "error";
+	const cancelled = job.delivery?.kind === "abort" || (job.status === "error" && job.activity === "aborted");
+	const failed = job.status === "error" && !cancelled;
 	return (
 		<div
 			className="flex items-center gap-2 text-xs text-muted-foreground"
 			data-testid="dispatch-settled"
 		>
-			{failed ? <XIcon className="size-3.5 text-red-500" /> : <CheckIcon className="size-3.5" />}
+			{cancelled ? <CircleX className="size-3.5" /> : failed ? <XIcon className="size-3.5 text-red-500" /> : <CheckIcon className="size-3.5" />}
 			<span className="font-medium uppercase tracking-wide">{label}</span>
-			<span>{failed ? "failed" : "finished"}</span>
+			<span>{cancelled ? "cancelled" : failed ? "failed" : "finished"}</span>
 		</div>
 	);
 }

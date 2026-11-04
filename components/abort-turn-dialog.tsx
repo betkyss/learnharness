@@ -73,17 +73,17 @@ export function AbortTurnBody({
 			{...backdropDismiss}
 		>
 			<div
-				className="mx-4 w-full max-w-sm rounded-xl border bg-card p-5 shadow-lg"
+				className="lh-confirm mx-4 w-full max-w-sm rounded-xl border bg-card p-5 shadow-lg"
 				onClick={(e) => e.stopPropagation()}
 			>
 				<h2 className="text-sm font-semibold text-card-foreground" data-testid="abort-turn-title">
 					{copy.title}
 				</h2>
-				<p className="mt-1.5 text-xs text-muted-foreground" data-testid="abort-turn-line">
+				<div className="lh-confirm-body"><p className="mt-1.5 text-xs text-muted-foreground" data-testid="abort-turn-line">
 					{copy.line}
 					{busy && mode !== "turn" ? " The working turn stops too." : ""}
 				</p>
-				<div className="mt-4 flex justify-end gap-2">
+				</div><div className="lh-confirm-actions mt-4 flex justify-end gap-2">
 					<button
 						type="button"
 						data-testid="abort-turn-cancel"

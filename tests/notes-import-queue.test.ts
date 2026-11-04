@@ -57,3 +57,21 @@ it("synchronous transport failures settle one wave once without reentrant pump r
 	assert.equal(calls, 4); assert.equal(queue.getSnapshot().completion, 1); assert.equal(queue.getSnapshot().importing, false);
 	assert.equal(queue.getSnapshot().errors.length, 4);
 });
+
+it("reports queued, active and confirmed completed files without claiming errors as success", async () => {
+ const resolves: ((r: NotesImportResult[]) => void)[]=[];
+ const queue=createNotesImportQueue(()=>new Promise(resolve=>resolves.push(resolve)));
+ const files=Array.from({length:4},(_,i)=>new File(["text"],`${i}.md`));
+ queue.append(files);
+ assert.equal(queue.getSnapshot().running,3);assert.equal(queue.getSnapshot().queued,1);assert.equal(queue.getSnapshot().completed,0);
+ resolves[0]!([{requestIndex:0,filePath:"0.md",ok:true,outcome:"completed",stats:{nodes:0}}]);
+ await new Promise(resolve=>setTimeout(resolve,0));
+ assert.equal(queue.getSnapshot().queued,0);assert.equal(queue.getSnapshot().completed,1);
+ resolves[1]!([{requestIndex:0,filePath:"1.md",ok:false,outcome:"failed",error:"fixture failure"}]);
+ await new Promise(resolve=>setTimeout(resolve,0));
+ assert.equal(queue.getSnapshot().completed,1);assert.equal(queue.getSnapshot().errors.length,1);
+ resolves[2]!([{requestIndex:0,filePath:"2.md",ok:true,outcome:"completed",stats:{nodes:0}}]);
+ resolves[3]!([{requestIndex:0,filePath:"3.md",ok:true,outcome:"completed",stats:{nodes:0}}]);
+ await new Promise(resolve=>setTimeout(resolve,0));
+ assert.equal(queue.getSnapshot().completed,3);assert.equal(queue.getSnapshot().running,0);
+});

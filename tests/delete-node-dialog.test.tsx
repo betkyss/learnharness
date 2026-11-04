@@ -101,7 +101,8 @@ describe("DeleteNodeBody — the minimal screen (owner, 2026-09-30)", () => {
 		const ten = bodyAt(Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, name: `Prop ${i}` })));
 		assert.match(ten, /Delete 10 nodes\?/);
 		assert.match(ten, /Prop 7/); // the 8th name still listed
-		assert.doesNotMatch(ten, /Prop 8</); // the 9th is not
+		assert.match(ten, /Show all 10 node names/);
+		assert.match(ten, /<li[^>]*>Prop 8<\/li>/); // all names remain available through disclosure
 		assert.match(ten, /, and 2 more/);
 	});
 

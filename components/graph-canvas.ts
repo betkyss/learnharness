@@ -1,5 +1,7 @@
 "use client";
 
+import { nonOverlappingLabels, type LabelBox } from "./graph-label-layout";
+
 /**
  * The hand-rolled single-canvas graph renderer (decided 2026-09-13 after
  * the research pass — docs/research/graph-rendering.md, Option B).
@@ -117,6 +119,7 @@ export interface CanvasColors {
 	edge: string;
 	label: string;
 	hoverText: string;
+	background?: string;
 }
 
 export interface CanvasData {
@@ -434,6 +437,14 @@ export function fitTransform(
 	return { x: w / 2 - cx * k, y: h / 2 - cy * k, k };
 }
 
+/** Fit the unobscured canvas, leaving a readable gutter around labels. */
+export function fitVisibleGraph(bbox: Parameters<typeof fitTransform>[0], width: number, height: number, insets: { top: number; bottom: number }, minScale = 0) {
+ const available = Math.max(1, height - insets.top - insets.bottom);
+ const t = fitTransform(bbox, width, available, Math.min(32, width / 8, available / 6));
+ if (t.k >= minScale) return { ...t, y: t.y + insets.top };
+ return { k: minScale, x: width / 2 - (bbox.minX + bbox.maxX) / 2 * minScale, y: insets.top + available / 2 - (bbox.minY + bbox.maxY) / 2 * minScale };
+}
+
 /** The arrowhead geometry for a directed edge a→b: shaft endpoints
  *  (clear of both node discs) and the head triangle (tip on the target
  *  disc edge, wideness = 0.8 × head length — the sigma arrow shape). */
@@ -616,6 +627,7 @@ export class GraphCanvasRenderer {
 	 *  the glow popped off in one frame instead of fading). Cleared when
 	 *  the outgoing fade completes. */
 	private hoverNode: CanvasNode | null = null;
+	private selectedNodeId: string | null = null;
 	private hoverFade = 0;
 	private hoverFrom = 0;
 	private hoverTarget = 0;
@@ -662,6 +674,7 @@ export class GraphCanvasRenderer {
 		 *  where the user left it (2026-09-15: a default zoom exists only
 		 *  on first open, ever). Invalid shapes fall back to fit. */
 		initialCamera?: { k: number; x: number; y: number } | null,
+ private readonly fitInsets: () => { top: number; bottom: number } = () => ({ top: 0, bottom: 0 }),
 	) {
 		this.canvas = canvas;
 		const ctx = canvas.getContext("2d");
@@ -677,6 +690,7 @@ export class GraphCanvasRenderer {
 				this.transform = transform;
 				this.markDirty();
 				// The transform doubles as the persistence payload (view state).
+				this.selectedNodeId = null;
 				this.callbacks.onCameraMove(transform);
 			});
 		select(canvas)
@@ -874,7 +888,7 @@ export class GraphCanvasRenderer {
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
 		if (w < 10 || h < 10) return; // layout not ready yet; the ResizeObserver retries
-		const t = fitTransform(this.worldBBox, w, h, 40);
+		const t = this.visibleFit(w, h);
 		this.kFit = t.k;
 		this.hasFit = true;
 		select(this.canvas).call(
@@ -883,6 +897,24 @@ export class GraphCanvasRenderer {
 		);
 	}
 
+ clearSelection(): void { this.selectedNodeId = null; this.markDirty(); }
+ /** Frame actual source/chain members using the same camera and visible insets as Fit. */
+ focusNodes(ids: readonly string[], selectNode = false): void {
+ const nodes = ids.flatMap(id => { const n = this.nodeById.get(id); return n ? [n] : []; });
+ if (!nodes.length) return;
+ const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+ const box = { minX: Math.min(...nodes.map(n => n.x)) - 80, maxX: Math.max(...nodes.map(n => n.x)) + 80,
+ minY: Math.min(...nodes.map(n => n.y)) - 40, maxY: Math.max(...nodes.map(n => n.y)) + 80 };
+ const t = fitVisibleGraph(box, w, h, this.fitInsets(), 0);
+ t.k = Math.min(t.k, 1.5);
+ const insets = this.fitInsets();
+ t.x = w / 2 - (box.minX + box.maxX) / 2 * t.k;
+ t.y = (insets.top + h - insets.bottom) / 2 - (box.minY + box.maxY) / 2 * t.k;
+ select(this.canvas).call(this.zoomBehavior.transform, zoomIdentity.translate(t.x, t.y).scale(t.k));
+ this.selectedNodeId = selectNode ? nodes[0]!.id : null; this.markDirty();
+ if (selectNode) this.callbacks.onSelect(nodes[0]!.id, { x: nodes[0]!.x * t.k + t.x, y: nodes[0]!.y * t.k + t.y });
+ }
+
 	/** Refresh the label-gate's "1×" reference from the current bbox +
 	 *  viewport. kFit feeds ONLY zoomRatioOf now (the 2026-09-15 pivot
 	 *  removed it from geometry) — so this never touches geoVersion. */
@@ -890,8 +922,25 @@ export class GraphCanvasRenderer {
 		if (!this.worldBBox) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40).k;
+		if (w >= 10 && h >= 10) this.kFit = this.visibleFit(w, h).k;
 	}
+
+ private visibleFit(w: number, h: number) {
+  // Physics mutates the live positions after setData. Recompute explicit Fit
+  // from those positions, including the wrapped labels below each node.
+  const nodes = this.data?.nodes ?? [];
+  const labelSize = this.settings?.labelSize ?? 12;
+  const halfLabel = LABEL_MAX_WIDTH * labelSize / LABEL_SIZE / 2;
+  const nodeR = this.settings?.nodeSize ?? 8;
+  const bbox = nodes.length ? {
+   minX: Math.min(...nodes.map(n => n.x - halfLabel)),
+   maxX: Math.max(...nodes.map(n => n.x + halfLabel)),
+   minY: Math.min(...nodes.map(n => n.y - nodeR)),
+   maxY: Math.max(...nodes.map(n => n.y + nodeR + labelSize * LABEL_LINE_HEIGHT * 3 + 8)),
+  } : this.worldBBox!;
+  const insets = this.fitInsets();
+  return fitVisibleGraph(bbox, w, h, insets, h - insets.top - insets.bottom < 240 ? .35 : 0);
+ }
 
 	destroy(): void {
 		if (this.frameId !== null) cancelAnimationFrame(this.frameId);
@@ -1016,6 +1065,7 @@ export class GraphCanvasRenderer {
 				this.markDirty();
 			} else {
 				// Never heated: a plain click on the node.
+				this.selectedNodeId = id;
 				this.callbacks.onSelect(id, this.eventPos(e));
 			}
 			return;
@@ -1026,8 +1076,8 @@ export class GraphCanvasRenderer {
 		this.downPos = null;
 		if (moved > CLICK_SLOP) return; // that was a drag (pan), not a click
 		const node = this.pickAt(pos.x, pos.y);
-		if (node) this.callbacks.onSelect(node.id, pos);
-		else this.callbacks.onStageClick();
+		if (node) { this.selectedNodeId = node.id; this.callbacks.onSelect(node.id, pos); }
+		else { this.selectedNodeId = null; this.markDirty(); this.callbacks.onStageClick(); }
 	};
 
 	/** Right-click: pick the node under the pointer, hand the position to
@@ -1632,7 +1682,8 @@ export class GraphCanvasRenderer {
 		ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * tx, dpr * ty);
 
 		const ratio = zoomRatioOf(this.kFit, k);
-		const nodeAlpha = labelAlpha(ratio, settings.labelZoom);
+		const smallGraph = data.nodes.length <= 12;
+		const nodeAlpha = smallGraph && ratio <= 1.05 ? 1 : labelAlpha(ratio, settings.labelZoom);
 		const regionAlpha = 1 - nodeAlpha;
 		const { nodeR, glowOuter } = this.world;
 
@@ -1664,17 +1715,58 @@ export class GraphCanvasRenderer {
 		// 4. Nodes: one cached Path2D, one fill.
 		ctx.fillStyle = data.colors.node;
 		ctx.fill(this.nodesPath);
+		const selected = this.selectedNodeId ? this.nodeById.get(this.selectedNodeId) : null;
+		if (selected) {
+			ctx.strokeStyle = data.colors.hoverText;
+			ctx.lineWidth = 2 / k;
+			ctx.beginPath();
+			ctx.arc(selected.x, selected.y, nodeR + 4 / k, 0, Math.PI * 2);
+			ctx.stroke();
+		}
 
-		// 6. Node labels — one global gate, faded together. World-scaled
-		// with the graph (they grow as you zoom in, Obsidian-style).
-		if (nodeAlpha > 0.01) {
-			ctx.save();
-			ctx.globalAlpha = nodeAlpha;
-			ctx.font = this.worldLabelFont;
-			for (const [id, lines] of this.labelLines) {
+
+		const visibleRegionLabels = new Set<string>();
+		// Labels use screen-space boxes, including at Fit. At least a sparse
+		// set of real names remains readable without changing camera or physics.
+		{
+			const size = Math.max(12, Math.min(22, this.world.labelSize * k));
+			const labelWorld = { ...this.world, labelSize: size / k };
+			ctx.font = `${LABEL_WEIGHT} ${size / k}px ${data.fontFamily}`;
+			const insets = this.fitInsets();
+			const boxes: LabelBox[] = [];
+			const displayLines = new Map<string, string[]>();
+			for (const [id, fullLines] of this.labelLines) {
+				const compact = h - insets.top - insets.bottom < 120 && fullLines.length > 2;
+				const lines = compact ? [fullLines[0]!, fullLines[1]! + "…"] : fullLines;
+				displayLines.set(id, lines);
 				const n = this.nodeById.get(id);
-				if (!n) continue;
-				drawNameLines(ctx, n.x, n.y, lines, this.world, data.colors.label);
+				if (!n || (this.visible && !this.visible.has(id))) continue;
+				const width = Math.max(...lines.map((line) => ctx.measureText(line).width), 0) * k;
+				const top = n.y * k + ty + (labelWorld.nodeR + labelWorld.labelGap) * k;
+				boxes.push({ id, left: n.x * k + tx - width / 2, right: n.x * k + tx + width / 2, top,
+					bottom: top + lines.length * size * LABEL_LINE_HEIGHT, priority: this.hoverId === id ? 3 : this.selectedNodeId === id ? 2 : 0 });
+			}
+			if (settings.clusterLabels && regionAlpha > .01) {
+				ctx.save();
+				ctx.font = `${LABEL_WEIGHT} ${settings.clusterLabelSize / k}px ${data.fontFamily}`;
+				for (const [index, rm] of this.regionMeta.entries()) {
+					if (!rm.lines) continue;
+					const width = Math.max(...rm.lines.map((line) => ctx.measureText(line).width), 0) * k;
+					const height = rm.lines.length * settings.clusterLabelSize * REGION_LABEL_LINE_HEIGHT;
+					boxes.push({id:`region:${index}`, left:rm.cx*k+tx-width/2, right:rm.cx*k+tx+width/2, top:rm.cy*k+ty-height/2, bottom:rm.cy*k+ty+height/2, priority:1});
+				}
+				ctx.restore();
+			}
+			const labels = nonOverlappingLabels(boxes, { left: 8, right: w - 8, top: insets.top, bottom: h - insets.bottom });
+			ctx.save();
+			ctx.globalAlpha = 1;
+			for (const id of labels) {
+				if (id.startsWith("region:")) { visibleRegionLabels.add(id); continue; }
+				const n = this.nodeById.get(id)!;
+				const box = boxes.find((box) => box.id === id)!;
+				ctx.fillStyle = data.colors.background ?? "#000000";
+				ctx.fillRect((box.left - tx - 4) / k, (box.top - ty - 3) / k, (box.right - box.left + 8) / k, (box.bottom - box.top + 6) / k);
+				drawNameLines(ctx, n.x, n.y, displayLines.get(id)!, labelWorld, data.colors.label);
 			}
 			ctx.restore();
 		}
@@ -1699,7 +1791,7 @@ export class GraphCanvasRenderer {
 				ctx.save();
 				ctx.globalAlpha = this.hoverFade;
 				ctx.font = this.worldLabelFont;
-				drawNameLines(ctx, n.x, n.y, this.labelLines.get(n.id) ?? [], this.world, data.colors.hoverText);
+				// The collision pass above reserves the hovered label first.
 				ctx.restore();
 			}
 		}
@@ -1723,8 +1815,13 @@ export class GraphCanvasRenderer {
 			// Screen px ÷ k = world units — the lines stay evenly spaced
 			// at a constant on-screen pitch at any zoom.
 			const lineH = (settings.clusterLabelSize * REGION_LABEL_LINE_HEIGHT) / k;
-			for (const rm of this.regionMeta) {
-				if (!rm.lines) continue;
+			for (const [index, rm] of this.regionMeta.entries()) {
+				if (!rm.lines || !visibleRegionLabels.has(`region:${index}`)) continue;
+				const width = Math.max(...rm.lines.map((line) => ctx.measureText(line).width));
+				ctx.globalAlpha = 1;
+				ctx.fillStyle = data.colors.background ?? "#000000";
+				ctx.fillRect(rm.cx - width / 2 - 4 / k, rm.cy - rm.lines.length * lineH / 2 - 3 / k, width + 8 / k, rm.lines.length * lineH + 6 / k);
+				ctx.globalAlpha = regionAlpha;
 				ctx.fillStyle = `hsla(${rm.hue}, 55%, 78%, 0.85)`;
 				const firstOffset = (-(rm.lines.length - 1) / 2) * lineH;
 				for (let i = 0; i < rm.lines.length; i++) {

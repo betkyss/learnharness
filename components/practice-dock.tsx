@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { PathInput } from "@/components/path-input";
+import { teaserText } from "@/components/question-dock";
 import { cn } from "@/lib/utils";
 
 /**
@@ -94,7 +95,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 			>
 				<ChevronRightIcon className="size-4 shrink-0 rotate-90" />
 				<span className="font-medium">Problem</span>
-				<span className="min-w-0 flex-1 truncate">{input.statement}</span>
+				<span className="min-w-0 flex-1 truncate">{typeof input.statement === "string" ? teaserText(input.statement) : input.statement}</span>
 			</button>
 		);
 	}
@@ -106,12 +107,12 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 			    cards' label row — owner round, 2026-10-05) + the statement,
 			    markdown + LaTeX rendered, capped by the measured column
 			    (--dock-max-h; the old fixed 40vh cut long problems short). */}
-			<div data-dock-scroll-area="" className="max-h-[var(--dock-max-h,40vh)] overflow-y-auto px-4 pt-3 pb-2">
-				<div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Problem</div>
+			<details data-dock-scroll-area="" className="practice-problem max-h-[var(--dock-max-h,40vh)] overflow-y-auto px-4 pt-3 pb-2">
+				<summary className="cursor-pointer text-sm text-muted-foreground"><span className="font-medium">Problem</span><span className="ml-2">{typeof input.statement === "string" ? teaserText(input.statement) : input.statement}</span></summary>
 				<div className="lh-prose">
 					<ToolContentResponse>{input.statement}</ToolContentResponse>
 				</div>
-			</div>
+			</details>
 
 			{/* The learner's half: Enter SENDS (owner round 2, 2026-10-05);
 			    Shift+Enter makes a newline — less to decide about. */}

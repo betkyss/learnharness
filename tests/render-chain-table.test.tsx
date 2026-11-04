@@ -22,6 +22,7 @@
  */
 
 import React from "react";
+import { parseHTML } from "linkedom";
 (globalThis as Record<string, unknown>).React = React;
 
 import assert from "node:assert/strict";
@@ -149,7 +150,7 @@ describe("ChainTableBody — THE shared TopBar + the lines law (owner, round 2)"
 		// chain rows themselves carry NO border — their entire class list is
 		// the staircase law (pl-12 = aligned with the cluster's FOLDER icon);
 		// the chip outlines' border-border/70 is an outline, not a row line
-		assert.ok(html.includes('class="flex items-center gap-1 py-1 pl-12 pr-3"'), "the chain row: staircase indent, no border");
+		assert.ok(html.includes('class="knowledge-chain flex items-center gap-1 py-1 pl-12 pr-3"'), "the chain row: staircase indent, no border");
 	});
 
 	it("TREE THREADS: open folders/chains drop a vertical guide from their expander arrow down the children's edge (owner round 5)", () => {
@@ -215,6 +216,9 @@ describe("ChainTableBody — chain rows (chips + connectors)", () => {
 		assert.ok(html.includes('data-testid="prop-row-a"'), "premise statement row");
 		assert.ok(html.includes("Statement A."), "the statement text, one click deep");
 		assert.ok(html.includes("Statement C."), "the conclusion statement");
+        const { document } = parseHTML(html);
+        assert.match(document.querySelector('[data-testid="prop-row-a"]')!.textContent!, /Premise onePremiseStatement A/);
+        assert.match(document.querySelector('[data-testid="prop-row-c1"]')!.textContent!, /ConclusionConclusionStatement C/);
 		// owner ruling: the derivation is already encoded in the chain line —
 		// no conclusion marker down here
 		assert.ok(!html.includes("prop-conclusion"), "no conclusion marker anywhere");
@@ -333,7 +337,7 @@ describe("ChainTableBody — the fuzzy search (grouped + auto-expand)", () => {
 	it("no matches: the honest empty line", () => {
 		const html = render({ query: "qqqq" });
 		assert.ok(html.includes('data-testid="chain-table-nomatch"'));
-		assert.ok(html.includes("No matching chains."));
+		assert.ok(html.includes("No matching knowledge."));
 	});
 });
 
@@ -373,4 +377,14 @@ describe("ChainTableOverlay — the lifted practice pick (owner vision, 2026-10-
 		assert.ok(!html.includes('data-testid="chain-delete"'));
 		assert.ok(!html.includes('data-testid="chain-practice-done"'));
 	});
+});
+
+it("offers clear search when existing folders are all filtered out", () => {
+ const html = renderToStaticMarkup(<ChainTableBody {...BASE} query="zzzz-no-match" directory={{
+  organization: { version: 1, folders: [{ id: "folder", name: "Mathematics", parentId: null, createdAt: "2026-11-04" }], placements: {} },
+  sources: [],
+ }} />);
+ assert.match(html, /No matching knowledge/);
+ assert.match(html, /Clear search/);
+ assert.doesNotMatch(html, /data-testid="source-folder-folder"/);
 });

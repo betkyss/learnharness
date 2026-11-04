@@ -44,39 +44,22 @@ describe("computeMenuPlacement — side", () => {
 	});
 });
 
-describe("computeMenuPlacement — cap + position", () => {
-	it("caps at 60vh when the side has more room than that", () => {
-		// Anchor high: 648px below it — more than 60vh(480) → the cap is 60vh.
-		const p = computeMenuPlacement(rect(100, 140), viewport(800), 300, "down", "right");
-		assert.equal(p.maxHeight, 0.6 * 800);
-		assert.equal(p.style.top, 144); // anchor bottom + GAP(4)
-		assert.equal(p.style.right, 1280 - 300); // right-aligned to the anchor
-	});
-
-	it("caps at the side's available room when 60vh exceeds it", () => {
-		// Anchor at 500/800: down room = 800 − 8 − 544 = 248 < 480. The
-		// short content (100) fits down — no flip — so the cap binds at 248.
-		const p = computeMenuPlacement(rect(500, 540), viewport(800), 100, "down", "right");
-		assert.equal(p.side, "down");
-		assert.equal(p.maxHeight, 248);
-	});
-
-	it("never crushes below the usability floor, even against a tiny side", () => {
-		// Anchor 30px above the bottom, both sides thin: capped to the
-		// floor, not a 2px sliver — the cap overflows rather than crushes.
-		const p = computeMenuPlacement(rect(30, 60), viewport(90), 300, "down", "right");
-		assert.equal(p.maxHeight, 96);
-	});
-
-	it("up-side menus anchor their BOTTOM above the anchor's top", () => {
-		const p = computeMenuPlacement(rect(400, 440), viewport(800), 300, "up", "right");
-		assert.equal(p.style.bottom, 800 - 400 + 4); // viewport − anchor.top − GAP
-		assert.ok(!("top" in p.style));
-	});
-
-	it("left alignment keys off the anchor's left edge", () => {
-		const p = computeMenuPlacement(rect(400, 440), viewport(800), 300, "down", "left");
-		assert.equal(p.style.left, 100);
-		assert.ok(!("right" in p.style));
-	});
+describe("computeMenuPlacement viewport bounds", () => {
+ for (const [width, height] of ([[1440,900], [768,1024], [390,844], [390,420], [100,90]] as const)) {
+  for (const anchor of [{left:0,right:20,top:0,bottom:20},{left:width-20,right:width,top:height-20,bottom:height},{left:-100,right:5,top:height/2,bottom:height/2+30}]) {
+   for (const side of ["up", "down"] as MenuSide[]) it(`clamps ${width}x${height} ${JSON.stringify(anchor)} ${side}`, () => {
+    const p = computeMenuPlacement(anchor,{width,height},1000,side,"right",352);
+    const menuWidth = Math.min(352,width-16);
+    assert.ok(Number(p.style.left)>=8);
+    assert.ok(Number(p.style.left)+menuWidth<=width-8);
+    assert.ok(Number(p.style.top)>=8);
+    assert.ok(Number(p.style.top)+p.maxHeight<=height-8);
+    assert.equal(p.style.maxWidth,width-16);
+   });
+  }
+ }
+ it("anchors a fitting menu to the requested edge",()=>{
+  const p=computeMenuPlacement(rect(400,440),viewport(800),200,"down","right",240);
+  assert.equal(p.style.left,60);assert.equal(p.style.top,444);
+ });
 });

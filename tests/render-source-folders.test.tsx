@@ -38,8 +38,8 @@ it("source inventory includes unextracted chats and zero-graph imported books; o
 	assert.match(html, /data-testid="folder-separator-f2"[^>]*style="left:37px"/);
 	assert.match(html, /data-testid="folder-icon-f2"[^>]*aria-expanded="true"/);
 	assert.match(html, /data-testid="source-icon-notes"[^>]*aria-expanded="false"/);
-	assert.match(html, /data-testid="cluster-group-notes"[^>]*style="margin-left:72px"/);
-	assert.doesNotMatch(html, /No matching chains/);
+	assert.match(html, /data-testid="cluster-group-notes"[^>]*style="--tree-indent:72px"/);
+	assert.doesNotMatch(html, /No matching knowledge/);
 });
 it("nested folders aggregate unique graph member counts, keep three-column sorting and expose root placement", () => {
 	const html = render({ nodes, expandedClusters: new Set(["f1", "f2", "notes"]), selectedSources: new Set(["notes"]), selectedFolders: new Set(["f1", "f2"]) });

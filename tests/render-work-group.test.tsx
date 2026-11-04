@@ -38,7 +38,7 @@ it("preserves disclosure and tool input across streaming, tool settlement, and c
 		await draw([step, { ...tool, state: "output-available", output: { text: "The result" } }], null);
 		assert.equal(host.querySelector("details"), details, "same tool DOM after settling");
 		assert.equal(details.open, true);
-		assert.equal(trigger.textContent, "Worked");
+		assert.equal(trigger.textContent, "Activity");
 		await draw([{ ...step, sourceMessageId: "saved-a" }, { ...tool, sourceMessageId: "saved-a", state: "output-available", output: { text: "The result" } }], null);
 		assert.equal(host.querySelector("button"), trigger, "server ID stamping preserves group identity");
 		assert.equal(host.querySelector("details"), details, "server ID stamping preserves nested tool identity");

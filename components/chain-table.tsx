@@ -70,7 +70,7 @@ import {
 } from "lucide-react";
 import { chainsForSelection, folderEntryCheck, toggleSourceEntries, formatChainLine, fuzzyScore, sourceFileLabel } from "@/src/core";
 import type { GraphChain, GraphNode, SourceDirectory, SourceEntry, SourceFolder, SourceEntrySelection } from "@/src/core";
-import { EditableSourceName, SourceDragRow, sourceNameMatches, SourceFolderTree, type OrganizationChange } from "./source-folder-tree";
+import { SourceMetadata, EditableSourceName, SourceDragRow, sourceNameMatches, SourceFolderTree, type OrganizationChange } from "./source-folder-tree";
 import { chainRow, useChainNavigation } from "./chain-navigation";
 import { useServerEvent, useServerResync } from "./server-events";
 import { TopBar } from "@/components/top-bar";
@@ -296,7 +296,7 @@ export function ChainTableBody({
 		sort.col !== col ? null : sort.dir === 1 ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />;
 
 	return (
-		<div ref={tableRef} tabIndex={-1} data-testid="chain-table" className="relative flex h-full min-h-0 flex-col outline-none [&_[data-chain-nav-active=true]]:bg-accent/50 [&_[data-chain-nav-row]]:outline-none [&_[data-chain-nav-row]]:scroll-mt-8 [&_[data-chain-nav-row]]:scroll-mb-16">
+		<div ref={tableRef} tabIndex={-1} data-testid="chain-table" className="relative mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col outline-none [&_[data-chain-nav-active=true]]:bg-accent/50 [&_[data-chain-nav-row]]:outline-none [&_[data-chain-nav-row]]:scroll-mt-8 [&_[data-chain-nav-row]]:scroll-mb-16">
 			{/* THE shared top bar (standardization ruling): drag mechanics,
 			    sidebar reopen, traffic-light gutter — the same element as every
 			    chat surface. NO TITLE (owner round 11, 2026-10-05): the serif
@@ -317,10 +317,10 @@ export function ChainTableBody({
 						value={query}
 						data-testid="chain-table-search"
 						onChange={(e) => onQuery(e.target.value)}
-						placeholder="Search nodes…"
-						aria-label="Search nodes"
+						placeholder="Search knowledge…"
+						aria-label="Search knowledge"
 						spellCheck={false}
-						className="lh-no-drag h-8 w-56 rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
+						className="lh-no-drag h-8 w-32 sm:w-56 rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
 					/>
 				</div>
 			<button
@@ -343,7 +343,7 @@ export function ChainTableBody({
 			<div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
 				{/* The TOP rule (owner round 5: the table is framed — a line under
 			    the header, a line under the last group, lines between groups). */}
-				<div className="sticky top-0 z-10 flex shrink-0 items-center gap-1 border-b border-border/60 bg-background/80 px-3 py-1.5 text-xs uppercase tracking-widest text-muted-foreground/70 backdrop-blur">
+				<div className="source-sort sticky top-0 z-10 flex shrink-0 items-center gap-1 border-b border-border/60 bg-background/80 px-3 py-1.5 text-xs uppercase tracking-widest text-muted-foreground/70 backdrop-blur">
 					<button
 						type="button"
 						data-testid="sort-name"
@@ -351,7 +351,7 @@ export function ChainTableBody({
 						aria-sort={sort.col === "name" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
 						className="flex flex-1 items-center gap-1 text-left transition-colors hover:text-foreground"
 					>
-						Name {dirIcon("name")}
+						<span className="sm:hidden">Sort: </span>Name {dirIcon("name")}
 					</button>
 					<button
 						type="button"
@@ -360,7 +360,7 @@ export function ChainTableBody({
 						aria-sort={sort.col === "props" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
 						className="flex w-14 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground"
 					>
-						Props {dirIcon("props")}
+						<span className="sm:hidden">Sort: </span>Props {dirIcon("props")}
 					</button>
 					<button
 						type="button"
@@ -369,7 +369,7 @@ export function ChainTableBody({
 						aria-sort={sort.col === "created" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
 						className="flex w-20 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground"
 					>
-						Created {dirIcon("created")}
+						<span className="sm:hidden">Sort: </span>Created {dirIcon("created")}
 					</button>
 				</div>
 
@@ -380,9 +380,9 @@ export function ChainTableBody({
 						onQuery(""); if (id) navigation.focusRow(["folder", id]); setCreatingFolder(false);
 					}} />
 				</div>}
-				{groups.length === 0 && (directory?.organization.folders.length ?? 0) === 0 && (
+				{groups.length === 0 && !(directory?.organization.folders.some((folder) => !query.trim() || fuzzyScore(query, folder.name) !== null)) && (
 					<div data-testid="chain-table-nomatch" className="px-4 pt-3 text-xs text-muted-foreground">
-						No matching chains.
+						No matching knowledge. {query.trim() && <button type="button" className="ml-2 underline text-foreground" onClick={() => onQuery("")}>Clear search</button>}
 					</div>
 				)}
 
@@ -400,8 +400,8 @@ export function ChainTableBody({
 							// The horizontal rules (owner rulings, rounds 2 + 5): between
 							// cluster groups AND under the last one — the table is framed
 							// top (header) and bottom. Never on individual rows.
-							className="relative border-b border-transparent"
-							style={{ marginLeft: depth * 36 }}
+							className="knowledge-source relative border-b border-transparent"
+							style={{ "--tree-indent": `${depth * 36}px` } as React.CSSProperties}
 						>
 							{/* The TREE THREAD (owner rounds 5–6): a vertical guide at the
 							    expander arrow's column (center 37px: pl-3 + checkbox 14 +
@@ -417,7 +417,7 @@ export function ChainTableBody({
 								/>
 							)}
 							{/* The cluster row: birth-session group header. */}
-							<SourceDragRow {...chainRow(["source", group.key], depth, open)} kind="source" id={group.key} name={group.label ?? "unlabeled"} enabled={Boolean(onOrganizationChange && group.birth)} className="flex items-center gap-1 px-3 py-1.5">
+							<SourceDragRow {...chainRow(["source", group.key], depth, open)} kind="source" id={group.key} name={group.label ?? "unlabeled"} enabled={Boolean(onOrganizationChange && group.birth)} className="source-summary flex flex-wrap items-center gap-1 px-3 py-1.5">
 								<RowCheckbox
 									disabled={selectMode ? group.nodeIds.length === 0 : !directory?.sources.some((s) => s.id === group.birth)}
 									checked={selectMode ? selectedCount === group.nodeIds.length && group.nodeIds.length > 0 : group.birth !== null && selectedSources.has(group.birth)}
@@ -435,12 +435,7 @@ export function ChainTableBody({
 									? <EditableSourceName name={group.label ?? ""} onSave={(name) => onOrganizationChange({ action: "rename-source", id: group.birth!, name })} />
 									: <span className="min-w-0 flex-1 truncate text-sm font-medium">{group.label ?? <span className="text-muted-foreground/60">unlabeled</span>}</span>}
 								{group.kind === "notes" && <span className="text-xs uppercase tracking-widest text-muted-foreground/60">notes</span>}
-								<span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-									{group.nodeIds.length}
-								</span>
-								<span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-									{group.newestCreatedAt.slice(0, 10)}
-								</span>
+								<SourceMetadata count={group.nodeIds.length} created={group.newestCreatedAt} />
 							</SourceDragRow>
 
 							{/* The chain rows — clearly indented under the folder
@@ -468,7 +463,7 @@ export function ChainTableBody({
 												{...chainRow(["chain", group.key, chain.id], depth + 1, chainOpen)}
 												data-testid={`chain-row-${chain.id}`}
 												aria-label={formatChainLine(chain, Object.fromEntries([...byId.entries()].map(([id, n]) => [id, { name: n.name }])))}
-												className="flex items-center gap-1 py-1 pl-12 pr-3"
+												className="knowledge-chain flex items-center gap-1 py-1 pl-12 pr-3"
 											>
 												{selectMode ? <RowCheckbox
 													checked={selectedInChain === memberIds.length && memberIds.length > 0}
@@ -538,7 +533,7 @@ export function ChainTableBody({
 															key={id}
 															{...chainRow(["prop", group.key, chain.id, id], depth + 2)}
 															data-testid={`prop-row-${id}`}
-															className="flex items-start gap-2 py-1 pl-21 pr-3"
+															className="knowledge-statement flex items-start gap-2 py-1 pl-21 pr-3"
 														>
 															{selectMode ? <RowCheckbox
 																checked={selection.has(id)}
@@ -546,9 +541,10 @@ export function ChainTableBody({
 																testid={`prop-checkbox-${id}`}
 																label={`Select node ${node.name}`}
 															/> : <span aria-hidden="true" className="size-3.5 shrink-0" />}
-															<span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
-																{node.statement}
-															</span>
+															<div className="min-w-0 flex-1">
+ <div className="mb-1 flex flex-wrap items-baseline gap-x-2 text-sm"><span className="font-medium">{node.name}</span><span className="text-xs text-muted-foreground">{id === chain.conclusion ? chain.premises.length ? "Conclusion" : "Proposition" : "Premise"}</span></div>
+ <div className="knowledge-statement-text text-foreground">{node.statement}</div>
+</div>
 															<span className="w-14 shrink-0" />
 															<span className="w-20 shrink-0" />
 														</div>

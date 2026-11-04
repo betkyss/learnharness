@@ -7,8 +7,11 @@ export interface ImportQueueSnapshot {
 	errors: string[];
 	notices: string[];
 	completion: number;
+	queued: number;
+	running: number;
+	completed: number;
 }
-export const EMPTY_IMPORT_QUEUE: ImportQueueSnapshot = { importing: false, errors: [], notices: [], completion: 0 };
+export const EMPTY_IMPORT_QUEUE: ImportQueueSnapshot = { importing: false, errors: [], notices: [], completion: 0, queued: 0, running: 0, completed: 0 };
 
 /** PR198's refill-on-completion, one-request-per-file transport, extended to
  * accept later selections. One instance per page, NOT three workers per click.
@@ -18,11 +21,11 @@ export function createNotesImportQueue(post: (files: readonly File[]) => Promise
 	const pending: { file: File; index: number }[] = [];
 	const failures = new Map<number, string>();
 	const notices = new Map<number, string>();
-	let active = 0, sequence = 0;
+	let active = 0, sequence = 0, completedFiles = 0;
 	let snapshot = EMPTY_IMPORT_QUEUE;
 	const ordered = (map: Map<number, string>) => [...map].sort(([a], [b]) => a - b).map(([, text]) => text);
 	const publish = (completed = false) => {
-		snapshot = { importing: active > 0 || pending.length > 0, errors: ordered(failures), notices: ordered(notices), completion: snapshot.completion + Number(completed) };
+		snapshot = { queued: pending.length, running: active, completed: completedFiles, importing: active > 0 || pending.length > 0, errors: ordered(failures), notices: ordered(notices), completion: snapshot.completion + Number(completed) };
 		for (const listener of [...listeners]) listener();
 	};
 	// Normalize a synchronously throwing transport to the same async settlement.
@@ -38,7 +41,7 @@ export function createNotesImportQueue(post: (files: readonly File[]) => Promise
 					if (!r.ok) {
 						const details = [r.provider, r.missing?.join(", "), r.slots?.join(", ")].filter(Boolean);
 						failures.set(index, `${r.filePath}: ${r.error}${r.code ? `\n${[r.code, ...details].join(" — ")}` : ""}`);
-					} else if (r.notice) notices.set(index, `${r.filePath}: ${r.notice}`);
+					} else { completedFiles++; if (r.notice) notices.set(index, `${r.filePath}: ${r.notice}`); }
 				} catch (error) {
 					// Never retry an ambiguous response: the merge may have committed.
 					failures.set(index, `${notesPath(file)}: ${error instanceof Error ? error.message : String(error)}`);
@@ -55,7 +58,7 @@ export function createNotesImportQueue(post: (files: readonly File[]) => Promise
 		subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
 		append(files: readonly File[]) {
 			if (files.length === 0) return;
-			if (!snapshot.importing) { failures.clear(); notices.clear(); sequence = 0; }
+			if (!snapshot.importing) { failures.clear(); notices.clear(); sequence = 0; completedFiles = 0; }
 			for (const file of files) {
 				const index = sequence++;
 				const path = notesPath(file);

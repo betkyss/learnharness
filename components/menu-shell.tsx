@@ -40,8 +40,6 @@ import { createPortal } from "react-dom";
 const GAP = 4; // anchor edge → menu (the bespoke shells' settled 4px)
 const EDGE = 8; // viewport floor the menu never enters
 const CAP_VH = 0.6; // 60vh — the graph pattern's cap
-const MIN_USABLE = 96; // floor: a shorter cap is an unusable sliver; the
-// cap then overflows the edge instead of crushing the menu
 
 /** A MenuShell mounted = a dropdown open (fix wave, owner ruling:
  *  the settings dialog's content column locks while any menu is down —
@@ -69,13 +67,14 @@ export interface MenuPlacement {
  *  filter re-measure honestly) → side, fixed style, cap. Flip rule: stay
  *  on the preferred side unless it cannot show the full content AND the
  *  other side is roomier. The cap always keeps the menu inside its side's
- *  room when there is room; the floor keeps it usable when there isn't. */
+ *  room and viewport bounds, including short viewports. */
 export function computeMenuPlacement(
 	rect: { top: number; bottom: number; left: number; right: number },
 	viewport: { width: number; height: number },
 	contentHeight: number,
 	preferredSide: MenuSide,
 	align: MenuAlign,
+	contentWidth = 0,
 ): MenuPlacement {
 	const availDown = viewport.height - EDGE - (rect.bottom + GAP);
 	const availUp = rect.top - GAP - EDGE;
@@ -89,13 +88,17 @@ export function computeMenuPlacement(
 			side = preferredSide === "down" ? "up" : "down";
 		}
 	}
-	const avail = side === "down" ? availDown : availUp;
-	const maxHeight = Math.max(MIN_USABLE, Math.min(CAP_VH * viewport.height, avail));
-	const horizontal: Record<string, number> =
-		align === "right" ? { right: viewport.width - rect.right } : { left: rect.left };
-	const vertical: Record<string, number> =
-		side === "down" ? { top: rect.bottom + GAP } : { bottom: viewport.height - rect.top + GAP };
-	return { side, style: { ...horizontal, ...vertical }, maxHeight };
+	const viewportWidth = Math.max(0, viewport.width - EDGE * 2);
+	const width = Math.min(contentWidth || viewportWidth, viewportWidth);
+	const room = Math.max(0, side === "down" ? availDown : availUp);
+	const maxHeight = Math.min(viewport.height * CAP_VH, Math.max(0, viewport.height - EDGE * 2), room || viewport.height);
+	const height = Math.min(Math.max(0, contentHeight), maxHeight);
+	const desiredTop = side === "down" ? rect.bottom + GAP : rect.top - GAP - height;
+	const top = Math.max(EDGE, Math.min(desiredTop, viewport.height - EDGE - height));
+	const desiredLeft = align === "right" ? rect.right - width : rect.left;
+	const left = Math.max(EDGE, Math.min(desiredLeft, viewport.width - EDGE - width));
+	return { side, style: { left, top, maxWidth: viewportWidth }, maxHeight };
+
 }
 
 /** The shared shell. Exactly one anchor seam: pass `anchorRef` (a live
@@ -130,7 +133,17 @@ export function MenuShell({
 	// Announce open↔close for lockable surfaces (see MENU_OPEN_EVENT).
 	useEffect(() => {
 		window.dispatchEvent(new CustomEvent(MENU_OPEN_EVENT));
+		// Mark Escape before document-level menu owners close their portals.
+		// Outer dialogs can then avoid acting on the same event after unmount.
+		const claimEscape = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			const trigger = anchor();
+			if (trigger instanceof HTMLElement) trigger.focus();
+		};
+		window.addEventListener("keydown", claimEscape, true);
 		return () => {
+			window.removeEventListener("keydown", claimEscape, true);
 			window.dispatchEvent(new CustomEvent(MENU_CLOSE_EVENT));
 		};
 	}, []);
@@ -204,18 +217,25 @@ export function MenuShell({
 				menuRef.current.scrollHeight,
 				preferredSide,
 				align,
+				menuRef.current.getBoundingClientRect().width,
 			);
 			setPlaced(p);
 		};
 		place();
 		const rePlace = () => {
-			cancelAnimationFrame(raf);
+			if (raf) cancelAnimationFrame(raf);
 			raf = requestAnimationFrame(place);
 		};
+		const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(rePlace);
+		if (menuRef.current) observer?.observe(menuRef.current);
+		const mutations = typeof MutationObserver === "undefined" ? null : new MutationObserver(rePlace);
+		if (menuRef.current) mutations?.observe(menuRef.current, { childList: true, subtree: true, characterData: true });
 		window.addEventListener("scroll", rePlace, true);
 		window.addEventListener("resize", rePlace);
 		return () => {
-			cancelAnimationFrame(raf);
+			if (raf) cancelAnimationFrame(raf);
+			observer?.disconnect();
+			mutations?.disconnect();
 			window.removeEventListener("scroll", rePlace, true);
 			window.removeEventListener("resize", rePlace);
 		};
@@ -230,7 +250,7 @@ export function MenuShell({
 				ref={menuRef}
 				data-testid={testid}
 				data-lh-menu=""
-				style={{ position: "fixed", left: 0, top: 0, visibility: "hidden" }}
+				style={{ position: "fixed", left: 0, top: 0, visibility: "hidden", maxWidth: "calc(100vw - 16px)" }}
 				className={menuClass}
 			>
 				{children}
@@ -245,7 +265,7 @@ export function MenuShell({
 			data-lh-menu=""
 			tabIndex={-1}
 			onKeyDown={onBodyKeyDown}
-			style={{ position: "fixed", zIndex: 60, ...placed.style, maxHeight: placed.maxHeight, overflowY: "auto" }}
+			style={{ position: "fixed", zIndex: 60, ...placed.style, maxHeight: placed.maxHeight, overflowY: "auto", overflowX: "hidden", overflowWrap: "anywhere" }}
 			// The body is the arrow machine's focus home (input-less menus
 			// land focus here on open) — the focus STAYS, but the browser's
 			// default blue ring around it must not draw (owner, polish

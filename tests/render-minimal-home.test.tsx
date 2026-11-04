@@ -64,12 +64,12 @@ describe("KnowledgeSummary — the quiet home summary (2026-10-06)", () => {
 
 	it("the empty knowledge base says so, quietly — import is the entry point", () => {
 		const html = render({ propositions: 0, chains: 0, teachSessions: 0, practiceSessions: 0, importedNotes: 0 });
-		assert.ok(html.includes("Nothing here yet"));
-		assert.ok(html.includes("import notes"), "the hint names the entry point");
+		assert.ok(html.includes("Start teaching"));
+		assert.ok(html.includes("/chat/new?mode=practice"), "the practice entry point is available");
 	});
 
 	it("non-empty shows no empty-state hint", () => {
 		const html = render();
-		assert.ok(!html.includes("Nothing here yet"));
+		assert.ok(!html.includes("Start teaching"));
 	});
 });

@@ -68,6 +68,7 @@ export function useEnterSubmits(submit: () => void): void {
 			if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
 			if (isTypingSurface(e)) return;
 			const target = e.target as HTMLElement | null;
+			if (target?.closest("summary")) return;
 			if (target?.tagName === "BUTTON" && buttonKeepsNativeEnter(target)) return;
 			e.preventDefault();
 			submitRef.current();

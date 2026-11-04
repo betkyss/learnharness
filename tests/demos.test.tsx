@@ -428,7 +428,7 @@ describe("steer card rendering (the delivered artifact)", () => {
 		assert.match(html, /Research/);
 		assert.match(html, /complete/);
 		assert.match(html, /2 sources/);
-		assert.match(html, /view brief/, "the expansion affordance is offered");
+		assert.match(html, /Read brief/, "the expansion affordance is offered");
 		// the one-liner is a native <details> — collapsed by default, so the
 		// brief + sources ride in the DOM but never clutter the transcript
 		// until the learner opens them (the wave-1 "view full research" ask)

@@ -29,9 +29,9 @@ export function dockHeightBudget(m: DockHeightMeasurements) {
 	// A cap smaller than the question's padding leaves no content viewport.
 	// Deliberately uncap the question and scroll the whole content instead;
 	// do not confuse a measured zero with an unmeasured CSS fallback.
-	const scrollWholeContent = questionMaxHeight === null
+	const scrollWholeContent = m.columnHeight <= 500 || (questionMaxHeight === null
 		? naturalHeight > viewportMaxHeight
-		: questionMaxHeight <= m.questionPaddingHeight;
+		: questionMaxHeight <= m.questionPaddingHeight);
 	return { viewportMaxHeight, shellMaxHeight, questionMaxHeight, scrollWholeContent };
 }
 
@@ -69,6 +69,7 @@ export function syncDockHeight(elements: DockHeightElements, expanded: boolean) 
 			? pixels(questionStyle.paddingTop) + pixels(questionStyle.paddingBottom)
 			: 0,
 	});
+	block.dataset.dockWholeScroll = String(budget.scrollWholeContent);
 	if (budget.questionMaxHeight === null) block.style.removeProperty("--dock-max-h");
 	else block.style.setProperty("--dock-max-h", budget.scrollWholeContent ? "none" : `${budget.questionMaxHeight}px`);
 	viewport.style.maxHeight = `${budget.viewportMaxHeight}px`;
@@ -113,6 +114,7 @@ export function useDockHeight({
 		onScrollbarInset(Math.round((column.offsetWidth - column.clientWidth) / 2));
 		if (enabled) syncDockHeight({ column, block, viewport, body, shell, content }, expanded);
 		else {
+			delete block.dataset.dockWholeScroll;
 			block.style.removeProperty("--dock-max-h");
 			viewport.style.removeProperty("max-height");
 			viewport.style.removeProperty("overflow-y");

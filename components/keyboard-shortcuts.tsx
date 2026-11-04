@@ -171,7 +171,7 @@ function CheatSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
 			>
 				<div className="mb-4 flex items-baseline justify-between">
 					<span className="text-sm font-medium text-card-foreground">Keyboard shortcuts</span>
-					<span className="text-xs text-muted-foreground">Esc to close</span>
+					<button type="button" onClick={onClose} aria-label="Close keyboard shortcuts" className="rounded border px-2 py-1 text-xs hover:bg-accent">Close</button>
 				</div>
 				{scopes.map((scope) => {
 					const actions = KEYBOARD_ACTIONS.filter((a) => a.scope === scope);

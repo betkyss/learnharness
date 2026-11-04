@@ -63,6 +63,7 @@ export function EditableSourceName({ name, onSave, onCancel, initiallyEditing = 
 }) {
 	const [editing, setEditing] = useState(initiallyEditing);
 	const [draft, setDraft] = useState(name);
+	const [fullName, setFullName] = useState(false);
 	const [failure, setFailure] = useState("");
 	const input = useRef<HTMLInputElement>(null);
 	const submitting = useRef(false);
@@ -80,7 +81,7 @@ export function EditableSourceName({ name, onSave, onCancel, initiallyEditing = 
 		catch (error) { setFailure(error instanceof Error ? error.message : String(error)); input.current?.focus(); }
 		finally { submitting.current = false; }
 	};
-	return <span className="min-w-0 flex-1">
+	return <span className="source-name min-w-0 flex-1" data-full-name={fullName}>
 		{editing ? <input ref={input} value={draft} placeholder="Folder name" aria-label="Source or folder name" data-testid="source-name-input"
 			className="block h-5 w-full min-w-0 border-0 bg-transparent p-0 text-sm font-medium leading-5 outline-none shadow-none focus:ring-0"
 			onChange={(e) => setDraft(e.target.value)} onBlur={() => { void commit(); }}
@@ -88,10 +89,20 @@ export function EditableSourceName({ name, onSave, onCancel, initiallyEditing = 
 				if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancelled.current = true; setEditing(false); setFailure(""); onCancel?.(); }
 				if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void commit(); }
 			}} onDragStart={(e) => { e.preventDefault(); e.stopPropagation(); }} />
-			: <button type="button" className="block max-w-full truncate rounded-sm text-left text-sm font-medium leading-5 transition-colors hover:bg-accent" title="Rename"
+			: <button type="button" aria-label={`Rename ${name}`} className="source-name-preview block max-w-full truncate rounded-sm text-left text-sm font-medium leading-5 transition-colors hover:bg-accent" title="Rename"
 				onClick={() => { cancelled.current = false; setDraft(name); setEditing(true); }}>{name}</button>}
+		{!editing && name.length > 72 && <button type="button" aria-expanded={fullName} onClick={() => setFullName(!fullName)} className="source-name-expand text-xs text-muted-foreground underline underline-offset-2">{fullName ? "Short name" : "Full name"}</button>}
 		{failure && <span role="alert" className="block text-xs text-red-400">{failure}</span>}
 	</span>;
+}
+
+/** Desktop columns stay aligned; mobile metadata shares one compact line. */
+export function SourceMetadata({ count, created }: { count: number; created: string }) {
+ return <span className="source-metadata">
+  <span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground"><span className="source-mobile-label">Propositions: </span>{count}</span>
+  <span className="source-date w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{created.slice(0, 10)}</span>
+  <details className="source-mobile-metadata text-xs text-muted-foreground"><summary className="cursor-pointer">Metadata</summary><span>Created: {created.slice(0, 10) || "Unknown"}</span></details>
+ </span>;
 }
 
 interface TreeSource {
@@ -178,8 +189,8 @@ export function SourceFolderTree<T extends TreeSource>({ groups, directory, quer
 			return <div key={folder.id} data-testid={`source-folder-${folder.id}`} className="relative" {...dropProps(folder.id)}>
 				<SourceDragRow {...chainRow(["folder", folder.id], depth, open)} kind="folder" id={folder.id} name={folder.name} enabled={Boolean(onAction)} data-testid={`folder-row-${folder.id}`}
 					data-drop-active={dropTarget === folder.id}
-					className={`flex items-center gap-1 py-1.5 pr-3 transition-colors ${!open || !hasChildren ? "border-b border-transparent" : ""} ${dropTarget === folder.id ? "bg-accent/50" : ""}`}
-					style={{ paddingLeft: 12 + depth * 36 }}>
+					className={`source-summary flex flex-wrap items-center gap-1 py-1.5 pr-3 transition-colors ${!open || !hasChildren ? "border-b border-transparent" : ""} ${dropTarget === folder.id ? "bg-accent/50" : ""}`}
+					style={{ "--tree-padding": `${12 + depth * 36}px` } as React.CSSProperties}>
 					<input type="checkbox" aria-label={`Select ${sourceSelection ? "folder" : "contents of"} ${folder.name}`} data-testid={`folder-checkbox-${folder.id}`}
 						className="size-3.5 shrink-0 accent-primary" disabled={entryCheck ? false : empty ? !allowEmptySelection : members.length === 0}
 						checked={entryCheck?.checked ?? (empty ? selectedFolders.has(folder.id) : members.length > 0 && selectedCount === members.length)}
@@ -195,8 +206,7 @@ export function SourceFolderTree<T extends TreeSource>({ groups, directory, quer
 					</button>
 					{onAction ? <EditableSourceName name={folder.name} onSave={(name) => onAction({ action: "rename-folder", id: folder.id, name })} />
 						: <span className="min-w-0 flex-1 truncate text-sm font-medium">{folder.name}</span>}
-					<span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{members.length}</span>
-					<span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{folder.createdAt.slice(0, 10)}</span>
+					<SourceMetadata count={members.length} created={folder.createdAt} />
 				</SourceDragRow>
 				{open && hasChildren && <div data-testid={`folder-thread-${folder.id}`} className="pointer-events-none absolute bottom-[8px] top-[23px] w-px bg-border/50" style={{ left: 37 + depth * 36 }} />}
 				{open && renderLevel(folder.id, depth + 1)}

@@ -216,7 +216,7 @@ export function MermaidOverlay({
 			// page's session-area div — below the drag bar, right of the
 			// sidebar. 80% + blur: the transcript ghosts through (owner
 			// decision, 2026-09-19).
-			className="absolute inset-0 z-40 flex flex-col bg-background/80 p-4 backdrop-blur-sm"
+			className="absolute inset-0 z-40 flex flex-col bg-background p-4"
 			role="dialog"
 			aria-modal="true"
 			aria-label="Diagram focus"

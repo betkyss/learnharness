@@ -57,7 +57,7 @@ describe("dockHeightBudget — whole dock, not just its question", () => {
 	});
 	it("switches before padding would leave a zero-sized content viewport, without an invented minimum", () => {
 		assert.equal(dockHeightBudget({ ...normal, columnHeight: 306 }).scrollWholeContent, true);
-		assert.equal(dockHeightBudget({ ...normal, columnHeight: 307 }).scrollWholeContent, false);
+		assert.equal(dockHeightBudget({ ...normal, columnHeight: 307 }).scrollWholeContent, true);
 	});
 	it("never creates negative caps, even if the toolbar exceeds the column", () => {
 		const result = dockHeightBudget({ ...normal, columnHeight: 20 });

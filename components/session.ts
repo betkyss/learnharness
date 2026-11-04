@@ -14,9 +14,15 @@
  * | streaming | error.
  */
 
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useSyncExternalStore } from "react";
+import { retainQuestionDraft } from "./question-draft-storage";
+import { pendingQuestionOf } from "@/src/core";
 import type { ChatInput, LhMessage, QuestionAnswerData } from "@/src/core";
 import { SessionModel, type SessionState } from "@/components/session-core";
+
+const subscribeHydration = () => () => {};
+const clientHydrated = () => true;
+const serverHydrated = () => false;
 
 export interface UseChatSessionOptions {
 	chatId: string;
@@ -36,6 +42,8 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		modelRef.current = new SessionModel({ chatId, initialMessages, initialError });
 	}
 	const model = modelRef.current;
+	const draftsReady = useSyncExternalStore(subscribeHydration, clientHydrated, serverHydrated);
+	useEffect(() => { retainQuestionDraft(chatId, pendingQuestionOf(initialMessages)?.key); }, [chatId, initialMessages]);
 	// The render VERSION — bumped by every model change, so the state memo
 	// below recomputes exactly when the model actually changed. (Using the
 	// reducer's dispatch as the memo dep was a freeze bug: dispatch is
@@ -118,8 +126,8 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		(problemCallId: string) => void model.dismissProblem(problemCallId),
 		[model],
 	);
-	const questionDraft = useCallback((questionKey: string) => model.questionDraft(questionKey), [model]);
-	const saveQuestionDraft = useCallback((questionKey: string, draft: Parameters<SessionModel["saveQuestionDraft"]>[1]) => model.saveQuestionDraft(questionKey, draft), [model]);
+	const questionDraft = useCallback((questionKey: string) => draftsReady ? model.questionDraft(questionKey) : undefined, [model, draftsReady]);
+	const saveQuestionDraft = useCallback((questionKey: string, draft: Parameters<SessionModel["saveQuestionDraft"]>[1]) => { if (draftsReady) model.saveQuestionDraft(questionKey, draft); }, [model, draftsReady]);
 	const setMessages = useCallback((record: LhMessage[], turnError?: string) => model.setMessages(record, turnError), [model]);
 	const adoptRecord = useCallback((record: LhMessage[]) => model.adoptRecord(record), [model]);
 	const stop = useCallback(() => model.stop(), [model]);
@@ -127,6 +135,7 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 	const resumeStream = useCallback(() => void model.resumeStream(), [model]);
 
 	return {
+		draftsReady,
 		messages: state.messages,
 		activeMessageId: state.activeMessageId,
 		nativeMessages: state.nativeMessages,

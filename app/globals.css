@@ -416,7 +416,7 @@ body {
    (200ms sidebar, 150ms here); honors reduced-motion by appearing. */
 @keyframes settings-pop {
 	from {
-		opacity: 0;
+		opacity: 1;
 		scale: 0.98;
 	}
 	to {
@@ -573,3 +573,182 @@ body {
 	outline: 1px solid var(--border);
 	border-radius: calc(var(--radius) * 0.5);
 }
+
+/* Settings controls share the available column; long controls wrap below their labels. */
+.settings-label { flex: 1 0 160px; overflow-wrap: break-word; }
+.settings-control { flex: 0 1 auto; margin-left: auto; }
+.settings-control > * { max-width: 100%; }
+.settings-control:has([role="switch"]) { display: flex; align-items: center; }
+.settings-content input, .settings-content textarea, .settings-content select { max-width: 100%; }
+.draft-invitation h3 { font-size: var(--text-2xl); line-height: var(--text-2xl--line-height); }
+.draft-invitation > div { padding: 0; }
+.practice-problem:not([open]) summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.practice-problem[open] summary > span + span { display: none; }
+/* Keep short inline formulas together. A long formula gets its own horizontal scroll. */
+.lh-prose .katex:not(.katex-display .katex) { display: inline-block; max-width: 100%; overflow-x: auto; overflow-y: hidden; vertical-align: middle; white-space: nowrap; }
+@media (max-width: 767px) {
+
+ .settings-control { max-width: 100%; }
+ .settings-control > .flex { flex-wrap: wrap; }
+ .settings-control [class~="h-7"]:has(button) { height: auto; min-height: 28px; flex-wrap: wrap; }
+ .settings-control button { min-width: 0; }
+ .graph-toolbar { left: 12px; right: 12px; top: 52px; max-width: none; align-items: stretch; }
+ .graph-toolbar-row { flex-wrap: wrap; width: 100%; gap: 8px; }
+ .graph-search { width: 100%; flex-basis: 100%; }
+}
+
+/* Knowledge rows retain desktop columns; small screens use the available reading width. */
+.knowledge-source { margin-left: var(--tree-indent, 0px); }
+.source-summary[style] { padding-left: var(--tree-padding, 12px); }
+[data-lh-menu] button { white-space: normal; overflow-wrap: break-word; word-break: normal; }
+[data-lh-menu] .truncate { white-space: normal; overflow: visible; text-overflow: clip; }
+.settings-content input:not([type="checkbox"]):not([type="range"]),
+.settings-content select { min-height: 32px; }
+.settings-content button:enabled { opacity: 1; }
+
+.question-long .question-submit-hint { display: none; }
+@media (max-width: 639px) {
+ .knowledge-source { margin-left: 0; }
+ .source-summary[style], .source-summary { padding-left: 8px; padding-bottom: 6px; }
+ .source-summary > .truncate, .source-summary > button[title="Rename"] { white-space: normal; overflow-wrap: anywhere; }
+ .source-summary .truncate { white-space: normal; overflow: visible; }
+ [data-testid^="folder-thread-"], [data-testid^="cluster-thread-"], [data-testid^="chain-thread-"] { display: none; }
+ .knowledge-chain { position: relative; padding-left: 8px; padding-bottom: 26px; flex-wrap: wrap; }
+ .knowledge-chain > .w-14 { position: absolute; left: 8px; bottom: 4px; width: auto; }
+ .knowledge-chain > .w-20 { position: absolute; left: 56px; bottom: 4px; width: auto; }
+ .knowledge-chain > span.flex > span { min-width: 0; max-width: 100%; }
+ .knowledge-chain [data-testid^="prop-chip-"] { overflow-wrap: anywhere; }
+ .knowledge-statement { padding-left: 16px; padding-right: 8px; }
+ .knowledge-statement > .w-14, .knowledge-statement > .w-20 { display: none; }
+ .knowledge-statement > span[aria-hidden] { display: none; }
+ .custom-pin-row > span { flex-basis: 100%; overflow-wrap: anywhere; }
+}
+@media (max-width: 639px) {
+ .key-editor > span { flex-basis: 100%; }
+ .key-editor > input { flex-basis: 100%; height: 32px; }
+}
+
+/* The entire form scrolls as one unit, including confidence, thinking and submit. */
+[data-dock-whole-scroll="true"] [data-dock-scroll-area] { max-height: none; min-height: 0; overflow: visible; }
+[data-dock-whole-scroll="true"] [data-dock-viewport] { overscroll-behavior-y: contain; }
+.graph-cost-panel { overflow-wrap: anywhere; }
+.graph-cost-panel > div > span { min-width: 0; }
+.graph-cost-panel .tabular-nums { white-space: normal; overflow-wrap: anywhere; }
+.minimal-summary { height: calc(100% - var(--home-dock-height, 200px)); }
+@media (max-height: 600px) { .minimal-summary { justify-content: flex-start; } }
+@media (max-height: 500px) {
+ [data-home-dock], [data-dock-viewport] + [data-testid="stats-bar"] { padding-bottom: 0; }
+ [data-home-dock] { padding-bottom: 8px; }
+ [data-home-dock] [contenteditable], [data-testid="composer"] [contenteditable] { min-height: 36px; max-height: 64px; overflow-y: auto; }
+ [data-testid="question-dock"] [contenteditable] { min-height: 40px; max-height: none; overflow: visible; }
+ .graph-toolbar { top: 8px; left: 56px; right: 8px; }
+ .graph-toolbar-row { gap: 4px; }
+ .graph-search { flex: 1 1 100%; width: auto; }
+ .minimal-summary { padding-top: 64px; }
+}
+
+.source-name-expand { display: none; }
+@media (max-width: 639px) {
+ .source-name .source-name-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; overflow-wrap: anywhere; }
+ .source-name[data-full-name="true"] .source-name-preview { display: block; -webkit-line-clamp: unset; overflow: visible; text-overflow: clip; }
+ .source-name-expand { display: inline-block; padding-block: 2px; }
+ .source-sort { gap: 8px; text-transform: none; letter-spacing: normal; color: var(--muted-foreground); }
+ .source-sort > button { flex: 0 1 auto; width: auto; min-height: 28px; padding: 2px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+ .source-sort > button[aria-sort="ascending"], .source-sort > button[aria-sort="descending"] { color: var(--foreground); background: var(--accent); }
+ .knowledge-chain { padding-bottom: 4px; }
+ .knowledge-chain > .w-14, .knowledge-chain > .w-20 { display: none; }
+ .knowledge-chain > span.flex { flex-basis: calc(100% - 44px); }
+}
+
+.graph-overview-hint { display: none; }
+
+
+@media (max-height: 500px) { .short-setup-origin { display: none; } [data-testid="composer-actions"]:has(> .short-setup-origin:only-child) { display: none; } }
+
+[data-lh-menu] > * { min-width: 0; max-width: 100%; }
+.graph-detail { overflow-wrap: anywhere; }
+
+/* A confirmation has one scroll region between its title and actions. */
+.lh-confirm { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); padding: 16px; overflow: hidden; overflow-wrap: anywhere; }
+.lh-confirm > h2, .lh-confirm-actions { flex: none; }
+.lh-confirm-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.lh-confirm-actions { padding-top: 12px; margin-top: 0; }
+.lh-confirm-actions button { min-height: 32px; }
+.short-controls-panel > div { flex-wrap: wrap; gap: 8px; }
+.short-controls-panel button { min-width: max-content; overflow-wrap: normal; white-space: nowrap; flex-shrink: 0; }
+.short-controls-panel [data-testid="model-picker"] { flex: 1 0 100%; }
+.question-orientation, .source-mobile-label { display: none; }
+@media (max-width: 639px) {
+ .source-mobile-label { display: inline; }
+ .source-summary { padding-bottom: 8px; }
+ .knowledge-source { border-left: 1px solid var(--border); margin-left: min(calc(var(--tree-indent, 0px) / 5), 16px); }
+ .source-summary[data-chain-nav-depth="0"] { border-left: 0; }
+ .knowledge-chain { border-left: 2px solid var(--border); margin-left: 12px; }
+ .knowledge-statement { border-left: 1px solid var(--border); padding-left: 8px; margin-left: 16px; }
+ [data-source-drag-row][data-chain-nav-row^='["folder"'] { border-bottom: 1px solid var(--border); background: var(--card); }
+ [data-testid="composer-actions"], [data-testid="model-controls"] { flex-wrap: wrap; }
+}
+@media (max-height: 500px) {
+ [data-testid="settings-dialog"], [data-testid="setup-dialog"] { max-height: calc(100dvh - 16px); max-width: calc(100vw - 16px); }
+ [data-testid="settings-dialog"] > header, [data-testid="setup-dialog"] > header { height: 40px; padding-inline: 16px; }
+ [data-testid="settings-dialog"] > header h2, [data-testid="setup-dialog"] > header h2 { font-size: var(--text-base); }
+ [data-testid="settings-section-select"] { margin: 4px 12px; flex-shrink: 0; }
+ .settings-content > div > section { padding: 8px 16px 16px; }
+ .settings-content > div > section > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+ .settings-content > div > section > h2 + div { margin-top: 0; }
+ [data-session-sidebar] .lh-lights-gutter { padding-block: 4px; }
+ .sidebar-new { flex-direction: row; gap: 4px; margin-bottom: 4px; }
+ [data-session-sidebar] [data-testid="session-row"] { min-height: 36px; }
+ [data-session-sidebar] > div > div:last-child { padding-bottom: 4px; }
+}
+
+.short-controls-panel [data-testid="model-control"] { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; }
+.short-controls-panel [data-testid="model-control"] > button { width: 100%; justify-content: space-between; }
+.short-controls-panel [data-testid="stats-model"]::before { content: "Model"; color: var(--muted-foreground); }
+.short-controls-panel [data-testid="stats-thinking"]::before { content: "Thinking"; color: var(--muted-foreground); }
+.short-controls-panel [data-testid="stats-speed"]::before { content: "Speed"; color: var(--muted-foreground); }
+.connection-panel { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
+.connection-panel > h2 { position: sticky; top: -16px; z-index: 1; margin: -16px -16px 0; padding: 16px; background: var(--card); }
+.connection-footer, .connection-panel [data-testid="chatgpt-disconnect-confirmation"] > div:last-child { position: sticky; bottom: -16px; flex-shrink: 0; margin-bottom: -16px; padding: 12px 0 16px; background: var(--card); }
+.setup-keys-scroll > div > div:last-child { position: sticky; bottom: -20px; background: var(--card); padding-block: 12px; }
+@media (max-width: 639px) {
+ [data-testid="dictation-toggle"] { min-width: 84px; }
+}
+
+@media (max-height: 500px) {
+ .graph-source-anchors { display: none; }
+ .graph-detail > header { min-height: 32px; padding-block: 0; }
+ .graph-detail > div { padding: 8px 12px; }
+ [data-session-sidebar] [data-testid="session-row"], [data-session-sidebar] [data-testid="session-row-kbd"] { padding-block: 4px; }
+}
+
+.short-controls-panel [data-testid="model-control"] > span { display: flex; width: 100%; }
+.short-controls-panel [data-testid="stats-speed"] { width: 100%; justify-content: space-between; }
+.short-controls-panel [data-testid="stats-speed"]::before { margin-right: 8px; }
+
+@media (max-width: 639px) { .source-summary[style] { padding-left: clamp(8px, calc(var(--tree-padding) / 6 + 6px), 20px); } }
+
+/* Keep the whole dictation control in its flex allocation; move model controls to the next row when needed. */
+.stats-dictation { min-width: 88px; }
+
+/* Source columns on desktop, one secondary line on a phone. */
+.source-metadata { display: contents; }
+.source-mobile-metadata { display: none; }
+.knowledge-statement { padding-block: 12px; }
+.knowledge-statement-text { font-family: var(--font-prose); font-size: var(--lh-prose-size); line-height: var(--lh-prose-leading); white-space: pre-wrap; overflow-wrap: anywhere; }
+.question-long .question-orientation { display: block; }
+.question-orientation[open] summary > span { display: none; }
+.question-orientation[open] summary::after { content: "Hide question context"; color: var(--muted-foreground); }
+@media (max-width: 639px) {
+ .source-summary, .source-summary[style] { padding-block: 6px; }
+ .source-metadata { display: flex; flex: 1 0 calc(100% - 44px); flex-wrap: wrap; align-items: baseline; column-gap: 12px; margin-left: 44px; line-height: 20px; }
+ .source-metadata > .w-14 { width: auto; text-align: left; }
+ .source-metadata > .source-date { display: none; }
+ .source-mobile-metadata { display: block; }
+ .source-mobile-metadata[open] { flex-basis: 100%; }
+ .source-mobile-metadata[open] > span { display: block; }
+ .knowledge-statement { padding-block: 12px; }
+}
+@media (max-height: 500px) { .question-orientation { display: block; } }
+
+@media (max-height: 360px) { .question-orientation:not([open]) summary .line-clamp-2 { -webkit-line-clamp: 1; } }

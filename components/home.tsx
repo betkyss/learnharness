@@ -156,8 +156,33 @@ export function Home({
 		}
 	};
 
+	const setupAction = zeroKeys ? (
+							<ZeroKeysPill inline onOpen={() => setSetupOpen(true)} />
+						) : (
+							!configured && (
+								<button
+									type="button"
+									data-testid="setup-cta"
+									onClick={() => setSetupOpen(true)}
+									className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
+								>
+									Set up your models
+								</button>
+							)
+						);
+	const homeRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const home = homeRef.current;
+		const dock = home?.querySelector<HTMLElement>("[data-home-dock]");
+		if (!home || !dock) return;
+		const measure = () => home.style.setProperty("--home-dock-height", `${dock.getBoundingClientRect().height}px`);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(dock);
+		return () => observer.disconnect();
+	}, []);
 	return (
-		<div className="relative h-dvh">
+		<div ref={homeRef} className="relative h-dvh home-surface">
 			{/* Window-drag strip (merged chrome, owner 2026-09-17): a dedicated
 			    mask element, deliberately FIRST in the DOM. Electron's app-region
 			    mask resolves by DOM order — a no-drag element subtracts only drag
@@ -209,7 +234,7 @@ export function Home({
 			    OVER the graph (no gradient: the graph runs clean under it to the
 			    bottom edge). Matches chat.tsx's DOCK geometry (shared chat width
 			    px-4) so nothing shifts when a session starts (owner). */}
-			<div className="pointer-events-none absolute inset-x-0 bottom-0 pb-5">
+			<div data-home-dock="" className="pointer-events-none absolute inset-x-0 bottom-0 pb-5">
 				<div className="pointer-events-auto mx-auto w-full max-w-(--lh-chat-max-width) px-4">
 					{/* The pick bar (owner vision, 2026-10-04): the chain
 					    table's selection is PERSISTENT — picked
@@ -226,20 +251,7 @@ export function Home({
 								onClear={() => setPracticeProps([])}
 							/>
 						)}
-						setup={zeroKeys ? (
-							<ZeroKeysPill inline onOpen={() => setSetupOpen(true)} />
-						) : (
-							!configured && (
-								<button
-									type="button"
-									data-testid="setup-cta"
-									onClick={() => setSetupOpen(true)}
-									className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
-								>
-									Set up your models
-								</button>
-							)
-						)}
+						setup={<span className="short-setup-origin">{setupAction}</span>}
 					/>
 					{startError && <p role="alert" className="mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
 					<form
@@ -292,6 +304,7 @@ export function Home({
 					    while the RIGHT keeps the strong-slot control (fix wave: the
 					    pills write /api/settings/models). */}
 					<StatsBar
+						shortControls={setupAction}
 						dictationSlot={<DictationBar dictation={dictation} />}
 						turns={[] as TurnUsage[]}
 						leadingSlot={

@@ -100,8 +100,8 @@ const DOCK = "mx-auto w-full max-w-(--lh-chat-max-width) px-4";
 // mounted while the question owns the band so widening fades it back.
 const MARGIN_GAP = 16;
 const MARGIN_MIN_W = 220;
-// The dock overlay's gradient band (h-24) — part of the reserved tail.
-const GRADIENT_H = 96;
+// The dock overlay's gradient band (h-6) — part of the reserved tail.
+const GRADIENT_H = 24;
 // Fold thresholds (owner, scroll round 1, tuned round 3): pixel distance
 // from the bottom — position, not velocity. Leave the bottom → the box
 // folds (visual only); reach it again → it re-opens. 96 (was 64, owner
@@ -250,7 +250,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { messages, activeMessageId, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { draftsReady, messages, activeMessageId, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
 
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
@@ -527,7 +527,8 @@ export function Chat({
 	}, []);
 	const applyReadingThinking = useCallback((v: string) => {
 		readingThinkingRef.current = v;
-	}, []);
+		if (pending) saveQuestionDraft(pending.key, { readingThinking: v });
+	}, [pending, saveQuestionDraft]);
 	const clearReadingThinking = useCallback(() => {
 		readingThinkingRef.current = "";
 		setReadingThinkingSeed((previous) => ({ ...previous, value: "", revision: previous.revision + 1 }));
@@ -923,10 +924,10 @@ export function Chat({
 	// The dock's reserved tail height (DockOverlay reports it; the spacer at
 	// the end of the transcript renders it). Lives here because the spacer is
 	// inside the scroller while the dock overlays OUTSIDE it — two parents.
-	// 208 ≈ gradient(96) + composer block(~112): the SSR/pre-hydration
+	// 136 ≈ gradient(24) + composer block(~112): the SSR/pre-hydration
 	// guess so the static paint has a sane tail. The first layout effect
 	// replaces it with the measured truth before paint.
-	const [dockReserve, setDockReserve] = useState(208);
+	const [dockReserve, setDockReserve] = useState(136);
 	const syncTurns = useCallback(async () => {
 		try {
 			const res = await fetch(`/api/chats/${chatId}`);
@@ -1315,12 +1316,12 @@ export function Chat({
 								spellCheck={false}
 								aria-label="Session title"
 								title="Rename this session"
-								className="lh-no-drag min-w-[8ch] max-w-[70%] shrink-0 bg-transparent font-title text-3xl tracking-tight caret-current outline-none [field-sizing:content]"
+								className="lh-no-drag min-w-0 flex-1 sm:min-w-[8ch] sm:max-w-[70%] sm:flex-none bg-transparent font-title text-xl sm:text-3xl tracking-tight caret-current outline-none [field-sizing:content]"
 							/>
 							{/* flex-1 spacer during rename too, so the chips stay at
 							    the right edge; clicks here commit via the header
 							    mousedown handler. */}
-							<div className="min-w-4 flex-1" aria-hidden="true" />
+							<div className="hidden sm:block sm:min-w-4 sm:flex-1" aria-hidden="true" />
 						</>
 					) : (
 					<>
@@ -1336,14 +1337,15 @@ export function Chat({
 								setTitleDraft(titleText);
 								setRenaming(true);
 							}}
-							className="lh-no-drag -mx-1.5 min-w-4 shrink cursor-text truncate rounded-md px-1.5 text-left font-title text-3xl tracking-tight transition-colors hover:bg-accent"
+							title={titleText}
+							className="lh-no-drag -mx-1.5 min-w-0 flex-1 shrink cursor-text truncate rounded-md px-1.5 text-left font-title text-xl sm:text-3xl tracking-tight transition-colors hover:bg-accent"
 						>
 							{titleText}
 							</button>
 						</Hint>
 							{/* flex-1 spacer: keeps the chips at the right edge AND stays a
 							    drag surface (no carve-out) — the freed bar is grippable. */}
-							<div className="min-w-4 flex-1" aria-hidden="true" />
+							<div className="hidden sm:block sm:min-w-4 sm:flex-1" aria-hidden="true" />
 					</>
 					)}
 					{/* The plan chip (owner, plan-placement round): session-level
@@ -1539,7 +1541,8 @@ export function Chat({
 												) {
 													return (
 														<div key={entry.key} data-testid="tool-error" role="alert" className="my-2 whitespace-pre-wrap break-words border-l-2 border-destructive/50 pl-3 text-sm text-destructive">
-															{part.type.slice(5)}: {part.errorText || "The tool call failed."}
+															<p>{part.type === "tool-probe_done" ? "The assessment could not be completed." : "The tool could not complete this action."}</p>
+<details className="mt-1 text-xs text-muted-foreground"><summary className="cursor-pointer">Details</summary>{part.type.slice(5)}: {part.errorText || "The tool call failed."}</details>
 														</div>
 													);
 												}
@@ -1676,6 +1679,7 @@ export function Chat({
 				    fold) and NEVER overlaps the composer. */}
 				<DockOverlay
 					pending={pending}
+					questionDraftRevision={Number(draftsReady)}
 					initialQuestionDraft={pending ? questionDraft(pending.key)?.form : undefined}
 					onSaveQuestionDraft={(form) => { if (pending) saveQuestionDraft(pending.key, { form }); }}
 					practice={activeProblem}
@@ -1910,6 +1914,7 @@ export function shouldStampGeometryMute(nextH: number, prevH: number, pending: b
 
 function DockOverlay({
 	pending,
+	questionDraftRevision,
 	initialQuestionDraft,
 	onSaveQuestionDraft,
 	practice,
@@ -1937,6 +1942,7 @@ function DockOverlay({
 	queuedSteers,
 }: {
 	pending: ReturnType<typeof pendingQuestionOf>;
+	questionDraftRevision: number;
 	initialQuestionDraft?: QuestionFormDraft;
 	onSaveQuestionDraft: (draft: QuestionFormDraft) => void;
 	/** Compaction running for this chat (round 14) — the docks' submit
@@ -2232,7 +2238,7 @@ function DockOverlay({
 				((t.tagName === "INPUT" && (t as HTMLInputElement).type !== "range") ||
 				t.tagName === "TEXTAREA" ||
 				t.isContentEditable ||
-				t.closest("button"))
+				t.closest("button, summary"))
 			)
 				return;
 			e.preventDefault();
@@ -2340,12 +2346,12 @@ function DockOverlay({
 
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
-			<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent" />
+			<div className="h-6 bg-gradient-to-t from-background via-background/85 to-transparent" />
 			<div ref={blockRef} className="relative bg-background pb-5">
 				<div ref={dockRef} className={DOCK}>
 					<div ref={viewportRef} data-dock-viewport="" className="pointer-events-auto">
 					<div ref={bodyRef}>
-					{setupCta}
+					<div className="short-setup-origin">{setupCta}</div>
 					{/* The queued-steer indicator (owner spec 2026-10-03): quiet
 					    one-liners above the shell - right-aligned to where its corner
 					    rounding starts, truncated, no background, no container. A
@@ -2383,6 +2389,7 @@ function DockOverlay({
 						>
 							{pending ? (
 								<QuestionDock
+									key={questionDraftRevision}
 									toolName={pending.tool as "quiz" | "probe" | "ask_user_question" | "explain" | "recall"}
 									toolCallId={pending.toolCallId}
 									input={pending.input as never}
@@ -2421,6 +2428,7 @@ function DockOverlay({
 					    flush to the screen bottom — static height, outside the
 					    morphing shell so it never joins a height animation. */}
 					<StatsBar
+						shortControls={setupCta}
 						turns={turns}
 						contextTokens={contextTokens}
 						cliContextWindow={cliContextWindow}

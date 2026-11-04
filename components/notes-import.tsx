@@ -77,6 +77,7 @@ export function useNotesImport(callbacks: { onStart?: () => void; onFinish?: () 
 	}, [snapshot.completion]);
 	return {
 		errors: snapshot.errors, notices: snapshot.notices, importing: snapshot.importing,
+		progress: { queued: snapshot.queued, running: snapshot.running, completed: snapshot.completed },
 		onImportFiles: (files: FileList | null) => {
 			if (!files || files.length === 0) return;
 			latest.current.onStart?.();
@@ -92,6 +93,7 @@ export function NotesImportControl({ importing, onImportFiles }: { importing: bo
 	const folderRef = useRef<HTMLInputElement>(null);
 	const [open, setOpen] = useState(false);
 	const onChange = (event: ChangeEvent<HTMLInputElement>) => {
+		setOpen(false);
 		onImportFiles(event.target.files);
 		event.target.value = "";
 	};
@@ -123,4 +125,9 @@ export function NotesImportErrors({ errors }: { errors: readonly string[] }) {
 }
 export function NotesImportNotices({ notices }: { notices: readonly string[] }) {
 	return <>{notices.map((notice, i) => <p key={i} role="status" className="max-w-full whitespace-pre-wrap break-words text-xs text-muted-foreground">{notice}</p>)}</>;
+}
+
+export function NotesImportProgress({ progress }: { progress: { queued: number; running: number; completed: number } }) {
+ if (!progress.queued && !progress.running && !progress.completed) return null;
+ return <p role="status" data-testid="import-progress" className="text-xs text-muted-foreground">{[progress.running ? `${progress.running} importing` : "", progress.queued ? `${progress.queued} queued` : "", progress.completed ? `${progress.completed} completed` : ""].filter(Boolean).join(" · ")}</p>;
 }

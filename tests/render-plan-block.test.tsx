@@ -234,7 +234,7 @@ describe("plan popup (live derivation)", () => {
 		assert.doesNotMatch(html, /animate-pulse/);
 		// Arrows into not-yet-visited nodes are grayed out (owner, round 6).
 		assert.match(html, /marker-end="url\(#.*-dim\)"/);
-		assert.match(html, /live — statuses derive from your check outcomes/);
+		assert.match(html, /Current: yellow halo · Visited: white outline · Upcoming: gray outline/);
 		// No top-left flash: at static render settled=false, so the diagram
 		// wrapper paints at opacity 0 — the fit runs in an effect AFTER the
 		// first paint and the chart would otherwise flash at the initial
@@ -275,7 +275,7 @@ describe("plan popup (live derivation)", () => {
 		const whiteHeads = (html.match(/marker-end="url\(#(?:R\d+|[a-z0-9-]+)\)"/g) ?? []).length;
 		assert.equal(dimHeads, 1, "the gray-origin edge dims");
 		assert.equal(whiteHeads, 1, "the both-white edge stays white");
-		assert.match(html, /<path[^>]*class="fill-none stroke-border"/);
+		assert.match(html, /<path[^>]*class="fill-none stroke-muted-foreground"/);
 		assert.match(html, /<path[^>]*class="fill-none stroke-white"/);
 	});
 

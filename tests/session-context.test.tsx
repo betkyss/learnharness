@@ -71,15 +71,14 @@ describe("DeleteSessionDialog — the node-dialog shape (owner flow rework 2026-
 				onRun={() => {}}
 			/>,
 		);
-		assert.match(html, /Delete session\?/);
+		assert.match(html, /Delete this session and its messages\?/);
 		const title = html.match(/<h2[^>]*>/)?.[0] ?? "";
 		assert.match(title, /text-sm font-semibold text-destructive/); // red, abort-turn look (owner, 2026-10-13)
 		assert.ok(!title.includes("font-title"), "no serif display title");
-		// the name: mono, normal text-sm size (owner, 2026-10-13), NO bg-muted code-block chrome
-		const name = html.match(/data-testid="session-name-code"[^>]*>/)?.[0] ?? "";
-		assert.match(name, /font-mono text-sm/);
-		assert.ok(!name.includes("bg-muted"), "no code-block chrome");
-		assert.match(html, /data-testid="session-name-code"[^>]*>Orbital mechanics</);
+        assert.match(html, /data-testid="session-title-preview"/);
+        assert.match(html, /line-clamp-2 text-sm text-foreground/);
+        assert.match(html, /Orbital mechanics/);
+        assert.ok(html.indexOf("This permanently removes") < html.indexOf("session-title-preview"));
 	});
 
 	it("one unchecked-by-default checkbox for the graph traces — the graph-touching consequence says so", () => {

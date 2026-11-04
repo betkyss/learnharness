@@ -84,7 +84,8 @@ declare global {
 	}
 }
 
-const SidebarContext = createContext<{ open: boolean; toggle: () => void }>({
+const SidebarContext = createContext<{ open: boolean; toggle: () => void; overlay: boolean; close: () => void }>({
+ overlay: false, close: () => {},
 	open: false,
 	toggle: () => {},
 });
@@ -106,6 +107,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	const [open, setOpen] = useState(false);
 	const [narrow, setNarrow] = useState(false);
 	const [mounted, setMounted] = useState(false);
+	const [drawerOpen, setDrawerOpen] = useState(false);
+	const pathname = usePathname();
+	useEffect(() => { setDrawerOpen(false); }, [pathname]);
 
 	useEffect(() => {
 		// Electron shell detection (merged chrome, 2026-09-17): keys the
@@ -140,7 +144,6 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	// Both this and the mount effect land before the first paint, so a
 	// narrow window never flashes the open sidebar on load.
 	useEffect(() => {
-		if (!IS_ELECTRON) return; // plain-browser tabs open freely
 		const onResize = () => setNarrow(window.innerWidth < SIDEBAR_AUTOCLOSE);
 		onResize();
 		window.addEventListener("resize", onResize);
@@ -148,6 +151,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, []);
 
 	const toggle = useCallback(() => {
+		if (narrow && !IS_ELECTRON) { setDrawerOpen((value) => !value); return; }
 		// Opening while narrow (auto-closed, or the user's own closed-at-
 		// narrow): ask the shell to widen to the threshold — the resize
 		// listener flips `narrow` and the sidebar appears. The preference
@@ -179,7 +183,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, [toggle]);
 
 	return (
-		<SidebarContext.Provider value={{ open: open && !narrow, toggle }}>
+		<SidebarContext.Provider value={{ open: narrow ? (!IS_ELECTRON && drawerOpen) : open, toggle, overlay: narrow && !IS_ELECTRON, close: () => setDrawerOpen(false) }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
 			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity]")}>{children}</div>
 		</SidebarContext.Provider>
@@ -385,7 +389,7 @@ export type SessionKindFilter = "teach" | "all" | "practice";
 const KIND_FILTER_KEY = "lh:session-kind-filter";
 
 function SessionsSidebar() {
-	const { open, toggle } = useSidebar();
+	const { open, toggle, overlay, close } = useSidebar();
 	const [chats, setChats] = useState<ChatListItem[] | null>(null);
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
@@ -642,7 +646,13 @@ function SessionsSidebar() {
 
 	return (
 		<aside
-			className={cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-72" : "w-0")}
+			data-session-sidebar=""
+			role={overlay && open ? "dialog" : undefined}
+			aria-modal={overlay && open ? true : undefined}
+			aria-label="Session navigation"
+			inert={!open}
+			onClickCapture={(event) => { if (overlay && (event.target as Element).closest('a[href], [data-testid="new-session"], [data-testid="new-session-practice"]')) close(); }}
+			className={cn("sidebar-motion shrink-0 overflow-hidden duration-200", overlay && "fixed inset-y-0 left-0 z-40", open ? "w-72" : "w-0")}
 			aria-hidden={!open}
 		>
 			<div className="flex h-full w-72 flex-col border-r bg-sidebar">
@@ -691,7 +701,7 @@ function SessionsSidebar() {
 				    half/half row): full-width rows read cleaner and give the
 				    labels room; teaching keeps the original draft route,
 				    practice carries its mode. */}
-				<div className="mx-3 mb-2 flex flex-col gap-1.5">
+				<div className="sidebar-new mx-3 mb-2 flex flex-col gap-1.5">
 					<button
 						type="button"
 						data-testid="new-session"
@@ -716,7 +726,6 @@ function SessionsSidebar() {
 
 				<div className="mx-3 mb-2 flex items-center gap-2">
 					<span className="text-xs uppercase tracking-widest text-muted-foreground/70">Sessions</span>
-					<Hint label="Search sessions" action="sessions-search" side="bottom">
 					<span className="relative flex-1">
 						<Input
 							ref={searchRef}
@@ -772,7 +781,6 @@ function SessionsSidebar() {
 						/>
 						<SearchIcon className="pointer-events-none absolute left-1.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground/70" />
 					</span>
-					</Hint>
 				</div>
 
 				{/* The three-way filter, HEADING THE LIST (owner round 8b,
@@ -825,6 +833,7 @@ function SessionsSidebar() {
 									kbdSelected={i === kbdIndex}
 									onOpen={() => {
 										setKbdIndex(null);
+										if (overlay) close();
 										router.push(`/chat/${c.id}`);
 									}}
 									onContextMenu={(e) => openContext(e, c)}
@@ -917,7 +926,7 @@ function SessionsSidebar() {
 								if (target) setDeleting(target);
 								setCtxChatId(null);
 							}}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
+							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-destructive transition-colors hover:bg-destructive/10"
 						>
 							Delete…
 						</button>
@@ -939,10 +948,31 @@ function SessionsSidebar() {
 
 /** The app frame: sidebar inline + content. Rendered once in the root layout. */
 export function AppShell({ children }: { children: React.ReactNode }) {
+ const { open, overlay, close } = useSidebar();
+ const closeRef = useRef(close); closeRef.current = close;
+ useEffect(() => {
+  if (!open || !overlay) return;
+  const previous = document.activeElement as HTMLElement | null;
+  const aside = document.querySelector<HTMLElement>("[data-session-sidebar]");
+  aside?.querySelector<HTMLElement>("button[aria-label='Close sidebar']")?.focus();
+  const onKey = (event: KeyboardEvent) => {
+   if (document.querySelector('[role="dialog"]:not([data-session-sidebar])')) return;
+   if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeRef.current(); }
+   if (event.key === "Tab") {
+    const controls = Array.from(aside?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), [tabindex="0"]') ?? []).filter(el => el.getClientRects().length);
+    const first = controls[0], last = controls.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+   }
+  };
+  document.addEventListener("keydown", onKey);
+  return () => { document.removeEventListener("keydown", onKey); if (previous?.isConnected) previous.focus(); };
+ }, [open, overlay]);
 	return (
 		<SettingsDialogProvider>
+			{overlay && open && <button type="button" tabIndex={-1} aria-label="Close sidebar backdrop" onClick={close} className="fixed inset-0 z-40 bg-background/70" />}
 			<SessionsSidebar />
-			<FilePathDropZone className="relative min-w-0 flex-1">{children}</FilePathDropZone>
+			<div inert={overlay && open} className="relative min-w-0 flex-1"><FilePathDropZone className="h-full">{children}</FilePathDropZone></div>
 			{/* The single document-level keydown listener (keyboard wave A) —
 			    after the content in the tree, but it's window-level so order only
 			    matters for the events it dispatches, never for DOM priority. */}

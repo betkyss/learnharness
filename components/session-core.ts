@@ -1,3 +1,4 @@
+import { readQuestionDraft, writeQuestionDraft, retainQuestionDraft } from "./question-draft-storage";
 /**
  * THE SESSION MODEL (Wave D): the chat session's state machine, extracted
  * PURE — no React, one injectable fetch — so the attach/replay/settle/
@@ -864,6 +865,7 @@ export class SessionModel {
 				body: JSON.stringify({ input: { type: "dismiss", toolCallId, answer } }),
 			});
 			if (!res.ok) throw new Error(`The dismissal failed (${res.status}).`);
+			this.forgetResolvedDrafts([...this.base, ...this.tail]);
 		} catch (err) {
 			this.setError((err as Error).message);
 		}
@@ -903,15 +905,23 @@ export class SessionModel {
 
 	/** Submission snapshots outlive the dock, not the session mount. */
 	questionDraft(questionKey: string): QuestionDraft | undefined {
+		if (questionKey !== pendingQuestionOf(this.base)?.key) return;
+		if (!this.questionDrafts.has(questionKey)) {
+			const restored = readQuestionDraft(this.chatId, questionKey);
+			if (restored) this.questionDrafts.set(questionKey, restored);
+		}
 		return this.questionDrafts.get(questionKey);
 	}
 
 	saveQuestionDraft(questionKey: string, draft: Partial<QuestionDraft>): void {
-		this.questionDrafts.set(questionKey, { ...this.questionDrafts.get(questionKey), ...draft });
+		const merged = { ...this.questionDraft(questionKey), ...draft };
+		this.questionDrafts.set(questionKey, merged);
+		writeQuestionDraft(this.chatId, questionKey, merged);
 	}
 
 	private forgetResolvedDrafts(record: readonly LhMessage[]): void {
 		const pendingKey = pendingQuestionOf(record)?.key;
+		retainQuestionDraft(this.chatId, pendingKey);
 		for (const key of this.questionDrafts.keys()) {
 			if (key !== pendingKey) this.questionDrafts.delete(key);
 		}
