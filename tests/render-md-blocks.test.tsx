@@ -28,7 +28,7 @@ describe("md-blocks — code", () => {
 	it("inline code passes through with the house inline styling", () => {
 		const html = render("a `term` b");
 		assert.ok(html.includes('data-streamdown="inline-code"'), "inline code keeps the inline-code path");
-		assert.match(html, /a <code class="rounded px-1\.5 py-0\.5 font-mono text-sm"[^>]*>term<\/code> b/, "inline semantics, spacing and typography stay intact");
+		assert.match(html, /a <code class="rounded-sm px-1\.5 py-0\.5 font-mono text-sm"[^>]*>term<\/code> b/, "inline semantics, spacing and typography stay intact");
 		assert.ok(!html.includes("bg-muted"), "inline code no longer uses the question-card surface");
 	});
 
@@ -40,7 +40,7 @@ describe("md-blocks — code", () => {
 			"border: 1px solid var(--border)",
 			"background: color-mix(in oklab, var(--background) 86%, black)",
 		], "share the existing block surface, not block layout, padding or radius");
-		assert.match(css, /\[data-streamdown="code-block"\]\s*\{\s*border-radius: 0\.75rem;\s*padding: 0\.375rem;\s*\}/, "block geometry stays block-only and unchanged");
+		assert.match(css, /\[data-streamdown="code-block"\]\s*\{\s*border-radius: calc\(var\(--radius\) \* 1\.5\);\s*padding: 0\.375rem;\s*\}/, "block geometry stays block-only and unchanged");
 	});
 
 	it("code fences delegate to streamdown's CodeBlock with a hover copy corner", () => {
