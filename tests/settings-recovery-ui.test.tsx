@@ -5,6 +5,7 @@ import { afterEach, it } from "node:test";
 import { createRoot, type Root } from "react-dom/client";
 import { parseHTML } from "linkedom";
 import { SettingsDialogBody } from "../components/settings/settings-dialog";
+import { InteractionLayersProvider } from "../components/interaction-layers";
 import { KeysSection } from "../components/settings/keys-section";
 
 const dom = parseHTML("<html><body></body></html>");
@@ -12,7 +13,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.document, Element:
 let root: Root | undefined;
 const originalFetch = globalThis.fetch;
 afterEach(async () => { await act(async () => root?.unmount()); document.body.innerHTML = ""; globalThis.fetch = originalFetch; });
-async function mount(node: React.ReactNode) { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); await act(async () => root!.render(node)); }
+async function mount(node: React.ReactNode) { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); await act(async () => root!.render(<InteractionLayersProvider>{node}</InteractionLayersProvider>)); }
 async function click(selector: string) { const el = document.querySelector(selector); assert.ok(el, selector); await act(async () => { el.dispatchEvent(new dom.window.Event("click", { bubbles: true })); }); }
 it("Settings retries in place, preserves the chosen section and ignores a disposed request", async () => {
  let attempts = 0;

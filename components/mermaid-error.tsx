@@ -15,7 +15,8 @@ export const MermaidError = ({
 	error,
 	retry,
 	className,
-}: MermaidErrorComponentProps & { className?: string }) => (
+	displayOnly = false,
+}: MermaidErrorComponentProps & { className?: string; displayOnly?: boolean }) => (
 	<div
 		className={cn(
 			"my-4 rounded-xl border border-destructive/40 bg-destructive/5 p-4",
@@ -27,7 +28,10 @@ export const MermaidError = ({
 			Diagram failed to render
 		</p>
 
-		<details className="mt-3">
+		{displayOnly ? <>
+			<p className="mt-2 break-words font-mono text-xs text-muted-foreground">{error}</p>
+			<pre className="mt-2 overflow-x-auto rounded-lg bg-muted p-3 font-mono text-xs text-foreground">{chart}</pre>
+		</> : <details className="mt-3">
 			<summary className="cursor-pointer text-xs text-muted-foreground">
 				Details
 			</summary>
@@ -35,9 +39,9 @@ export const MermaidError = ({
 			<pre className="mt-2 overflow-x-auto rounded-lg bg-muted p-3 font-mono text-xs text-foreground">
 				{chart}
 			</pre>
-		</details>
-		<Button className="mt-3" onClick={retry} size="sm" variant="outline">
+		</details>}
+		{!displayOnly && <Button className="mt-3" onClick={retry} size="sm" variant="outline">
 			Retry
-		</Button>
+		</Button>}
 	</div>
 );

@@ -24,7 +24,7 @@ import {
 import { Streamdown } from "streamdown";
 
 import { transformMathDelimiters } from "@/src/core";
-import { streamdownPlugins, streamdownRemend } from "./message";
+import { streamdownPlugins, streamdownRehypePlugins, streamdownRemend } from "./message";
 import { mdComponents } from "@/components/md-blocks";
 import { Shimmer } from "./shimmer";
 
@@ -199,7 +199,7 @@ export type ReasoningContentProps = ComponentProps<
 /** Full Markdown for a fragment, without another disclosure heading. */
 export const ReasoningText = memo(({ children, className }: { children: string; className?: string }) => (
   <div className={className}>
-    <Streamdown components={mdComponents} plugins={streamdownPlugins} remend={streamdownRemend}>
+    <Streamdown components={mdComponents} plugins={streamdownPlugins} rehypePlugins={streamdownRehypePlugins} remend={streamdownRemend}>
       {transformMathDelimiters(children)}
     </Streamdown>
   </div>

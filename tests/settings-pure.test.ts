@@ -1,19 +1,22 @@
 /**
  * The settings wave's pure layers (thin settings wave): the appearance →
  * CSS-variable mapping (the section must actually DO something), the
- * dark-curve background derivation, the agent section's compose helpers
+ * Colors block's override compose helpers, the agent section's compose helpers
  * (the replace-whole PUT discipline), and the keyboard overrides map.
  */
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appearanceVars, derivedPalette, resolveAppearance, staleVarNames } from "../components/settings/appearance.tsx";
+import { derivedPalette, appearanceVars, resolveAppearance, staleVarNames } from "../components/settings/appearance.tsx";
+import { clearColorOverrides, colorOverride, composeColorOverride } from "../components/settings/appearance-section.tsx";
+import { BUILTIN_THEMES, DEFAULT_THEME } from "../src/core";
 import {
 	PROMPT_IN_USE_HINT,
 	composePromptSwitch,
 	composeSearchEngine,
 	composeSlotModel,
 	composeTool,
+	composeWorkerRequestConcurrency,
 	composeQuizMechanics,
 	sectionedSegments,
 } from "../components/settings/agent-section.tsx";
@@ -23,12 +26,15 @@ import type { AgentSettings, AuthKeyStatus, ModelsSettings } from "../src/core";
 import { resolveSettings, slotsConfigured } from "../src/core";
 import { setupStage } from "../components/setup-dialog.tsx";
 
+const mocha = BUILTIN_THEMES.find((t) => t.id === "catppuccin-mocha")!;
+
 describe("resolveAppearance — delta over factory", () => {
 	it("absent everything = the factory view", () => {
 		const a = resolveAppearance(undefined);
 		assert.equal(a.chatWidth, "comfortable");
-		assert.equal(a.mode, "dark");
+		assert.equal(a.theme, "default");
 		assert.equal(a.background, null);
+		assert.deepEqual(a.colors, {});
 		assert.equal(a.fontFamily, null);
 		assert.equal(a.proseFontSize, 16);
 		assert.equal(a.sessionNameSerif, false);
@@ -36,9 +42,10 @@ describe("resolveAppearance — delta over factory", () => {
 	});
 
 	it("explicit deltas win field-by-field", () => {
-		const a = resolveAppearance({ proseFontSize: 20, fontFamily: "Iowan Old Style" });
+		const a = resolveAppearance({ proseFontSize: 20, fontFamily: "Iowan Old Style", theme: "rose-pine" });
 		assert.equal(a.proseFontSize, 20);
 		assert.equal(a.fontFamily, "Iowan Old Style");
+		assert.equal(a.theme, "rose-pine");
 		assert.equal(a.background, null);
 	});
 });
@@ -59,7 +66,7 @@ describe("appearance compatibility and runtime reset", () => {
 		assert.equal(vars["--font-ui"], '"Arial", ui-sans-serif, system-ui, sans-serif');
 		assert.equal(vars["--font-prose"], '"Georgia", ui-sans-serif, system-ui, sans-serif');
 		const stale = staleVarNames(Object.keys(vars), appearanceVars(resolveAppearance(undefined)));
-		for (const key of ["--radius", "--border", "--input", "--muted-foreground", "--font-ui", "--font-prose"]) assert.ok(stale.includes(key), key);
+		for (const key of ["--radius", "--font-ui", "--font-prose"]) assert.ok(stale.includes(key), key);
 	});
 	it("bundled families resolve case-insensitively", () => {
 		assert.match(appearanceVars(resolveAppearance({ fontFamily: "source sans 3" }))["--font-prose"]!, /var\(--font-sans3\)/);
@@ -99,22 +106,33 @@ describe("appearanceVars — the mapping the provider applies", () => {
 		assert.equal(vars["--lh-heading-weight"], "600");
 		assert.equal(vars["--font-prose"], undefined, "no font override at factory");
 		assert.equal(vars["--font-title"], undefined, "system sans stays");
-		assert.equal(vars["--background"], undefined, "factory palette untouched");
-		assert.equal(vars["--lh-ink-strong"], undefined, "default ink");
+		assert.equal(vars["--background"], "#000000", "saved default palette");
+		assert.equal(vars["--lh-ink-strong"], "#e4e4e7", "default ink");
 	});
 
-	it("full delta: every knob lands on its token", () => {
+	it("JetBrains Mono renders from the bundled face when it is not installed", () => {
+		const vars = appearanceVars(resolveAppearance({ fontFamily: "JetBrains Mono" }), mocha);
+		assert.equal(
+			vars["--font-prose"],
+			`"JetBrains Mono", var(--font-jetbrains), ui-sans-serif, system-ui, sans-serif`,
+		);
+	});
+
+	it("full delta: every knob lands on its token, overrides over the theme", () => {
 		const vars = appearanceVars(
 			resolveAppearance({
 				background: "#101820",
+				colors: { warning: "#fab387" },
 				fontFamily: "Georgia",
 				proseFontSize: 18,
 				sessionNameSerif: false,
 				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
 			}),
+			mocha,
 		);
 		assert.equal(vars["--background"], "#101820");
-		assert.equal(vars["--card"], "#28303b");
+		assert.equal(vars["--card"], mocha.colors.surface, "un-overridden colors stay the theme's");
+		assert.equal(vars["--lh-warning"], "#fab387");
 		assert.equal(vars["--font-prose"], `"Georgia", ui-sans-serif, system-ui, sans-serif`);
 		assert.equal(vars["--lh-prose-size"], "18px");
 		assert.equal(vars["--font-title"], undefined, "serif off keeps the default title family");
@@ -126,12 +144,12 @@ describe("appearanceVars — the mapping the provider applies", () => {
 	it("explicit serif titles preserve the legacy family", () => {
 		const vars = appearanceVars(resolveAppearance({ sessionNameSerif: true }));
 		assert.equal(vars["--font-title"], '"lh-cmu", serif');
-		assert.equal(Object.keys(vars).length, 4, "chat-width, prose-size, heading-weight, font-title only");
+		assert.deepEqual(vars, { ...appearanceVars(resolveAppearance(undefined)), "--font-title": '"lh-cmu", serif' });
 	});
 });
 
 describe("staleVarNames — the removal half of application (owner repro: resets never reverted)", () => {
-	it("a full delta applied, then factory: every delta-only name goes stale", () => {
+	it("a full delta applied, then factory: the delta-only type names go stale, colors never do", () => {
 		const fullDelta = appearanceVars(
 			resolveAppearance({
 				background: "#101820",
@@ -139,34 +157,91 @@ describe("staleVarNames — the removal half of application (owner repro: resets
 				sessionNameSerif: true,
 				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
 			}),
+			DEFAULT_THEME,
 		);
-		const applied = Object.keys(fullDelta);
-		const factory = appearanceVars(resolveAppearance(undefined));
-		const stale = staleVarNames(applied, factory);
-		assert.ok(stale.includes("--background"));
+		const factory = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME);
+		const stale = staleVarNames(Object.keys(fullDelta), factory);
 		assert.ok(stale.includes("--font-prose"));
-		assert.ok(stale.includes("--font-title"), "serif toggle back OFF must clear the title override");
-		assert.ok(stale.includes("--lh-ink-strong"));
-		assert.ok(stale.includes("--lh-ink-italic"));
+		assert.ok(stale.includes("--font-title"));
+		assert.ok(!stale.includes("--background"));
 		assert.ok(!stale.includes("--lh-prose-size"), "always-applied tokens never go stale");
-		assert.ok(!stale.includes("--lh-heading-weight"), "always-applied tokens never go stale");
-	});
-
-	it("an empty background commit (null = factory) frees the palette vars", () => {
-		const withBg = appearanceVars(resolveAppearance({ background: "#101010" }));
-		const emptied = appearanceVars(resolveAppearance({ background: null }));
-		const stale = staleVarNames(Object.keys(withBg), emptied);
-		assert.ok(stale.includes("--background"));
-		assert.ok(stale.includes("--card"), "the derived palette follows the background out");
-		assert.equal(emptied["--background"], undefined);
 	});
 
 	it("no previous applications → nothing stale", () => {
-		assert.deepEqual(staleVarNames([], appearanceVars(resolveAppearance(undefined))), []);
+		assert.deepEqual(staleVarNames([], appearanceVars(resolveAppearance(undefined), DEFAULT_THEME)), []);
+	});
+});
+
+describe("Colors block compose helpers — overrides in their two homes", () => {
+	const before = {
+		theme: "catppuccin-mocha",
+		fontFamily: "Georgia",
+		background: "#101010",
+		colors: { warning: "#fab387" },
+		mdRendering: { headingWeight: 700, boldColor: "#ff0000" },
+	};
+
+	it("reads each key from its home", () => {
+		assert.equal(colorOverride(before, "background"), "#101010");
+		assert.equal(colorOverride(before, "bold"), "#ff0000");
+		assert.equal(colorOverride(before, "italic"), "");
+		assert.equal(colorOverride(before, "warning"), "#fab387");
+		assert.equal(colorOverride(undefined, "surface"), "");
+	});
+
+	it("writes each key to its home and carries the rest of the section", () => {
+		const bold = composeColorOverride(before, "bold", "#00ff00");
+		assert.deepEqual(bold.mdRendering, { headingWeight: 700, boldColor: "#00ff00" });
+		assert.equal(bold.theme, "catppuccin-mocha");
+		const surface = composeColorOverride(before, "surface", "#222222");
+		assert.deepEqual(surface.colors, { warning: "#fab387", surface: "#222222" });
+		assert.equal(surface.fontFamily, "Georgia");
+	});
+
+	it("an empty commit returns the key to the theme", () => {
+		assert.deepEqual(composeColorOverride(before, "warning", "").colors, {});
+		assert.equal(composeColorOverride(before, "background", "").background, null);
+	});
+
+	it("Reset all clears every color and keeps the theme and type knobs", () => {
+		assert.deepEqual(clearColorOverrides(before), {
+			theme: "catppuccin-mocha",
+			fontFamily: "Georgia",
+			mdRendering: { headingWeight: 700 },
+		});
 	});
 });
 
 describe("agent section compose helpers — the replace-whole PUT body", () => {
+	it("worker concurrency commits exact whole values, preserving every sibling without mutation", () => {
+		const before: AgentSettings = {
+			workerRequestConcurrency: 3,
+			models: { auditor: { thinkingLevel: "high" } }, tools: { research: false },
+			prompts: { "system-prompt.md": true }, search: { engine: "brave" }, graphTools: { enabled: false },
+		};
+		for (const [draft, value] of [["1", 1], ["8", 8], ["8.0", 8], ["1e1", 10], ["10e-1", 1], ["10.5e1", 105], ["100000", 100000], [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER]] as const) {
+			const next = composeWorkerRequestConcurrency(before, draft);
+			assert.ok(next.ok, draft);
+			assert.deepEqual(next.settings, { ...before, workerRequestConcurrency: value });
+		}
+		assert.equal(before.workerRequestConcurrency, 3, "input record is not mutated");
+		for (const draft of ["", "   "]) {
+			const reset = composeWorkerRequestConcurrency(before, draft);
+			assert.ok(reset.ok);
+			const { workerRequestConcurrency: _drop, ...siblings } = before;
+			assert.deepEqual(reset.settings, siblings);
+			assert.equal(resolveSettings({ version: 1, agent: reset.settings }).agent.workerRequestConcurrency, 8);
+		}
+	});
+
+	it("worker concurrency rejects invalid drafts, including fractions rounded away by Number", () => {
+		for (const draft of ["0", "-1", "1.5", "1e-1", "8.0000000000000001", "99999999999999.99999", "9007199254740992", "1e999999", "1e", "NaN", "Infinity", "hello", "0x10"]) {
+			const result = composeWorkerRequestConcurrency(undefined, draft);
+			assert.equal(result.ok, false, draft);
+			if (!result.ok) assert.match(result.error, /positive, safely representable whole number/);
+		}
+	});
+
 	it("composeTool carries the rest of the section verbatim", () => {
 		const before = { tools: { demo: false }, prompts: { "system-prompt.md": true } };
 		const after = composeTool(before, "visual", false);

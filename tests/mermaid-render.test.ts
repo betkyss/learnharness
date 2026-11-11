@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import mermaid from "mermaid";
 import type { MermaidConfig } from "mermaid";
-import { renderMermaid, mermaidTheme } from "../components/mermaid-render.ts";
+import { renderMermaid, mermaidConfig } from "../components/mermaid-render.ts";
 
 const callbackError = () => new Error("Parse error: expected NODE_STRING, got 'CALLBACKNAME'");
 
@@ -22,7 +22,7 @@ describe("shared Mermaid renderer", () => {
 		});
 		assert.equal(await renderMermaid(source), "<svg/>");
 		assert.deepEqual(calls, [`parse:${source}`, `render:${source}`]);
-		assert.equal(mermaidTheme.securityLevel, "strict");
+		assert.equal(mermaidConfig("dark").securityLevel, "strict");
 	});
 
 	it("retries only the parse and then renders the validated candidate", async (t) => {

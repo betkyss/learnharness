@@ -1,4 +1,5 @@
 import { useEffect, type RefObject } from "react";
+import { useInteractionLayer, useInteractionLayers } from "./interaction-layers";
 
 /**
  * Close-on-dismissal for floating panels (graph chrome, 2026-09-17):
@@ -13,27 +14,23 @@ export function usePopoverDismiss(
 	rootRef: RefObject<HTMLElement | null>,
 	open: boolean,
 	close: () => void,
-	panelTestid?: string,
-): void {
+	options?: { layerRootRef?: RefObject<HTMLElement | null>; ownerId?: string; panelTestid?: string },
+) {
+	const controller = useInteractionLayers();
+	const panel = options?.layerRootRef ?? rootRef;
+	const layer = useInteractionLayer({ kind: "popup", enabled: open && !options?.panelTestid, rootRef: panel, anchorRef: rootRef, ownerId: options?.ownerId,
+		onClose: () => { close(); return "closed"; } });
 	useEffect(() => {
 		if (!open) return;
 		const onPointerDown = (e: PointerEvent) => {
-			if (rootRef.current && !rootRef.current.contains(e.target as Node) && !(panelTestid && document.querySelector(`[data-testid="${panelTestid}"]`)?.contains(e.target as Node))) close();
-		};
-		const onKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "Escape") {
-				// Claim the Esc (keyboard wave A): the window-level dismiss
-				// chain must not ALSO stop dictation / abort a turn under
-				// this popover. Popovers are the chain's topmost layer.
-				e.stopPropagation();
-				close();
-			}
+			const portal = options?.panelTestid ? document.querySelector<HTMLElement>(`[data-testid="${options.panelTestid}"]`) : panel.current;
+			if (!controller.isElementEligible(portal)) return;
+			if (rootRef.current && !rootRef.current.contains(e.target as Node) && !(options?.panelTestid && portal?.contains(e.target as Node))) close();
 		};
 		document.addEventListener("pointerdown", onPointerDown);
-		document.addEventListener("keydown", onKeyDown);
 		return () => {
 			document.removeEventListener("pointerdown", onPointerDown);
-			document.removeEventListener("keydown", onKeyDown);
 		};
-	}, [open, close, rootRef, panelTestid]);
+	}, [open, close, rootRef, panel, controller, options?.panelTestid]);
+	return layer;
 }

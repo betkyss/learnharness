@@ -31,6 +31,10 @@ export const CONFIDENCE_COLORS: readonly string[] = [
 	"#10b981", // 100
 ];
 
+/** The stop ticks: the foreground ink at 35% (the old fixed
+ *  rgba(230,230,230,.35) was the dark foreground's value). */
+const RAIL_TICK = "color-mix(in oklab, var(--foreground) 35%, transparent)";
+
 /** The rail's paint for a stop value (0–100). */
 export function confidenceRailStyle(value: number): CSSProperties {
 	const color = CONFIDENCE_COLORS[CONFIDENCE_STOPS.indexOf(value)] ?? CONFIDENCE_COLORS[2]!;
@@ -38,9 +42,7 @@ export function confidenceRailStyle(value: number): CSSProperties {
 		backgroundColor: "var(--background)",
 		backgroundImage: [
 			`linear-gradient(90deg, ${color} 0%, ${color} ${value}%, transparent ${value}%, transparent 100%)`,
-			...[30, 50, 70, 90].map(
-				() => "linear-gradient(90deg, color-mix(in srgb, var(--muted-foreground) 60%, transparent), color-mix(in srgb, var(--muted-foreground) 60%, transparent))",
-			),
+			...[30, 50, 70, 90].map(() => `linear-gradient(90deg, ${RAIL_TICK}, ${RAIL_TICK})`),
 		].join(", "),
 		backgroundSize: ["100% 100%", "1px 100%", "1px 100%", "1px 100%", "1px 100%"].join(", "),
 		backgroundPosition: ["0 0", ...[30, 50, 70, 90].map((p) => `${p}% 0`)].join(", "),

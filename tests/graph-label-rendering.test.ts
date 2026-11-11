@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { GraphCanvasRenderer } from "../components/graph-canvas.ts";
+import { CLUSTER_LIGHTNESS, GraphCanvasRenderer } from "../components/graph-canvas.ts";
 import { DEFAULT_RENDER_SETTINGS } from "../src/core/render-settings.ts";
 
 /** Exercise the real draw pass; only Canvas 2D and its browser host are replaced. */
@@ -21,7 +21,7 @@ function renderLabels(k: number, hover = false) {
 	const nodes = [{ id: "a", label: "Node A", x: -50, y: 0 }, { id: "b", label: "Node B", x: 50, y: 0 }];
 	const renderer = Object.assign(Object.create(GraphCanvasRenderer.prototype), {
 		canvas: { clientWidth: 600, clientHeight: 400 }, ctx,
-		data: { nodes, fontFamily: "sans-serif", colors: { node: "#ffffff", edge: "#888888", label: "#aaaaaa", hoverText: "#eeeeee", background: "#000000" } },
+		data: { nodes, fontFamily: "sans-serif", colors: { node: "#ffffff", edge: "#888888", label: "#aaaaaa", hoverText: "#eeeeee", background: "#000000", clusterLightness: CLUSTER_LIGHTNESS.dark } },
 		settings: DEFAULT_RENDER_SETTINGS, transform: { x: 300, y: 200, k }, kFit: 1,
 		geoVersion: 1, builtVersion: 1, regionBuiltVersion: 1, frameCount: 0,
 		nodesPath: {}, shaftsPath: {}, headsPath: {},

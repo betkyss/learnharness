@@ -79,7 +79,7 @@ export function ToolCallCard({ part }: ArtifactPartProps) {
 		>
 			<summary className="flex cursor-pointer list-none items-center gap-2 text-xs text-muted-foreground [&::-webkit-details-marker]:hidden">
 				{live ? <><BrailleSpinner label={toolActivityLabel(tool)} /><Shimmer duration={1} className="shrink-0 text-xs">{toolActivityLabel(tool)}</Shimmer></> : (
-					<span className={`shrink-0 font-medium uppercase tracking-wide ${failed ? "text-red-500" : ""}`}>{tool}</span>
+					<span className={`shrink-0 font-medium uppercase tracking-wide ${failed ? "text-error" : ""}`}>{tool}</span>
 				)}
 				{arg && <span className="truncate">{arg}</span>}
 				<ChevronRight className="size-3 shrink-0 opacity-50 transition-transform group-open:rotate-90" />
@@ -100,7 +100,7 @@ export function ToolCallCard({ part }: ArtifactPartProps) {
 						<div className="mb-1 font-medium uppercase tracking-wide text-muted-foreground">
 							Error
 						</div>
-						<pre className="whitespace-pre-wrap break-all font-mono text-xs text-red-500">
+						<pre className="whitespace-pre-wrap break-all font-mono text-xs text-error">
 							{p.errorText}
 						</pre>
 					</div>

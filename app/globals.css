@@ -28,7 +28,8 @@
 }
 
 /* Neutral dark factory palette. Appearance overrides these tokens at runtime. */
-:root {
+:root,
+.dark {
 	--lh-chat-max-width: 46rem;
 	color-scheme: dark;
 	--radius: 8px;
@@ -60,40 +61,23 @@
 	/* Reading size is independent from interface labels and controls.
 	   AppearanceProvider overrides this with the saved reading size. */
 	--lh-prose-size: 1rem;
+	--lh-accent: #a1a1aa;
+	--lh-line-strong: #e4e4e7;
+	--lh-ink-code: #e4e4e7;
+	--lh-error: #ef4444;
+	--lh-success: #16a34a;
+	--lh-warning: #f59e0b;
 	--lh-prose-leading: 1.5;
 	/* Markdown heading weight (appearance settings). */
 	--lh-heading-weight: 600;
 }
 
-/* The app is always dark (<html class="dark">); mirror the same values so
-   the block stays coherent under Tailwind's variant. */
-.dark {
-	--background: #000000;
-	--sidebar: #09090b;
-	--foreground: #e4e4e7;
-	--card: #18181b;
-	--card-foreground: #e4e4e7;
-	--popover: #18181b;
-	--popover-foreground: #e4e4e7;
-	--primary: #e4e4e7;
-	--primary-foreground: #000000;
-	--secondary: #18181b;
-	--secondary-foreground: #e4e4e7;
-	--muted: #18181b;
-	--muted-foreground: #a1a1aa;
-	--accent: #27272a;
-	--accent-foreground: #e4e4e7;
-	--destructive: oklch(0.704 0.191 22.216);
-	--border: rgb(255 255 255 / 10%);
-	--input: rgb(255 255 255 / 10%);
-	--ring: #a1a1aa;
-	/* Same emphasis ruling as the block above: unset = text color. */
-	--lh-ink-strong: var(--foreground);
-	--lh-ink-italic: var(--foreground);
-	--lh-prose-size: 1rem;
-	--lh-prose-leading: 1.5;
-	/* Markdown heading weight (appearance settings). */
-	--lh-heading-weight: 600;
+/* The light variant: the colors come from the active light theme (inline
+   on <html>); the class only flips the UA color scheme and the `.light`
+   rules below. Must follow the block above: :root still matches
+   <html class="light">, and with equal specificity the later rule wins. */
+.light {
+	color-scheme: light;
 }
 
 /* CMU Serif bold (titles) — bundled local file, no CDN dependency. */
@@ -154,6 +138,10 @@
 	--color-border: var(--border);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
+	--color-line-strong: var(--lh-line-strong);
+	--color-error: var(--lh-error);
+	--color-success: var(--lh-success);
+	--color-warning: var(--lh-warning);
 }
 
 * {
@@ -306,6 +294,14 @@ body {
    background #000000 and read as raised — owner note, chrome-melt tweaks
    2026-09-19) plus a subtle hairline outline. (md-blocks renders its own
    hover copy corner.) */
+/* Shared code-only policy. font-variant-ligatures survives Tailwind's
+   code/pre font-feature-settings reset; prose and rendered diagrams do not
+   consume this token. The fallback also disables code ligatures before the
+   Appearance provider loads an existing profile. */
+[data-streamdown="inline-code"],
+[data-streamdown="code-block"] :is(pre, code) {
+	font-variant-ligatures: var(--lh-code-ligatures, none);
+}
 /* Inline code shares only the block surface, keeping its inline geometry. */
 [data-streamdown="inline-code"],
 [data-streamdown="code-block"] {
@@ -315,6 +311,13 @@ body {
 [data-streamdown="code-block"] {
 	border-radius: calc(var(--radius) * 1.5);
 	padding: 0.375rem;
+}
+/* The same well on the light page, gentler: 14% black over #f5f5f3 reads as
+   a heavy gray slab, 4% keeps it just darker than the page. Inline code
+   shares the well, so it takes the gentler tint too. */
+.light [data-streamdown="inline-code"],
+.light [data-streamdown="code-block"] {
+	background: color-mix(in oklab, var(--background) 96%, black);
 }
 [data-streamdown="code-block-header"] {
 	display: none;
@@ -511,11 +514,22 @@ body {
 .lh-electron {
 	--lh-zoom: 1;
 }
+.lh-electron[data-lh-platform="darwin"] {
+	/* Shared with floating-panel clearance; physical dimensions, before zoom. */
+	--lh-traffic-lights-width: 92px;
+	--lh-traffic-lights-height: 60px;
+}
 .lh-electron[data-lh-platform="darwin"] .lh-lights-gutter {
-	padding-left: calc(92px / var(--lh-zoom));
+	padding-left: calc(var(--lh-traffic-lights-width) / var(--lh-zoom));
 }
 .lh-electron[data-lh-platform="darwin"] .lh-closed-toggle {
-	margin-left: calc(92px / var(--lh-zoom));
+	margin-left: calc(var(--lh-traffic-lights-width) / var(--lh-zoom));
+}
+/* Picker headers have no sidebar-reopen control. Clear only the portion of
+   the physical traffic-light gutter that actually overlaps their pane;
+   an open sidebar already moves the main pane beyond the native buttons. */
+.lh-electron[data-lh-platform="darwin"] .lh-native-window-clearance {
+	padding-left: calc(0.75rem + max(0px, calc(92px / var(--lh-zoom) - var(--lh-header-left, 0px))));
 }
 
 /* Windows/Linux Window Controls Overlay: Chromium publishes the usable
@@ -540,6 +554,21 @@ body {
 	--font-ui: ui-sans-serif, system-ui, sans-serif;
 	--font-prose: ui-sans-serif, system-ui, sans-serif;
 	--font-title: var(--font-prose);
+}
+
+/* A closed graph rail starts below the floating toggle/native lights band.
+   Like the existing light gutter, its physical clearance survives desktop zoom. */
+.lh-electron[data-lh-platform="darwin"] .lh-plugin-graph-closed {
+	top: max(2.75rem, calc(44px / var(--lh-zoom)));
+}
+
+/* Plugin action lists scroll without adding visible chrome to the graph rail. */
+.lh-plugin-scroll {
+	scrollbar-width: none;
+	overscroll-behavior: contain;
+}
+.lh-plugin-scroll::-webkit-scrollbar {
+	display: none;
 }
 
 /* Card enter (owner round, 2026-10-05): the transcript cards' one-shot
