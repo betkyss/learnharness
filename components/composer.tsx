@@ -216,7 +216,7 @@ export function Composer({
 						type="submit"
 						data-testid="next-problem-button"
 						aria-label="Next problem"
-						className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-md bg-success px-4 font-ui text-xs font-medium uppercase tracking-wide text-white transition-colors hover:bg-success/85"
+						className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-md bg-success px-4 font-ui text-xs font-medium uppercase tracking-wide text-success-foreground transition-colors hover:bg-success/85"
 					>
 						Next problem
 						<ArrowRightIcon className="size-4" />

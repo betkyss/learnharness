@@ -49,8 +49,8 @@
 	--accent: #262629;
 	--accent-foreground: #e4e4e7;
 	--destructive: #ef4444;
-	--border: #1a1a1a;
-	--input: #1a1a1a;
+	--border: #3f3f46;
+	--input: #3f3f46;
 	--ring: #a1a1aa;
 	/* Emphasis inks default to the REGULAR TEXT COLOR (owner ruling,
 	   appearance wave 2026-09-26 — the old #ee928c/#6fa9d6 factory
@@ -66,6 +66,7 @@
 	--lh-ink-code: #e4e4e7;
 	--lh-error: #ef4444;
 	--lh-success: #16a34a;
+	--lh-success-foreground: #000000;
 	--lh-warning: #f59e0b;
 	--lh-prose-leading: 1.5;
 	/* Markdown heading weight (appearance settings). */
@@ -141,6 +142,7 @@
 	--color-line-strong: var(--lh-line-strong);
 	--color-error: var(--lh-error);
 	--color-success: var(--lh-success);
+	--color-success-foreground: var(--lh-success-foreground);
 	--color-warning: var(--lh-warning);
 }
 

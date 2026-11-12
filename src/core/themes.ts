@@ -148,7 +148,7 @@ export const BUILTIN_THEMES: readonly Theme[] = [
 		mode: "dark",
 		builtin: true,
 		colors: {
-			background: "#000000", surface: "#18181b", border: "#1a1a1a", text: "#e4e4e7", textMuted: "#a1a1aa",
+			background: "#000000", surface: "#18181b", border: "#3f3f46", text: "#e4e4e7", textMuted: "#a1a1aa",
 			accent: "#a1a1aa", bold: "#e4e4e7", italic: "#e4e4e7", code: "#e4e4e7",
 			error: "#ef4444", success: "#16a34a", warning: "#f59e0b",
 		},
@@ -248,6 +248,17 @@ export function shiftHex(hex: string, add: number): string {
  *  darker on light (#1c1c1c → #2a2a2a, the original hand-picked hover). */
 const HOVER_STEP = 14;
 
+/** Choose the higher-contrast ink for a filled control, independently of mode. */
+function contrastingText(hex: string): string {
+	const normalized = shiftHex(hex, 0);
+	const linear = (start: number) => {
+		const channel = parseInt(normalized.slice(start, start + 2), 16) / 255;
+		return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+	};
+	const luminance = 0.2126 * linear(1) + 0.7152 * linear(3) + 0.0722 * linear(5);
+	return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? "#000000" : "#ffffff";
+}
+
 /** THE adapter: 12 theme colors → the CSS variables set on <html>.
  *  `--accent` stays the shadcn HOVER surface (derived from `surface`, so
  *  hovers never turn the highlight color); the theme's accent is
@@ -280,6 +291,7 @@ export function themeVars(c: ThemeColors, mode: ThemeMode): Record<string, strin
 		"--lh-ink-code": c.code,
 		"--lh-error": c.error,
 		"--lh-success": c.success,
+		"--lh-success-foreground": contrastingText(c.success),
 		"--lh-warning": c.warning,
 	};
 }
@@ -295,7 +307,7 @@ export function appearanceThemeVars(theme: Theme, appearance: AppearanceSettings
 	const vars = themeVars(effectiveColors(theme, appearance), theme.mode);
 	if (appearance?.contrast === "high") {
 		const rgb = theme.mode === "dark" ? "255 255 255" : "0 0 0";
-		vars["--border"] = vars["--input"] = `rgb(${rgb} / 20%)`;
+		vars["--border"] = vars["--input"] = `rgb(${rgb} / 30%)`;
 		vars["--muted-foreground"] = theme.mode === "dark" ? "#d4d4d8" : "#3f3f46";
 	}
 	return vars;

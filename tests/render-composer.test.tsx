@@ -67,6 +67,7 @@ describe("Composer", () => {
 		assert.ok(html.includes('data-testid="next-problem-button"'), "the morphed button");
 		assert.match(html, /Next problem/, "the label");
 		assert.ok(html.includes("bg-success"), "green — the correct-answer register");
+		assert.ok(html.includes("text-success-foreground"), "the label follows the success color's contrasting ink");
 		assert.ok(!html.includes('aria-label="Send"'), "the square send is gone in the pause");
 	});
 

@@ -16,6 +16,11 @@ light gray. The sidebar shares the surface color. Changing the background alone
 does not recalculate the other colors; exporting and importing Default preserves
 its palette just like any other theme.
 
+Default's thin neutral-gray borders separate fields, cards and tables from the
+dark surfaces; scrollbars share that border color. **High contrast** strengthens
+the borders further. The green **Next problem** button chooses black or white
+text to contrast with the effective success color, including color overrides.
+
 ## Overriding single colors
 
 The **Colors** block under the theme grid has one field per theme color. A filled

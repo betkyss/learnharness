@@ -121,8 +121,8 @@ function checkTypography(actual, proseSize = 16, scale = 1){
 	assert.equal(actual.paragraph.leading, proseSize * 1.5);
 }
 async function screenshot(name){if(process.env.LH_TEST_SCREENSHOTS){fs.mkdirSync(process.env.LH_TEST_SCREENSHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.LH_TEST_SCREENSHOTS,name+'.png')});}}
-async function openSettings(){await page.click(q('settings-entry'));await page.waitForSelector(q('settings-nav-appearance'));await page.click(q('settings-nav-appearance'));await page.waitForSelector(q('interface-font-trigger'));}
-async function edit(id,value){await page.$eval(q(id),e=>{e.focus();e.select();});await page.keyboard.press('Backspace');if(value)await page.type(q(id),value);await page.keyboard.press('Tab');}
+async function openSettings(){if(!await page.$(q('settings-nav-appearance')))await page.click(q('settings-entry'));await page.waitForSelector(q('settings-nav-appearance'));await page.click(q('settings-nav-appearance'));await page.waitForSelector(q('interface-font-trigger'));}
+async function edit(id,value){await page.$eval(q(id),e=>{e.focus();e.select();});await page.keyboard.press('Backspace');if(value)await page.type(q(id),value);await page.keyboard.press('Enter');}
 async function waitVar(name,value){await page.waitForFunction((n,v)=>document.documentElement.style.getPropertyValue(n)===v,{},name,value);}
 async function styles(){await new Promise(r=>setTimeout(r,350));return page.evaluate(()=>{const get=(s)=>getComputedStyle(document.querySelector(s));return {body:get('body').fontFamily,background:get('body').backgroundColor,sidebar:get('.bg-sidebar').backgroundColor,control:get('[data-testid="interface-font-trigger"]').fontFamily,radius:get('[data-testid="interface-font-trigger"]').borderRadius,panel:get('[data-testid="settings-dialog"]').backgroundColor,panelRadius:get('[data-testid="settings-dialog"]').borderRadius,border:get('[data-testid="settings-dialog"]').borderColor,muted:get('[data-testid="settings-close"]').color,title:get('.font-title').fontWeight,prose:get('.lh-input').fontFamily,label:get('[data-testid="row-interface-font"] .font-ui').fontFamily,overflow:document.documentElement.scrollWidth>innerWidth,contentOverflow:document.querySelector('[data-testid="settings-content"]').scrollWidth>document.querySelector('[data-testid="settings-content"]').clientWidth};});}
 await openSettings();
@@ -141,12 +141,12 @@ await page.click(q('interface-font-trigger'));await page.waitForSelector(q('font
 await edit('input-corner-radius','0');await waitVar('--radius','0px');
 await page.select(q('select-contrast'),'high');await waitVar('--muted-foreground','#d4d4d8');
 await edit('input-background','#102030');await waitVar('--background','#102030');
-const changed=await styles();assert.match(changed.control,/Arial/);assert.match(changed.label,/Arial/);assert.match(changed.body,/Arial/);assert.equal(changed.radius,'0px');assert.equal(changed.panelRadius,'0px');assert.equal(changed.sidebar,defaults.sidebar);assert.equal(changed.panel,defaults.panel);assert.equal(changed.border,'rgba(255, 255, 255, 0.2)');assert.equal(changed.muted,'rgb(212, 212, 216)');assert.match(changed.prose,/Georgia/);
+const changed=await styles();assert.match(changed.control,/Arial/);assert.match(changed.label,/Arial/);assert.match(changed.body,/Arial/);assert.equal(changed.radius,'0px');assert.equal(changed.panelRadius,'0px');assert.equal(changed.sidebar,defaults.sidebar);assert.equal(changed.panel,defaults.panel);assert.equal(changed.border,'rgba(255, 255, 255, 0.3)');assert.equal(changed.muted,'rgb(212, 212, 216)');assert.match(changed.prose,/Georgia/);
 const saved=await page.evaluate(async()=>(await (await fetch('/api/settings')).json()).settings.appearance);assert.deepEqual(saved,{fontFamily:'Georgia',interfaceFontFamily:'Arial',cornerRadius:0,contrast:'high',background:'#102030'});
 await page.reload({waitUntil:'domcontentloaded'});await waitVar('--radius','0px');await new Promise(r=>setTimeout(r,1000));await openSettings();assert.equal((await styles()).sidebar,changed.sidebar);
 await page.click(q('interface-font-trigger'));await page.waitForSelector(q('font-option-default'));await page.click(q('font-option-default'));await waitVar('--font-ui','');
 await page.click(q('font-trigger'));await page.waitForSelector(q('font-option-default'));await page.click(q('font-option-default'));await waitVar('--font-prose','');
-await edit('input-corner-radius','');await waitVar('--radius','');await page.select(q('select-contrast'),'normal');await waitVar('--border','#1a1a1a');await edit('input-background','');await waitVar('--background','#000000');
+await edit('input-corner-radius','');await waitVar('--radius','');await page.select(q('select-contrast'),'normal');await waitVar('--border','#3f3f46');await edit('input-background','');await waitVar('--background','#000000');
 assert.deepEqual(await styles(),defaults);
 await page.setViewport({width:640,height:600});await new Promise(r=>setTimeout(r,250));const narrow=await styles();assert.equal(narrow.overflow,false);assert.equal(narrow.contentOverflow,false);
 await screenshot('settings-narrow');

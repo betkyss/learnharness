@@ -120,6 +120,28 @@ describe("themeVars — the adapter", () => {
 		assert.equal(v["--lh-success"], mocha.colors.success);
 		assert.equal(v["--lh-warning"], mocha.colors.warning);
 	});
+
+	it("filled success buttons choose the more readable black or white text from their actual color", () => {
+		for (const [success, foreground] of [
+			["#16a34a", "#000000"],
+			["#008000", "#ffffff"],
+			["#ff0000", "#000000"],
+			["#0f0", "#000000"],
+			["#00F", "#ffffff"],
+		] as const) {
+			for (const mode of ["dark", "light"] as const) {
+				const vars = themeVars({ ...DEFAULT_THEME.colors, success }, mode);
+				assert.equal(vars["--lh-success-foreground"], foreground, `${success} in ${mode}`);
+			}
+		}
+	});
+
+	it("a success color override updates its button text and clearing it restores the theme's text", () => {
+		const overridden = appearanceThemeVars(DEFAULT_THEME, { colors: { success: "#004400" } });
+		assert.equal(overridden["--lh-success-foreground"], "#ffffff");
+		const reset = appearanceThemeVars(DEFAULT_THEME, { colors: { success: null } });
+		assert.equal(reset["--lh-success-foreground"], "#000000");
+	});
 });
 
 describe("effectiveColors — overrides over the theme", () => {

@@ -60,7 +60,7 @@ describe("appearance compatibility and runtime reset", () => {
 	it("zero radius, high contrast and independent fonts apply, then all overrides clear", () => {
 		const vars = appearanceVars(resolveAppearance({ interfaceFontFamily: "Arial", fontFamily: "Georgia", cornerRadius: 0, contrast: "high" }));
 		assert.equal(vars["--radius"], "0px");
-		assert.equal(vars["--border"], "rgb(255 255 255 / 20%)");
+		assert.equal(vars["--border"], "rgb(255 255 255 / 30%)");
 		assert.equal(vars["--input"], vars["--border"]);
 		assert.equal(vars["--muted-foreground"], "#d4d4d8");
 		assert.equal(vars["--font-ui"], '"Arial", ui-sans-serif, system-ui, sans-serif');
