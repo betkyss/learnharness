@@ -1,7 +1,7 @@
 # Themes
 
 **Settings → Appearance → Theme** sets the app's UI palette.
-LearnHarness ships eleven presets: Default (the original dark palette), Catppuccin
+LearnHarness ships eleven presets: Default (this fork’s neutral dark palette), Catppuccin
 Latte, Frappé, Macchiato and Mocha, Rosé Pine and Rosé Pine Dawn, Gruvbox Dark, Ivory, Pastel, and NvChad Onedark.
 Each theme declares whether it is dark or light. The native window background
 follows the effective background, including your override; native control symbols
@@ -10,12 +10,21 @@ Generated figures keep their own colors and existing inversion controls. Plugins
 that use the app's CSS tokens inherit them; plugin-specific palettes and artwork
 are not rewritten.
 
+Default uses the same twelve-color format and rendering rules as the other
+presets. Its background is black, its surfaces are dark gray, and its text is
+light gray. The sidebar shares the surface color. Changing the background alone
+does not recalculate the other colors; exporting and importing Default preserves
+its palette just like any other theme.
+
 ## Overriding single colors
 
 The **Colors** block under the theme grid has one field per theme color. A filled
 field wins over the active theme; an empty field uses the theme's value, shown in
 its hint. Overrides are kept when you switch themes, so a background you like
-survives a change of palette. **Reset all** clears every override.
+survives a change of palette. **Reset all** clears every override. If an older setup has a filled Background
+field (for example `#000000`), clear that field to let each theme use its own
+background. The black Default background comes from the preset and needs no
+saved override.
 
 `background`, `bold` and `italic` keep their pre-theme settings keys
 (`appearance.background`, `mdRendering.boldColor`, `mdRendering.italicColor`), so

@@ -66,28 +66,6 @@ export function resolveAppearance(delta: AppearanceSettings | undefined) {
 	};
 }
 
-/** RGB offsets preserve the approved surface relationships for custom backgrounds. */
-function raise(hex: string, offsets: readonly number[]): string {
-	const n = hex.length === 4
-		? hex.slice(1).split("").map((c) => parseInt(c + c, 16))
-		: [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
-	return `#${n.map((c, i) => Math.min(255, c + (offsets[i] ?? 0)).toString(16).padStart(2, "0")).join("")}`;
-}
-
-export function derivedPalette(background: string): Record<string, string> {
-	const card = raise(background, [24, 24, 27]);
-	return {
-		"--background": background,
-		"--sidebar": raise(background, [9, 9, 11]),
-		"--card": card,
-		"--popover": card,
-		"--secondary": card,
-		"--muted": card,
-		"--accent": raise(background, [39, 39, 42]),
-		"--primary-foreground": background,
-	};
-}
-
 /** Escape a family as one CSS string, retaining a system fallback for unknown fonts. */
 function fontStack(family: string): string {
 	const quoted = family.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\n\r\f]/g, " ");

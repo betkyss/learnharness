@@ -129,7 +129,7 @@ function builtin(name: string, mode: ThemeMode, c: ThemeColors): Theme {
 	return { id: themeIdFromName(name), name, mode, colors: c, builtin: true };
 }
 
-/** The presets, in grid order. Default = the app's original dark palette
+/** The presets, in grid order. Default = the fork's neutral dark palette
  *  (app/globals.css carries it as literals; tests pin the two equal).
  *  Catppuccin: base/surface0/surface1, mauve accent, lavender/pink/peach
  *  emphasis; Latte takes mantle/surface0 instead, because surface0 on a
@@ -205,7 +205,7 @@ export const BUILTIN_THEMES: readonly Theme[] = [
 	}),
 ];
 
-/** The app's original dark palette, and the fallback for a missing id. */
+/** The fork's default dark palette, and the fallback for a missing id. */
 export const DEFAULT_THEME: Theme = BUILTIN_THEMES[0]!;
 
 /** Preset ids are reserved: imports never take them, DELETE refuses them. */
@@ -290,27 +290,13 @@ export function exportThemeFile(theme: ThemeFile, appearance: AppearanceSettings
 	return { name: theme.name, mode: theme.mode, colors: effectiveColors(theme, appearance) };
 }
 
-/** Preserve the fork's default surfaces while allowing explicit theme overrides. */
+/** Apply the standard theme palette, then the explicit contrast preference. */
 export function appearanceThemeVars(theme: Theme, appearance: AppearanceSettings | undefined): Record<string, string> {
- const colors = effectiveColors(theme, appearance);
- const vars = themeVars(colors, theme.mode);
- vars["--sidebar"] = colors.surface;
- if (theme.id === DEFAULT_THEME_ID) {
-  const background = colors.background;
-  const channels = background.length === 4 ? background.slice(1).split("").map(c => parseInt(c + c, 16)) : [1, 3, 5].map(i => parseInt(background.slice(i, i + 2), 16));
-  const raise = (offsets: number[]) => `#${channels.map((c, i) => Math.min(255, c + offsets[i]!).toString(16).padStart(2, "0")).join("")}`;
-  if (!appearance?.colors?.surface) {
-   for (const name of ["--card", "--popover", "--secondary", "--muted"]) vars[name] = raise([24, 24, 27]);
-   vars["--sidebar"] = raise([9, 9, 11]);
-   vars["--accent"] = raise([39, 39, 42]);
-  }
-  if (!appearance?.colors?.border) vars["--border"] = vars["--input"] = "rgb(255 255 255 / 10%)";
-  if (!appearance?.colors?.error) vars["--destructive"] = "oklch(0.704 0.191 22.216)";
- }
- if (appearance?.contrast === "high") {
-  const rgb = theme.mode === "dark" ? "255 255 255" : "0 0 0";
-  vars["--border"] = vars["--input"] = `rgb(${rgb} / 20%)`;
-  vars["--muted-foreground"] = theme.mode === "dark" ? "#d4d4d8" : "#3f3f46";
- }
- return vars;
+	const vars = themeVars(effectiveColors(theme, appearance), theme.mode);
+	if (appearance?.contrast === "high") {
+		const rgb = theme.mode === "dark" ? "255 255 255" : "0 0 0";
+		vars["--border"] = vars["--input"] = `rgb(${rgb} / 20%)`;
+		vars["--muted-foreground"] = theme.mode === "dark" ? "#d4d4d8" : "#3f3f46";
+	}
+	return vars;
 }

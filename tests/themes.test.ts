@@ -154,6 +154,20 @@ describe("graph edges", () => {
 });
 
 describe("exportThemeFile", () => {
+	it("Default exports and reimports with identical paint, including after a background override", () => {
+		for (const appearance of [undefined, { background: "#102030" }]) {
+			const exported = exportThemeFile(DEFAULT_THEME, appearance);
+			const imported: Theme = { ...exported, id: "my-default", builtin: false };
+			assert.deepEqual(appearanceThemeVars(imported, undefined), appearanceThemeVars(DEFAULT_THEME, appearance));
+		}
+	});
+
+	it("a Default background override leaves its other palette colors unchanged", () => {
+		const original = appearanceThemeVars(DEFAULT_THEME, undefined);
+		const changed = appearanceThemeVars(DEFAULT_THEME, { background: "#102030" });
+		assert.deepEqual(changed, { ...original, "--background": "#102030", "--primary-foreground": "#102030" });
+	});
+
 	it("is the theme with every override applied, all 12 keys", () => {
 		const out = exportThemeFile(mocha, { colors: { warning: "#fab387" } });
 		assert.deepEqual(out, { name: "Catppuccin Mocha", mode: "dark", colors: { ...mocha.colors, warning: "#fab387" } });

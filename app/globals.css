@@ -34,7 +34,7 @@
 	color-scheme: dark;
 	--radius: 8px;
 	--background: #000000;
-	--sidebar: #09090b;
+	--sidebar: #18181b;
 	--foreground: #e4e4e7;
 	--card: #18181b;
 	--card-foreground: #e4e4e7;
@@ -46,11 +46,11 @@
 	--secondary-foreground: #e4e4e7;
 	--muted: #18181b;
 	--muted-foreground: #a1a1aa;
-	--accent: #27272a;
+	--accent: #262629;
 	--accent-foreground: #e4e4e7;
-	--destructive: oklch(0.704 0.191 22.216);
-	--border: rgb(255 255 255 / 10%);
-	--input: rgb(255 255 255 / 10%);
+	--destructive: #ef4444;
+	--border: #1a1a1a;
+	--input: #1a1a1a;
 	--ring: #a1a1aa;
 	/* Emphasis inks default to the REGULAR TEXT COLOR (owner ruling,
 	   appearance wave 2026-09-26 — the old #ee928c/#6fa9d6 factory

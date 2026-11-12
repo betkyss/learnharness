@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { derivedPalette, appearanceVars, resolveAppearance, staleVarNames } from "../components/settings/appearance.tsx";
+import { appearanceVars, resolveAppearance, staleVarNames } from "../components/settings/appearance.tsx";
 import { clearColorOverrides, colorOverride, composeColorOverride } from "../components/settings/appearance-section.tsx";
 import { BUILTIN_THEMES, DEFAULT_THEME } from "../src/core";
 import {
@@ -74,21 +74,6 @@ describe("appearance compatibility and runtime reset", () => {
 	it("unknown and CSS-special family names remain a single family with a system fallback", () => {
 		const vars = appearanceVars(resolveAppearance({ interfaceFontFamily: 'Unknown "Font"' }));
 		assert.equal(vars["--font-ui"], '\"Unknown \\\"Font\\\"\", ui-sans-serif, system-ui, sans-serif');
-	});
-});
-
-describe("derivedPalette — neutral surfaces with channel-specific offsets", () => {
-	it("black reproduces the approved factory palette", () => {
-		assert.deepEqual(derivedPalette("#000000"), {
-			"--background": "#000000", "--sidebar": "#09090b",
-			"--card": "#18181b", "--popover": "#18181b", "--secondary": "#18181b", "--muted": "#18181b",
-			"--accent": "#27272a", "--primary-foreground": "#000000",
-		});
-	});
-	it("adds each RGB offset and clamps at 255", () => {
-		assert.equal(derivedPalette("#f0f0f0")["--card"], "#ffffff");
-		assert.equal(derivedPalette("#f0f0f0")["--sidebar"], "#f9f9fb");
-		assert.equal(derivedPalette("#abc")["--card"], "#c2d3e7");
 	});
 });
 
