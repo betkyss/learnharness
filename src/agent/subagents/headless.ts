@@ -185,7 +185,7 @@ async function connectBrowserService(): Promise<ConnectedBrowserService | null> 
 		// flagless it would open Electron's default app instead of our shell.
 		const appArgs = process.versions.electron ? ["--browser-service"] : [
 			// src/agent/subagents → repo root
-			path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".."),
+			path.join(/* turbopackIgnore: true */ path.dirname(fileURLToPath(import.meta.url)), "..", "..", ".."),
 			"--browser-service",
 		];
 		proc = spawn(binary, appArgs, {
