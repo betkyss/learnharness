@@ -42,9 +42,11 @@ for (const thinking of [false, true]) for (const overflow of [false, true]) test
       strictMode: true, pathname: "/chat/one", prepareDom(dom) {
         const prototype = dom.window.HTMLElement.prototype;
         const saved = [
-          [dom.window, "location"], [dom.window, "localStorage"], [prototype, "getAnimations"], [prototype, "offsetWidth"],
+          [dom.window, "location"], [dom.window, "localStorage"], [dom.window, "sessionStorage"], [prototype, "getAnimations"], [prototype, "offsetWidth"],
         ].map(([object, key]) => ({ object: object as object, key: key as string, descriptor: Object.getOwnPropertyDescriptor(object, key as string) }));
         const values = new Map<string, string>();
+        const drafts = new Map<string, string>();
+        Object.defineProperty(dom.window, "sessionStorage", { configurable: true, value: { getItem: (key: string) => drafts.get(key) ?? null, setItem: (key: string, value: string) => drafts.set(key, value), removeItem: (key: string) => drafts.delete(key) } });
         Object.defineProperty(dom.window, "location", { configurable: true, value: new URL("http://fixture/chat/one") });
         Object.defineProperty(dom.window, "localStorage", { configurable: true, value: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value), removeItem: (key: string) => values.delete(key) } });
         Object.defineProperty(prototype, "getAnimations", { configurable: true, value: () => [] });
@@ -85,10 +87,10 @@ for (const thinking of [false, true]) for (const overflow of [false, true]) test
     await mounted.render(null);
     assert.equal(mounted.owner.manager.shortcutPageContext(), undefined, "departed Chat must release its shortcut reader");
     await mounted.render(<Session />);
-    assert.equal(editor().textContent, "", "re-entry must not retain the departed form's draft");
+    assert.equal(editor().textContent, "shortcut draft", "re-entry restores the fork's tab-persisted draft");
     const context = mounted.owner.manager.shortcutPageContext();
     assert.equal(context?.surface, "session");
-    if (context?.surface === "session") { assert.equal(context.view.input.type, "answer"); if (context.view.input.type === "answer") assert.equal(thinking ? context.view.input.draft.thinking : context.view.input.draft.text, ""); }
+    if (context?.surface === "session") { assert.equal(context.view.input.type, "answer"); if (context.view.input.type === "answer") assert.equal(thinking ? context.view.input.draft.thinking : context.view.input.draft.text, "shortcut draft"); }
   } finally {
     await fixture?.close();
     if (savedObserver) Object.defineProperty(globalThis, "ResizeObserver", savedObserver); else Reflect.deleteProperty(globalThis, "ResizeObserver");
