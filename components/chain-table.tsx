@@ -75,6 +75,7 @@ import { TopBar } from "@/components/top-bar";
 import { InteractionLayerOwner, useInteractionLayer } from "./interaction-layers";
 import { DeleteSourceDialog } from "@/components/delete-source-dialog";
 import { LatexGlyph } from "@/components/latex-glyph";
+import { ToolContentResponse } from "@/components/ai-elements/message";
 import { TreeCell, TreeCheckbox, TreeDisclosure, TreeGuide, TreeHeader, TreeSelectionSpacer, TreeSeparator, treeBranchLayout, treeColumnLayout, treeRowLayout } from "./tree-presentation";
 
 /** The sortable columns (owner ruling: all three — consistency). */
@@ -540,7 +541,8 @@ export function ChainTableBody({
 															key={id}
 															{...chainRow(["prop", group.key, chain.id, id], depth + 2)}
 															data-testid={`prop-row-${id}`}
-															className="knowledge-statement flex items-start gap-2 py-1 pl-21 pr-3"
+															data-chain-statement
+														className="knowledge-statement flex items-start gap-2 py-1 pl-21 pr-3"
 														>
 															{selectMode ? <RowCheckbox
 																checked={selection.has(id)}
@@ -550,7 +552,7 @@ export function ChainTableBody({
 															/> : <span aria-hidden="true" className="size-3.5 shrink-0" />}
 															<div className="min-w-0 flex-1">
  <div className="mb-1 flex flex-wrap items-baseline gap-x-2 text-sm"><span className="font-medium">{node.name}</span><span className="text-xs text-muted-foreground">{id === chain.conclusion ? chain.premises.length ? "Conclusion" : "Proposition" : "Premise"}</span></div>
- <div className="knowledge-statement-text text-foreground">{node.statement}</div>
+ <ToolContentResponse mode="static" className="knowledge-statement-text text-foreground [&_[data-streamdown=inline-code]]:[font-size:inherit] [&_[data-streamdown=inline-code]]:[color:inherit]">{node.statement}</ToolContentResponse>
 </div>
 															<span className="w-14 shrink-0" />
 															<span className="w-20 shrink-0" />

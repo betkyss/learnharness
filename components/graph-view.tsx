@@ -82,6 +82,7 @@ import { useInteractionLayers } from "@/components/interaction-layers";
 import { isInteractionScopeEligible } from "@/components/plugin-input-focus";
 import { DeleteNodeDialog } from "@/components/delete-node-dialog.tsx";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
+import { ToolContentResponse } from "@/components/ai-elements/message";
 import { Hint } from "@/components/ui/hint";
 import {
 	ARROW_LENGTH_LADDER,
@@ -934,6 +935,57 @@ export function GraphChromeRow({
 	);
 }
 
+/** The detail card's name and statement, as a pure seam for render pins
+ *  (the GraphChromeRow pattern). Both are extractor tool arguments, so
+ *  they render through ToolContentResponse like other tool content: math
+ *  and Markdown, never streamed. `.lh-prose` sets the chat font and size
+ *  in unlayered CSS that beats Tailwind's type utilities — the variable
+ *  overrides are what keep the card's own type. */
+const NODE_CARD_TYPE = "[--font-prose:var(--font-ui)] " +
+	"[&_[data-streamdown=inline-code]]:[font-size:inherit] [&_[data-streamdown=inline-code]]:[color:inherit]";
+export function NodeCardText({ name, statement }: Pick<GraphNode, "name" | "statement">) {
+	return (
+		<>
+			<ToolContentResponse
+				mode="static"
+				className={`${NODE_CARD_TYPE} font-medium [--lh-prose-size:var(--text-sm)] [--lh-prose-leading:1.375]`}
+			>
+				{name}
+			</ToolContentResponse>
+			<ToolContentResponse
+				mode="static"
+				className={`${NODE_CARD_TYPE} mt-1 text-muted-foreground [--lh-prose-size:var(--text-xs)] [--lh-prose-leading:1.625]`}
+			>
+				{statement}
+			</ToolContentResponse>
+		</>
+	);
+}
+
+/** Keep the fork's toolbar/dock bounds while rich content finishes rendering. */
+export function observeNodeCardPosition(card: HTMLDivElement, container: HTMLDivElement, anchor: { x: number; y: number }): () => void {
+	const toolbar = container.parentElement?.querySelector(".graph-toolbar");
+	const dock = document.querySelector("[data-home-dock]");
+	const place = () => {
+		const rect = container.getBoundingClientRect();
+		const top = Math.max(8, (toolbar?.getBoundingClientRect().bottom ?? rect.top + 56) - rect.top + 8);
+		const bottom = Math.min(rect.height - 8, (dock?.getBoundingClientRect().top ?? rect.bottom) - rect.top - 8);
+		const available = Math.max(64, bottom - top);
+		card.style.maxHeight = `${available * (window.innerHeight <= 500 ? 0.8 : 0.85)}px`;
+		card.style.left = `${Math.max(8, Math.min(anchor.x - card.offsetWidth / 2, container.clientWidth - card.offsetWidth - 8))}px`;
+		card.style.top = `${Math.max(top, Math.min(anchor.y + 12, bottom - card.offsetHeight))}px`;
+		card.style.visibility = "visible";
+	};
+	place();
+	const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(place);
+	observer?.observe(card);
+	observer?.observe(container);
+	if (toolbar) observer?.observe(toolbar);
+	if (dock) observer?.observe(dock);
+	window.addEventListener("resize", place);
+	return () => { observer?.disconnect(); window.removeEventListener("resize", place); };
+}
+
 export function GraphView({
 	chainSelectOpen = false,
 	practiceSelection,
@@ -1448,26 +1500,10 @@ export function GraphView({
 	}, [physicsTuning, isEmpty]);
 
 	useLayoutEffect(() => {
- const card = cardRef.current, container = containerRef.current;
- if (!selected || !card || !container) return;
- const place = () => {
-  const rect = container.getBoundingClientRect();
-  const toolbar = container.parentElement?.querySelector(".graph-toolbar")?.getBoundingClientRect();
-  const dock = document.querySelector("[data-home-dock]")?.getBoundingClientRect();
-  const top = Math.max(8, (toolbar?.bottom ?? rect.top + 56) - rect.top + 8);
-  const bottom = Math.min(rect.height - 8, (dock?.top ?? rect.bottom) - rect.top - 8);
-  const available = Math.max(64, bottom - top);
-  card.style.maxHeight = `${available * (window.innerHeight <= 500 ? 0.8 : 0.85)}px`;
-  card.style.left = `${Math.max(8, Math.min(selected.anchor.x - card.offsetWidth / 2, container.clientWidth - card.offsetWidth - 8))}px`;
-  card.style.top = `${Math.max(top, Math.min(selected.anchor.y + 12, bottom - card.offsetHeight))}px`;
-  card.style.visibility = "visible";
- };
- place(); const observer = new ResizeObserver(place); observer.observe(container);
- const toolbar = container.parentElement?.querySelector(".graph-toolbar"); if (toolbar) observer.observe(toolbar);
- const dock = document.querySelector("[data-home-dock]"); if (dock) observer.observe(dock);
- window.addEventListener("resize", place);
- return () => { observer.disconnect(); window.removeEventListener("resize", place); };
- }, [selected]);
+		const card = cardRef.current, container = containerRef.current;
+		if (!selected || !card || !container) return;
+		return observeNodeCardPosition(card, container, selected.anchor);
+	}, [selected, isEmpty]);
 
 	return (
 		<div className="relative h-full w-full">
@@ -1637,8 +1673,7 @@ export function GraphView({
 					<header className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1">
  <span className="text-xs text-muted-foreground">Proposition</span><button type="button" onClick={() => { setSelected(null); }} className="min-h-8 rounded px-2 text-xs hover:bg-accent">Close</button>
  </header><div className="min-h-0 overflow-y-auto overscroll-contain p-3">
- <div className="text-sm font-medium leading-snug">{selected.node.name}</div>
-					<div className="mt-1 text-xs leading-relaxed text-muted-foreground">{selected.node.statement}</div>
+ <NodeCardText name={selected.node.name} statement={selected.node.statement} />
 					{selected.sourceIds.length > 0 ? (
 						<div className="mt-3 flex flex-col gap-1">
 							<div className="text-xs text-muted-foreground">Sources</div>
