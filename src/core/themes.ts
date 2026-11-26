@@ -223,7 +223,10 @@ export function resolveTheme(id: string | null | undefined, customs: readonly Th
 /** The single place the two override homes merge onto the theme: the
  *  legacy keys (`background`, `mdRendering.boldColor/italicColor`) and
  *  `colors`. A null/absent override = the theme's color. */
-export function effectiveColors(theme: ThemeFile, appearance: AppearanceSettings | undefined): ThemeColors {
+export function effectiveColors(
+	theme: ThemeFile,
+	appearance: Pick<AppearanceSettings, "background" | "colors" | "mdRendering"> | undefined,
+): ThemeColors {
 	const out: ThemeColors = { ...theme.colors };
 	if (!appearance) return out;
 	if (isHex(appearance.background)) out.background = appearance.background;
@@ -303,7 +306,10 @@ export function exportThemeFile(theme: ThemeFile, appearance: AppearanceSettings
 }
 
 /** Apply the standard theme palette, then the explicit contrast preference. */
-export function appearanceThemeVars(theme: Theme, appearance: AppearanceSettings | undefined): Record<string, string> {
+export function appearanceThemeVars(
+	theme: Theme,
+	appearance: Pick<AppearanceSettings, "background" | "colors" | "mdRendering" | "contrast"> | undefined,
+): Record<string, string> {
 	const vars = themeVars(effectiveColors(theme, appearance), theme.mode);
 	if (appearance?.contrast === "high") {
 		const rgb = theme.mode === "dark" ? "255 255 255" : "0 0 0";

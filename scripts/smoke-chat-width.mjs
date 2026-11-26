@@ -170,6 +170,29 @@ try {
 	}
 	assert.ok(positions[1] > positions[0]);
 	await select("wide");
+	// A narrower transcript override caps the open question, but leaves the composer wide.
+	async function saveTranscriptWidth(transcriptMaxWidth) {
+		const code = await page.evaluate(async width => {
+			const appearance = { chatWidth: "wide", proseFontSize: 18 };
+			if (width !== null) appearance.transcriptMaxWidth = width;
+			const response = await fetch("/api/settings/appearance", {
+				method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(appearance),
+			});
+			return response.status;
+		}, transcriptMaxWidth);
+		assert.equal(code, 200);
+	}
+	await saveTranscriptWidth(50);
+	for (const [route, dockWidth] of [["/chat/width_question", 800], ["/chat/width_chat", 1152]]) {
+		await open(route);
+		await page.waitForFunction((selector, expectedDock) => {
+			const [transcript, dock] = document.querySelectorAll(selector);
+			return transcript && dock
+				&& Math.abs(transcript.getBoundingClientRect().width - 816) < 2
+				&& Math.abs(dock.getBoundingClientRect().width - expectedDock) < 2;
+		}, {}, laneSelector, dockWidth);
+	}
+	await saveTranscriptWidth(null);
 	assert.equal(JSON.parse(fs.readFileSync(path.join(home, "data/settings.json"))).appearance.proseFontSize, 18);
 	await stop();
 	logs = "";

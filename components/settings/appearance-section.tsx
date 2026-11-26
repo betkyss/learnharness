@@ -34,6 +34,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
 	EXTRACTION_CHUNK_TOKENS_FLOOR,
+	TRANSCRIPT_WIDTH_MAX_REM,
+	TRANSCRIPT_WIDTH_MIN_REM,
+	TRANSCRIPT_WIDTH_STEP_REM,
 	resolveSettings,
 	THEME_COLOR_KEYS,
 	type AppearanceSettings,
@@ -47,6 +50,58 @@ import { BUNDLED_READING_FONTS, useAppearance } from "./appearance.tsx";
 import { FontMenuList } from "./model-menu";
 import { ThemeCards } from "./theme-cards.tsx";
 import { CommitInput, SettingsMenuTrigger, SettingsRow, ThinSelect, Toggle } from "./controls.tsx";
+
+/** The slider position past the last width step: inherit the shared chat width. */
+const TRANSCRIPT_INHERIT_POSITION = TRANSCRIPT_WIDTH_MAX_REM + TRANSCRIPT_WIDTH_STEP_REM;
+
+/** The transcript width's label: px at the root's 16px rem, or the inherited chat width.
+ *  Exported for tests. */
+export function transcriptWidthLabel(rem: number | null): string {
+	return rem === null ? "Chat width" : `${rem * 16}px`;
+}
+
+/**
+ * Transcript width: a slider whose last position inherits Chat width. The thumb moves
+ * a local draft while dragging; the section PUT happens once, on the
+ * native `change` (release / keyboard step) — not one write per tick.
+ */
+function TranscriptWidthSlider({ value, onCommit }: { value: number | null; onCommit: (rem: number | null) => void }) {
+	const position = value ?? TRANSCRIPT_INHERIT_POSITION;
+	const [draft, setDraft] = useState(position);
+	const inputRef = useRef<HTMLInputElement>(null);
+	const commitRef = useRef(onCommit);
+	commitRef.current = onCommit;
+	useEffect(() => setDraft(position), [position]);
+	useEffect(() => {
+		const input = inputRef.current;
+		if (!input) return;
+		const onChange = () => {
+			const next = Number(input.value);
+			commitRef.current(next >= TRANSCRIPT_INHERIT_POSITION ? null : next);
+		};
+		input.addEventListener("change", onChange);
+		return () => input.removeEventListener("change", onChange);
+	}, []);
+	const draftRem = draft >= TRANSCRIPT_INHERIT_POSITION ? null : draft;
+	return (
+		<span className="flex items-center gap-2">
+			<input
+				ref={inputRef}
+				type="range"
+				aria-label="Transcript width"
+				aria-valuetext={transcriptWidthLabel(draftRem)}
+				data-testid="input-transcript-width"
+				min={TRANSCRIPT_WIDTH_MIN_REM}
+				max={TRANSCRIPT_INHERIT_POSITION}
+				step={TRANSCRIPT_WIDTH_STEP_REM}
+				value={draft}
+				onChange={(e) => setDraft(Number(e.target.value))}
+				className="h-1.5 w-40 accent-primary"
+			/>
+			<span data-testid="transcript-width-value" className="min-w-12 whitespace-nowrap text-right text-[11px] tabular-nums text-muted-foreground">{transcriptWidthLabel(draftRem)}</span>
+		</span>
+	);
+}
 
 /** The factory reading family — the DEFAULT row's identity (unset =
  *  this). Exported for tests. */
@@ -463,6 +518,13 @@ export function AppearanceSection({
 					onChange={(on) => onSectionChange({ ...appearance, sessionNameSerif: on })}
 				/>
 			</SettingsRow>
+			<SettingsRow label="Compact session list" testid="row-compact-session-list">
+				<Toggle
+					checked={resolved.compactSessionList}
+					label="Compact session list"
+					onChange={(on) => onSectionChange({ ...appearance, compactSessionList: on })}
+				/>
+			</SettingsRow>
 			<details className="py-2"><summary className="cursor-pointer text-sm text-muted-foreground">Advanced typography</summary>
 <SettingsRow label="Heading weight" hint={`${resolved.mdRendering.headingWeight}`} testid="row-heading-weight">
 				<CommitInput
@@ -487,6 +549,20 @@ export function AppearanceSection({
 				/>
 			</SettingsRow>
 			</details>
+			<SettingsRow label="Transcript width" testid="row-transcript-width">
+				<TranscriptWidthSlider
+					value={resolved.transcriptMaxWidth}
+					// Removing the override restores the shared chat width.
+					onCommit={(rem) => { void onSectionChange({ ...appearance, transcriptMaxWidth: rem ?? undefined }); }}
+				/>
+			</SettingsRow>
+			<SettingsRow label="Adapt question layout" testid="row-adaptive-questions">
+				<Toggle
+					checked={resolved.adaptiveQuestions}
+					label="Adapt question layout"
+					onChange={(on) => onSectionChange({ ...appearance, adaptiveQuestions: on })}
+				/>
+			</SettingsRow>
 			<p className="text-xs text-muted-foreground">Empty fields use the default values shown.</p>
 		</>
 	);

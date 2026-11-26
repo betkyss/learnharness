@@ -25,6 +25,7 @@ import {
 	useCallback,
 	useContext,
 	useEffect,
+	useInsertionEffect,
 	useLayoutEffect,
 	useMemo,
 	useRef,
@@ -43,6 +44,8 @@ import {
 	type ThemeColors,
 } from "@/src/core";
 
+export const CHAT_WIDTH_REM = { comfortable: 46, wide: 72, full: null } as const;
+
 /** The resolved, fully-concrete appearance view (delta + factory merged). */
 export function resolveAppearance(delta: AppearanceSettings | undefined) {
 	const f = FACTORY_SETTINGS.appearance;
@@ -58,6 +61,9 @@ export function resolveAppearance(delta: AppearanceSettings | undefined) {
 		proseFontSize: delta?.proseFontSize ?? f.proseFontSize,
 		codeLigatures: delta?.codeLigatures ?? f.codeLigatures,
 		sessionNameSerif: delta?.sessionNameSerif ?? f.sessionNameSerif,
+		compactSessionList: delta?.compactSessionList ?? f.compactSessionList,
+		transcriptMaxWidth: delta?.transcriptMaxWidth ?? f.transcriptMaxWidth,
+		adaptiveQuestions: delta?.adaptiveQuestions ?? f.adaptiveQuestions,
 		mdRendering: {
 			headingWeight: delta?.mdRendering?.headingWeight ?? f.mdRendering.headingWeight,
 			boldColor: delta?.mdRendering?.boldColor ?? f.mdRendering.boldColor,
@@ -96,11 +102,13 @@ export function appearanceVars(
 		vars["--font-prose"] = fontStack(a.fontFamily);
 	}
 	vars["--lh-prose-size"] = `${a.proseFontSize}px`;
-	vars["--lh-chat-max-width"] = { comfortable: "46rem", wide: "72rem", full: "100%" }[a.chatWidth];
+	const chatWidthRem = CHAT_WIDTH_REM[a.chatWidth];
+	vars["--lh-chat-max-width"] = chatWidthRem === null ? "100%" : chatWidthRem + "rem";
 	if (a.interfaceFontFamily !== null) vars["--font-ui"] = fontStack(a.interfaceFontFamily);
 	if (a.cornerRadius !== FACTORY_SETTINGS.appearance.cornerRadius) vars["--radius"] = `${a.cornerRadius}px`;
 	vars["--lh-code-ligatures"] = a.codeLigatures ? "normal" : "none";
 	if (a.sessionNameSerif) vars["--font-title"] = '"lh-cmu", serif';
+	if (a.transcriptMaxWidth !== null) vars["--lh-transcript-max"] = `${a.transcriptMaxWidth}rem`;
 	vars["--lh-heading-weight"] = String(a.mdRendering.headingWeight);
 	return vars;
 }
@@ -178,7 +186,7 @@ export function AppearanceProvider({
 	const colors = useMemo(() => effectiveColors(activeTheme, appearance), [activeTheme, appearance]);
 
 	// The mode lives on <html> as a class, for every `.dark`/`.light` rule
-	// and variant. A LAYOUT effect (like the vars below): descendants'
+	// and variant. A LAYOUT effect (the vars below apply earlier): descendants'
 	// passive effects run after it, so anything reading computed tokens
 	// (the graph canvas) sees the new mode, and the swap lands before paint.
 	useLayoutEffect(() => {
@@ -199,8 +207,12 @@ export function AppearanceProvider({
 	// the previously-set inline value or the stale one wins forever. Every
 	// name this effect has ever set is tracked; names absent from the new
 	// set are removed so the stylesheet value returns.
+	// An INSERTION effect: it runs before every layout effect of the
+	// commit, descendants' included, so a descendant measuring text in a
+	// layout effect (the adaptive question layout) already sees the new
+	// font and sizes rather than the previous ones.
 	const appliedNamesRef = useRef<Set<string>>(new Set());
-	useLayoutEffect(() => {
+	useInsertionEffect(() => {
 		if (appliedRef.current === key) return;
 		appliedRef.current = key;
 		const root = document.documentElement;
