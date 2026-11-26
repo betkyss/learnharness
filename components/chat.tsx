@@ -2673,7 +2673,8 @@ export function DockOverlay({
 	const flankW = Math.max(0, blockW - marginLeft - MARGIN_GAP);
 	const widthMorphRef = useRef<ReturnType<typeof createDockWidthMorph> | null>(null);
 	if (!widthMorphRef.current) widthMorphRef.current = createDockWidthMorph();
-	useIsoLayoutEffect(() => () => widthMorphRef.current?.dispose(), []);
+	// Shared-width and viewport changes apply immediately. Only changes to the question layout morph.
+	useIsoLayoutEffect(() => () => widthMorphRef.current?.dispose(), [composerWidth]);
 
 	// The reserve grows immediately, but never shrinks while a question or
 	// practice problem owns the dock: shrinking flow space could pin a nearby

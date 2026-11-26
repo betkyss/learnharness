@@ -113,7 +113,12 @@ try {
 	async function select(mode) {
 		await page.evaluate(() => document.querySelector('[data-testid="settings-entry"]').click());
 		await page.waitForSelector('[data-testid="settings-nav-appearance"]');
-		await page.click('[data-testid="settings-nav-appearance"]');
+		const sectionSelect = '[data-testid="settings-section-select"]';
+		if (await page.$eval(sectionSelect, el => el.getClientRects().length > 0)) {
+			await page.select(sectionSelect, "appearance");
+		} else {
+			await page.click('[data-testid="settings-nav-appearance"]');
+		}
 		await page.waitForSelector('[data-testid="select-chat-width"]');
 		if (await page.$eval('[data-testid="select-chat-width"]', e => e.value) !== mode) {
 			const response = page.waitForResponse(r => r.url().endsWith("/api/settings/appearance") && r.request().method() === "PUT");
@@ -132,7 +137,7 @@ try {
 			});
 			return { boxes, body: document.documentElement.scrollWidth, viewport: innerWidth };
 		}, laneSelector);
-		assert.equal(data.boxes.length, route.startsWith("/chat/width_") ? 2 : 1);
+		assert.equal(data.boxes.length, route === "/" ? 1 : 2, route);
 		for (const box of data.boxes) {
 			assert.ok(Math.abs(box.width - Math.min(widths[mode], box.parent)) < 2, JSON.stringify({ mode, route, box }));
 			assert.ok(Math.abs(box.center - box.parentCenter) < 2, JSON.stringify(box));
@@ -151,7 +156,8 @@ try {
 		}
 	}
 	// Same viewport, changing only the preference must move and hide the plan.
-	await page.setViewport({ width: 1500, height: 1000 });
+	// At 1600px the plan fits beside Comfortable even with the 288px sidebar open.
+	await page.setViewport({ width: 1600, height: 1000 });
 	await open("/chat/width_question");
 	const positions = [];
 	for (const mode of Object.keys(widths)) {
