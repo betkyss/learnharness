@@ -6,10 +6,11 @@ import { pluginQuestionOccurrenceKey, type PluginQuestionSnapshot } from "@/src/
 import type { PluginQuestionDraft } from "./session-core";
 import type { QuestionRendererRegistration } from "./plugin-manager";
 import { usePlugins } from "./plugins";
-import { ChevronDownIcon } from "lucide-react";
+import { ArrowUpIcon, ChevronDownIcon } from "lucide-react";
 import { QuestionDockBar } from "./question-dock";
 import { PathInput } from "./path-input";
-import { finishDictation, joinDictation, MobileDictationError, MobileFieldDictation, usePluginQuestionDictationTarget, type Dictation } from "./dictation";
+import { finishDictation, InlineDictationIndicator, joinDictation, MobileDictationButton, MobileDictationError, usePluginQuestionDictationTarget, type Dictation } from "./dictation";
+import { cn } from "@/lib/utils";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { useEnterSubmits } from "./enter-submits";
@@ -172,29 +173,46 @@ export function PluginQuestionDockContent({ viewReader, snapshot, chatId, draft,
 				<div ref={editor} className={unavailable || failed ? "hidden" : "min-w-0"} />
 			</div>
 			{/* Plugin DOM is intentionally outside the footer's native form. */}
-			<form onSubmit={event => { event.preventDefault(); void submit(); }} className="border-t border-border/60 p-1.5">
+			<form onSubmit={event => { event.preventDefault(); void submit(); }} className="border-t border-border/60 p-1.5 max-md:border-border/40 max-md:p-2">
 				<div data-testid={snapshot.showThinking ? "thinking-field" : undefined}
-					className={snapshot.showThinking ? "rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50" : undefined}>
-					{snapshot.showThinking && <>
-						<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Your thinking</div>
-						<PathInput ref={thinking} value={draft.thinking} onValueChange={value => { draft.thinking = value; render(); }} onKeyDown={event => {
-							if (composingQuestionKey(event) || pluginQuestionKeySuppressed(event)) return;
-							if (!isInteractionScopeEligible(event.currentTarget, controller)) return;
-							if (event.key === "Enter" && !event.altKey && (!event.shiftKey || event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit(); }
-						}} className="field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground/70" placeholder="Your thinking" />
-					</>}
+					data-mobile-pill={snapshot.showThinking ? "true" : undefined}
+					data-recording={snapshot.showThinking && dictation?.active ? "true" : undefined}
+					className={snapshot.showThinking ? "rounded-[10px] max-md:rounded-[24px] border border-border/70 max-md:border-border bg-background/60 max-md:bg-card transition-colors focus-within:border-primary/50" : undefined}>
+					{snapshot.showThinking && <div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground max-md:hidden">Your thinking</div>}
 					{dictation && <MobileDictationError dictation={dictation} />}
-					<div className="flex items-center justify-between gap-2 p-1">
-						{dictation && (
-							<MobileFieldDictation
-								dictation={dictation}
-								disabled={dictationDisabled || !micAvailable || submitting}
-								testIdPrefix="plugin-question"
-							/>
+					<div className={snapshot.showThinking ? "max-md:flex max-md:min-h-12 max-md:items-end max-md:gap-0.5 max-md:px-1.5 max-md:py-0.5" : undefined}>
+						{snapshot.showThinking && dictation?.active && (
+							<div className="flex min-w-0 flex-1 items-center md:hidden">
+								<InlineDictationIndicator dictation={dictation} testId="plugin-question-dictation-indicator" />
+							</div>
 						)}
-						<span aria-hidden className="hidden pl-1.5 text-xs text-muted-foreground md:inline [@media(hover:none)_and_(pointer:coarse)]:hidden">↵ submits · ⇧↵ newline</span>
-						{unavailable && <Button type="button" variant="ghost" disabled={!ready || submitting} onClick={() => { if (latch.current) return; latch.current = true; void finishDictation().then(dismiss).catch(() => {}).finally(() => { latch.current = false; }); }}>Dismiss question</Button>}
-						<Button type="submit" disabled={!canSubmit} className="ml-auto h-9 shrink-0 rounded-[6px] px-3.5 text-sm font-medium">Submit answer</Button>
+						{snapshot.showThinking && (
+							<PathInput ref={thinking} value={draft.thinking} onValueChange={value => { draft.thinking = value; render(); }} data-mobile-placeholder="Your thinking…" onKeyDown={event => {
+								if (composingQuestionKey(event) || pluginQuestionKeySuppressed(event)) return;
+								if (!isInteractionScopeEligible(event.currentTarget, controller)) return;
+								if (event.key === "Enter" && !event.altKey && (!event.shiftKey || event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit(); }
+							}} className={cn("field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground/70 max-md:max-h-32 max-md:min-h-11 max-md:w-auto max-md:min-w-0 max-md:flex-1 max-md:px-2.5 max-md:py-2.5 max-md:leading-6", dictation?.active && "max-md:hidden")} placeholder="Your thinking" />
+						)}
+						<div className={cn("flex items-center justify-between gap-2 p-1", snapshot.showThinking && "max-md:shrink-0 max-md:gap-0.5 max-md:p-0")}>
+							<span aria-hidden className="hidden pl-1.5 text-xs text-muted-foreground md:inline [@media(hover:none)_and_(pointer:coarse)]:hidden">↵ submits · ⇧↵ newline</span>
+							{unavailable && <Button type="button" variant="ghost" disabled={!ready || submitting} onClick={() => { if (latch.current) return; latch.current = true; void finishDictation().then(dismiss).catch(() => {}).finally(() => { latch.current = false; }); }}>Dismiss question</Button>}
+							{dictation && (
+								<MobileDictationButton
+									dictation={dictation}
+									disabled={dictationDisabled || !micAvailable || submitting}
+									testId="plugin-question-dictation-toggle"
+									className="md:hidden"
+								/>
+							)}
+							<Button type="submit" aria-label="Submit answer" disabled={!canSubmit} className={cn("ml-auto h-9 shrink-0 rounded-[6px] px-3.5 text-sm font-medium", snapshot.showThinking && "max-md:ml-0 max-md:size-11 max-md:rounded-full max-md:bg-transparent max-md:p-0 max-md:hover:bg-transparent max-md:disabled:opacity-100")}>
+								<span className={snapshot.showThinking ? "max-md:hidden" : undefined}>Submit answer</span>
+								{snapshot.showThinking && (
+									<span className={cn("flex size-9 items-center justify-center rounded-full transition-colors md:hidden", canSubmit ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground/70")}>
+										<ArrowUpIcon className="size-[18px]" aria-hidden />
+									</span>
+								)}
+							</Button>
+						</div>
 					</div>
 				</div>
 			</form>

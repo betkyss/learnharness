@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { joinDictation, MobileDictationError, MobileFieldDictation, useDictationTarget, type Dictation } from "@/components/dictation";
+import { InlineDictationIndicator, joinDictation, MobileDictationButton, MobileDictationError, useDictationTarget, type Dictation } from "@/components/dictation";
+import { cn } from "@/lib/utils";
 import { composingQuestionKey, pluginQuestionKeySuppressed } from "./plugin-question-keys";
 import { PathInput } from "@/components/path-input";
 import { useOptionalInteractionLayers } from "./interaction-layers";
@@ -75,72 +76,85 @@ export function ReadingThinkingField({
 		// the check is expanded AND finishDictation() flushes before submitting.
 		dictation.toggleFor({ id: "main", append: appendDictated });
 	}, [dictation, onDictationStart, appendDictated]);
+	const dictationActive = Boolean(dictation?.active);
 	return (
 		<div
 			data-testid="reading-thinking-field"
-			className="pointer-events-auto mb-2 rounded-2xl border bg-card/60 px-3 py-2 transition-colors focus-within:border-primary/50"
+			data-mobile-pill="true"
+			data-recording={dictationActive ? "true" : undefined}
+			className="pointer-events-auto mb-2 rounded-2xl max-md:rounded-[24px] border bg-card/60 max-md:bg-card px-3 py-2 max-md:p-0 transition-colors focus-within:border-primary/50"
 		>
-			<div className="flex items-center justify-between gap-2 pb-1">
-				<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-					Thinking while reading
-				</div>
+			<div className="pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground max-md:hidden">
+				Thinking while reading
+			</div>
+			{dictation && <MobileDictationError dictation={dictation} />}
+			<div className="max-md:flex max-md:min-h-12 max-md:items-end max-md:gap-0.5 max-md:px-1.5 max-md:py-0.5">
+				{dictationActive && dictation && (
+					<div className="flex min-w-0 flex-1 items-center md:hidden">
+						<InlineDictationIndicator dictation={dictation} testId="reading-dictation-indicator" />
+					</div>
+				)}
+				<PathInput
+					ref={inputRef}
+					value={draft}
+					onValueChange={applyDraft}
+					data-mobile-placeholder="Thinking while reading…"
+					/* py-0.5 (owner round, 2026-10-07): the scrollbar fix. Source
+					   Sans 3's font box is 22px at 16px; lh-input's 1.25 leading
+					   gives a 20px line box — the content area sticks 1px below the
+					   line, Chromium counts it in scrollHeight, and a zero-padding
+					   textarea turns that into a permanent 1px scroll (the bar shows
+					   empty and at every size below max-h). 2px of vertical padding
+					   absorbs it — the same absorption the composer and dock fields
+					   get implicitly from their py-2. Line-height stays 1.25 (the
+					   caret law, typography round 2). */
+					onKeyDown={(e) => {
+						if (composingQuestionKey(e) || pluginQuestionKeySuppressed(e)) return;
+						if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
+						if (e.key === "Escape") {
+							controller?.claimEscape(e);
+							// Esc stops dictation (the strip's rule) — claimed so the
+							// window chain doesn't also read it as abort-turn.
+							e.preventDefault();
+							e.stopPropagation();
+							onEscape?.();
+							return;
+						}
+						// ENTER OPENS THE WAITING CHECK (owner, keyboard round
+						// 2026-10-06): while the check sits closed, plain Enter
+						// (and the universal ⌘/Ctrl+Enter) opens it — the dictation
+						// flush lands HERE first via the caller's finishDictation,
+						// so spoken thoughts ride along. Shift+Enter stays a newline.
+						if (e.key === "Enter" && onOpen !== undefined && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
+							e.preventDefault();
+							e.stopPropagation();
+							onOpen();
+							return;
+						}
+						// The dock's dumping convention: plain Enter is a newline.
+						// No submit button here — the check's own submit is this
+						// field's carrier — so ⌘↵ just blurs.
+						if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+							e.preventDefault();
+							e.currentTarget.blur();
+						}
+					}}
+					placeholder="Whatever comes to mind as you read."
+					className={cn(
+						"field-sizing-content lh-input max-h-40 w-full resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground/70",
+						"max-md:max-h-32 max-md:min-h-11 max-md:w-auto max-md:min-w-0 max-md:flex-1 max-md:px-2.5 max-md:py-2.5 max-md:leading-6",
+						dictationActive && "max-md:hidden",
+					)}
+				/>
 				{dictation && (
-					<MobileFieldDictation
+					<MobileDictationButton
 						dictation={dictation}
 						onToggle={handleToggleDictation}
-						testIdPrefix="reading"
-						compact
+						testId="reading-dictation-toggle"
+						className="md:hidden"
 					/>
 				)}
 			</div>
-			{dictation && <MobileDictationError dictation={dictation} />}
-			<PathInput
-				ref={inputRef}
-				value={draft}
-				onValueChange={applyDraft}
-				/* py-0.5 (owner round, 2026-10-07): the scrollbar fix. Source
-				   Sans 3's font box is 22px at 16px; lh-input's 1.25 leading
-				   gives a 20px line box — the content area sticks 1px below the
-				   line, Chromium counts it in scrollHeight, and a zero-padding
-				   textarea turns that into a permanent 1px scroll (the bar shows
-				   empty and at every size below max-h). 2px of vertical padding
-				   absorbs it — the same absorption the composer and dock fields
-				   get implicitly from their py-2. Line-height stays 1.25 (the
-				   caret law, typography round 2). */
-				onKeyDown={(e) => {
-					if (composingQuestionKey(e) || pluginQuestionKeySuppressed(e)) return;
-					if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
-					if (e.key === "Escape") {
-						controller?.claimEscape(e);
-						// Esc stops dictation (the strip's rule) — claimed so the
-						// window chain doesn't also read it as abort-turn.
-						e.preventDefault();
-						e.stopPropagation();
-						onEscape?.();
-						return;
-					}
-					// ENTER OPENS THE WAITING CHECK (owner, keyboard round
-					// 2026-10-06): while the check sits closed, plain Enter
-					// (and the universal ⌘/Ctrl+Enter) opens it — the dictation
-					// flush lands HERE first via the caller's finishDictation,
-					// so spoken thoughts ride along. Shift+Enter stays a newline.
-					if (e.key === "Enter" && onOpen !== undefined && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
-						e.preventDefault();
-						e.stopPropagation();
-						onOpen();
-						return;
-					}
-					// The dock's dumping convention: plain Enter is a newline.
-					// No submit button here — the check's own submit is this
-					// field's carrier — so ⌘↵ just blurs.
-					if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-						e.preventDefault();
-						e.currentTarget.blur();
-					}
-				}}
-				placeholder="Whatever comes to mind as you read."
-				className="field-sizing-content lh-input max-h-40 w-full resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground/70"
-			/>
 		</div>
 	);
 }

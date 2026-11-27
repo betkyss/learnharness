@@ -2,10 +2,10 @@
 
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ViewReaderRef } from "./session-view-readers";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { ArrowUpIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
-import { joinDictation, MobileDictationError, MobileFieldDictation, useDictationTarget, type Dictation } from "@/components/dictation";
+import { InlineDictationIndicator, joinDictation, MobileDictationButton, MobileDictationError, useDictationTarget, type Dictation } from "@/components/dictation";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
@@ -175,74 +175,98 @@ export function PracticeDock({ viewReader, problemCallId, input, expanded, onExp
 
 			{/* The learner's half: Enter SENDS (owner round 2, 2026-10-05);
 			    Shift+Enter makes a newline — less to decide about. */}
-			<div
-				data-testid="practice-thinking-field"
-				className="m-1.5 rounded-md border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
-			>
-				<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-					YOUR THINKING
-				</div>
-				<PathInput
-					value={thinking}
-					onValueChange={(value) => {
-						thinkingRef.current = value; editRevision.current++;
-						setThinking(value);
-					}}
-					onKeyDown={(e) => {
-						if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
-						// Esc ends dictation — stopPropagation claims it (the
-						// keyboard machine) so the window chain doesn't also fire.
-						if (e.key === "Escape" && onEscape) {
-							controller?.claimEscape(e);
-							e.preventDefault();
-							e.stopPropagation();
-							onEscape();
-							return;
-						}
-						// Enter SENDS — the single lane (owner round 2, 2026-10-05);
-						// Shift+Enter is the newline, ⌘/Ctrl+Enter the chord too.
-						if (e.key === "Enter" && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
-							e.preventDefault();
-							submit();
-						}
-					}}
-					placeholder="Work here, think out loud."
-					className={cn(
-						"field-sizing-content lh-input max-h-64 min-h-16 w-full resize-none bg-transparent px-2.5 pb-2 outline-none placeholder:text-muted-foreground",
-					)}
-				/>
-				{/* The submit row (owner round 4, 2026-10-05): IDENTICAL to the
-				    question dock's — hint left, the SAME Button (h-9, px-3.5),
-				    one p-1 row. Corner radii concentric: shell 16 − m-1.5 (6) =
-				    field 10 − p-1 (4) = button 6. */}
-				{dictation && <MobileDictationError dictation={dictation} />}
-				<div className="flex items-center justify-between gap-2 p-1">
-					{dictation && (
-						<MobileFieldDictation
-							dictation={dictation}
-							disabled={compactionRunning || preparing}
-							testIdPrefix="practice"
-						/>
-					)}
-					<span aria-hidden className="hidden pl-1.5 text-xs text-muted-foreground md:inline [@media(hover:none)_and_(pointer:coarse)]:hidden">
-						{compactionRunning ? "compacting session…" : "↵ submits · ⇧↵ newline"}
-					</span>
-					{compactionRunning && (
-						<span aria-hidden className="pl-1.5 text-xs text-muted-foreground md:hidden">
-							compacting session…
-						</span>
-					)}
-					<Button
-						type="button"
-						data-testid="practice-send"
-						disabled={(customInput ? !customInput.ready : (!thinking.trim() && !hasPendingInput)) || compactionRunning || preparing}
-						onClick={() => submit()}
-						className="ml-auto h-9 shrink-0 rounded-sm px-3.5 text-sm font-medium"
+			{(() => {
+				const canSubmitPractice = !(customInput ? !customInput.ready : (!thinking.trim() && !hasPendingInput)) && !compactionRunning && !preparing;
+				const dictationActive = Boolean(dictation?.active);
+				return (
+					<div
+						data-testid="practice-thinking-field"
+						data-mobile-pill="true"
+						data-recording={dictationActive ? "true" : undefined}
+						className="m-1.5 max-md:m-2 rounded-md max-md:rounded-[24px] border border-border/70 max-md:border-border bg-background/60 max-md:bg-card transition-colors focus-within:border-primary/50"
 					>
-						{customInput ? "Submit" : "Submit thinking"}
-					</Button>
-				</div>
-			</div>
+						<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground max-md:hidden">
+							YOUR THINKING
+						</div>
+						{dictation && <MobileDictationError dictation={dictation} />}
+						<div className="max-md:flex max-md:min-h-12 max-md:items-end max-md:gap-0.5 max-md:px-1.5 max-md:py-0.5">
+							{dictationActive && dictation && (
+								<div className="flex min-w-0 flex-1 items-center md:hidden">
+									<InlineDictationIndicator dictation={dictation} testId="practice-dictation-indicator" />
+								</div>
+							)}
+							<PathInput
+								value={thinking}
+								onValueChange={(value) => {
+									thinkingRef.current = value; editRevision.current++;
+									setThinking(value);
+								}}
+								data-mobile-placeholder="Your thinking…"
+								onKeyDown={(e) => {
+									if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
+									// Esc ends dictation — stopPropagation claims it (the
+									// keyboard machine) so the window chain doesn't also fire.
+									if (e.key === "Escape" && onEscape) {
+										controller?.claimEscape(e);
+										e.preventDefault();
+										e.stopPropagation();
+										onEscape();
+										return;
+									}
+									// Enter SENDS — the single lane (owner round 2, 2026-10-05);
+									// Shift+Enter is the newline, ⌘/Ctrl+Enter the chord too.
+									if (e.key === "Enter" && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
+										e.preventDefault();
+										submit();
+									}
+								}}
+								placeholder="Work here, think out loud."
+								className={cn(
+									"field-sizing-content lh-input max-h-64 min-h-16 w-full resize-none bg-transparent px-2.5 pb-2 outline-none placeholder:text-muted-foreground",
+									"max-md:max-h-32 max-md:min-h-11 max-md:w-auto max-md:min-w-0 max-md:flex-1 max-md:px-2.5 max-md:py-2.5 max-md:leading-6",
+									dictationActive && "max-md:hidden",
+								)}
+							/>
+							{/* The submit row (owner round 4, 2026-10-05): IDENTICAL to the
+							    question dock's — hint left, the SAME Button (h-9, px-3.5),
+							    one p-1 row. On mobile, unified 48px pill with mic + circular arrow. */}
+							<div className="flex items-center justify-between gap-2 p-1 max-md:shrink-0 max-md:gap-0.5 max-md:p-0">
+								<span aria-hidden className="hidden pl-1.5 text-xs text-muted-foreground md:inline [@media(hover:none)_and_(pointer:coarse)]:hidden">
+									{compactionRunning ? "compacting session…" : "↵ submits · ⇧↵ newline"}
+								</span>
+								{dictation && (
+									<MobileDictationButton
+										dictation={dictation}
+										disabled={compactionRunning || preparing}
+										testId="practice-dictation-toggle"
+										className="md:hidden"
+									/>
+								)}
+								<Button
+									type="button"
+									data-testid="practice-send"
+									aria-label={customInput ? "Submit" : "Submit thinking"}
+									disabled={!canSubmitPractice}
+									onClick={() => submit()}
+									className="ml-auto h-9 shrink-0 rounded-sm px-3.5 text-sm font-medium max-md:ml-0 max-md:size-11 max-md:rounded-full max-md:bg-transparent max-md:p-0 max-md:hover:bg-transparent max-md:disabled:opacity-100"
+								>
+									<span className="max-md:hidden">{customInput ? "Submit" : "Submit thinking"}</span>
+									<span
+										className={cn(
+											"flex size-9 items-center justify-center rounded-full transition-colors md:hidden",
+											canSubmitPractice
+												? "bg-primary text-primary-foreground"
+												: "bg-secondary text-muted-foreground/70",
+										)}
+									>
+										<ArrowUpIcon className="size-[18px]" aria-hidden />
+									</span>
+								</Button>
+							</div>
+						</div>
+					</div>
+				);
+			})()}
 			</div>
 		</div>
 	);

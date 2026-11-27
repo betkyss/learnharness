@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ViewReaderRef, NativeQuestionViewState } from "./session-view-readers";
-import { ArrowDownIcon, ChevronDownIcon, ChevronRightIcon, PlayIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, ChevronRightIcon, PlayIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { finishDictation, isDictationActive, joinDictation, MobileDictationError, MobileFieldDictation, useDictationTarget, type Dictation } from "@/components/dictation";
+import { finishDictation, InlineDictationIndicator, isDictationActive, joinDictation, MobileDictationButton, MobileDictationError, useDictationTarget, type Dictation } from "@/components/dictation";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
@@ -1156,7 +1156,7 @@ function QuestionDockForm({
 			    is for dumping, soon dictated; the button submits); text mode
 			    keeps "Your answer" with Enter-to-submit. */}
 			<form
-				className="border-t border-border/60 p-1.5"
+				className="border-t border-border/60 p-1.5 max-md:border-border/40 max-md:p-2"
 				onSubmit={(e) => {
 					e.preventDefault();
 					submit();
@@ -1164,104 +1164,133 @@ function QuestionDockForm({
 			>
 				<div
 					data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}
-					className="rounded-md border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
+					data-mobile-pill="true"
+					data-recording={dictation?.active ? "true" : undefined}
+					className="rounded-md max-md:rounded-[24px] border border-border/70 max-md:border-border bg-background/60 max-md:bg-card transition-colors focus-within:border-primary/50"
 				>
-					<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+					<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground max-md:hidden">
 						{qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
 					</div>
-					{qd.mode === "text" ? (
-						<PathInput
-							value={text}
-							onValueChange={(value) => {
-								answerTextRef.current = value;
-								setText(value);
-							}}
-							onKeyDown={(e) => {
-								if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
-								// Esc ends dictation (the dictate decisions: click-again
-								// or Esc) — stopPropagation claims it (keyboard wave
-								// A) so the window chain doesn't also abort a turn.
-								if (e.key === "Escape" && onEscape) {
-									e.preventDefault();
-									e.stopPropagation();
-									controller?.claimEscape(e);
-									onEscape();
-									return;
-								}
-								// Chat convention: Enter submits, Shift+Enter is a newline;
-								// ⌘/Ctrl+Enter also submits (universal across the app).
-								if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
-									e.preventDefault();
-									submit();
-								}
-							}}
-							placeholder="Type your answer…"
-							className="field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
-						/>
-					) : (
-						<PathInput
-							ref={thinkingRef}
-							value={thinking}
-							onValueChange={(value) => {
-								thinkingTextRef.current = value;
-								setThinking(value);
-							}}
-							onKeyDown={(e) => {
-								if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
-								// Esc ends dictation (the dictate decisions: click-again
-								// or Esc) — stopPropagation claims it (keyboard wave
-								// A) so the window chain doesn't also abort a turn.
-								if (e.key === "Escape" && onEscape) {
-									e.preventDefault();
-									e.stopPropagation();
-									controller?.claimEscape(e);
-									onEscape();
-									return;
-								}
-								// THE STANDARD CHORD (owner round 5, 2026-10-05): Enter
-								// submits, Shift+Enter is a newline, ⌘/Ctrl+Enter works
-								// too — identical to the practice dock and the composer.
-								if (e.key === "Enter" && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
-									e.preventDefault();
-									submit();
-								}
-							}}
-							placeholder="Why this answer? Whatever comes to mind."
-							className={cn(
-								"field-sizing-content lh-input max-h-48 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground/70",
-								// Phase-scaled prominence: teaching invites depth,
-								// probing stays quick.
-								phase === "teach" ? "min-h-[4.5rem]" : "min-h-10",
-							)}
-						/>
-					)}
-
 					{dictation && <MobileDictationError dictation={dictation} />}
-					<div className="flex items-center justify-between gap-2 p-1">
-						{dictation && (
-							<MobileFieldDictation
-								dictation={dictation}
-								disabled={compactionRunning || preparing}
-								testIdPrefix="question"
+					<div className="max-md:flex max-md:min-h-12 max-md:items-end max-md:gap-0.5 max-md:px-1.5 max-md:py-0.5">
+						{dictation?.active && (
+							<div className="flex min-w-0 flex-1 items-center md:hidden">
+								<InlineDictationIndicator dictation={dictation} testId="question-dictation-indicator" />
+							</div>
+						)}
+						{qd.mode === "text" ? (
+							<PathInput
+								value={text}
+								onValueChange={(value) => {
+									answerTextRef.current = value;
+									setText(value);
+								}}
+								data-mobile-placeholder="Your answer…"
+								onKeyDown={(e) => {
+									if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
+									// Esc ends dictation (the dictate decisions: click-again
+									// or Esc) — stopPropagation claims it (keyboard wave
+									// A) so the window chain doesn't also abort a turn.
+									if (e.key === "Escape" && onEscape) {
+										e.preventDefault();
+										e.stopPropagation();
+										controller?.claimEscape(e);
+										onEscape();
+										return;
+									}
+									// Chat convention: Enter submits, Shift+Enter is a newline;
+									// ⌘/Ctrl+Enter also submits (universal across the app).
+									if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
+										e.preventDefault();
+										submit();
+									}
+								}}
+								placeholder="Type your answer…"
+								className={cn(
+									"field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground",
+									"max-md:max-h-32 max-md:min-h-11 max-md:w-auto max-md:min-w-0 max-md:flex-1 max-md:px-2.5 max-md:py-2.5 max-md:leading-6",
+									dictation?.active && "max-md:hidden",
+								)}
+							/>
+						) : (
+							<PathInput
+								ref={thinkingRef}
+								value={thinking}
+								onValueChange={(value) => {
+									thinkingTextRef.current = value;
+									setThinking(value);
+								}}
+								data-mobile-placeholder="Your thinking…"
+								onKeyDown={(e) => {
+									if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
+									// Esc ends dictation (the dictate decisions: click-again
+									// or Esc) — stopPropagation claims it (keyboard wave
+									// A) so the window chain doesn't also abort a turn.
+									if (e.key === "Escape" && onEscape) {
+										e.preventDefault();
+										e.stopPropagation();
+										controller?.claimEscape(e);
+										onEscape();
+										return;
+									}
+									// THE STANDARD CHORD (owner round 5, 2026-10-05): Enter
+									// submits, Shift+Enter is a newline, ⌘/Ctrl+Enter works
+									// too — identical to the practice dock and the composer.
+									if (e.key === "Enter" && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
+										e.preventDefault();
+										submit();
+									}
+								}}
+								placeholder="Why this answer? Whatever comes to mind."
+								className={cn(
+									"field-sizing-content lh-input max-h-48 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground/70",
+									// Phase-scaled prominence: teaching invites depth,
+									// probing stays quick.
+									phase === "teach" ? "min-h-[4.5rem]" : "min-h-10",
+									"max-md:max-h-32 max-md:min-h-11 max-md:w-auto max-md:min-w-0 max-md:flex-1 max-md:px-2.5 max-md:py-2.5 max-md:leading-6",
+									dictation?.active && "max-md:hidden",
+								)}
 							/>
 						)}
-						{(qd.options.length > 6 || qd.question.length > 240) && qd.mode !== "text" && <span role="status" className="pl-1.5 text-xs text-muted-foreground">{sel.selected.size + Number(sel.otherSelected)} selected</span>}
-						{compactionRunning ? (
-							<span aria-hidden className="question-submit-hint pl-1.5 text-xs text-muted-foreground">
-								compacting session…
-							</span>
-						) : (
-							<span aria-hidden className="question-submit-hint hidden pl-1.5 text-xs text-muted-foreground md:inline [@media(hover:none)_and_(pointer:coarse)]:hidden">
-								↵ submits · ⇧↵ newline
-							</span>
-						)}
-						<Button
-							type="submit"
-							disabled={!canSubmit || compactionRunning || preparing}
-							className="ml-auto h-9 shrink-0 rounded-sm px-3.5 text-sm font-medium"
-						>
-							Submit answer
-						</Button>
+
+						<div className="flex items-center justify-between gap-2 p-1 max-md:shrink-0 max-md:gap-0.5 max-md:p-0">
+							{(qd.options.length > 6 || qd.question.length > 240) && qd.mode !== "text" && <span role="status" className="pl-1.5 text-xs text-muted-foreground max-md:hidden">{sel.selected.size + Number(sel.otherSelected)} selected</span>}
+							{compactionRunning ? (
+								<span aria-hidden className="question-submit-hint pl-1.5 text-xs text-muted-foreground max-md:hidden">
+									compacting session…
+								</span>
+							) : (
+								<span aria-hidden className="question-submit-hint hidden pl-1.5 text-xs text-muted-foreground md:inline [@media(hover:none)_and_(pointer:coarse)]:hidden">
+									↵ submits · ⇧↵ newline
+								</span>
+							)}
+							{dictation && (
+								<MobileDictationButton
+									dictation={dictation}
+									disabled={compactionRunning || preparing}
+									testId="question-dictation-toggle"
+									className="md:hidden"
+								/>
+							)}
+							<Button
+								type="submit"
+								aria-label="Submit answer"
+								disabled={!canSubmit || compactionRunning || preparing}
+								className="ml-auto h-9 shrink-0 rounded-sm px-3.5 text-sm font-medium max-md:ml-0 max-md:size-11 max-md:rounded-full max-md:bg-transparent max-md:p-0 max-md:hover:bg-transparent max-md:disabled:opacity-100"
+							>
+								<span className="max-md:hidden">Submit answer</span>
+								<span
+									className={cn(
+										"flex size-9 items-center justify-center rounded-full transition-colors md:hidden",
+										canSubmit && !compactionRunning && !preparing
+											? "bg-primary text-primary-foreground"
+											: "bg-secondary text-muted-foreground/70",
+									)}
+								>
+									<ArrowUpIcon className="size-[18px]" aria-hidden />
+								</span>
+							</Button>
+						</div>
 					</div>
 				</div>
 			</form>

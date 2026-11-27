@@ -372,6 +372,8 @@ describe("Single-row mobile composer pill + inline dictation + fullscreen overla
 		);
 		assert.ok(qIdleHtml.includes('data-testid="question-dock-collapse"'), "expanded QuestionDock must expose Hide collapse button");
 		assert.ok(qIdleHtml.includes('data-testid="question-dictation-toggle"'), "QuestionDock must expose built-in mobile mic button");
+		assert.ok(qIdleHtml.includes('data-mobile-pill="true"') && qIdleHtml.includes("max-md:rounded-[24px]") && qIdleHtml.includes("max-md:min-h-12"), "QuestionDock thinking field must match unified 48px mobile pill");
+		assert.ok(qIdleHtml.includes('data-mobile-placeholder="Your thinking…"'), "QuestionDock thinking field must use compact mobile placeholder");
 
 		const qRecHtml = renderToStaticMarkup(
 			createElement(QuestionDock, {
@@ -402,6 +404,8 @@ describe("Single-row mobile composer pill + inline dictation + fullscreen overla
 			}),
 		);
 		assert.ok(readingIdleHtml.includes('data-testid="reading-dictation-toggle"'), "ReadingThinkingField must expose built-in mobile mic button");
+		assert.ok(readingIdleHtml.includes('data-mobile-pill="true"') && readingIdleHtml.includes("max-md:rounded-[24px]") && readingIdleHtml.includes("max-md:min-h-12"), "ReadingThinkingField must match unified 48px mobile pill");
+		assert.ok(readingIdleHtml.includes('data-mobile-placeholder="Thinking while reading…"'), "ReadingThinkingField must use compact mobile placeholder");
 
 		const readingRecHtml = renderToStaticMarkup(
 			createElement(ReadingThinkingField, {
@@ -427,5 +431,6 @@ describe("Single-row mobile composer pill + inline dictation + fullscreen overla
 		);
 		assert.ok(practiceHtml.includes('data-testid="practice-dock-collapse"'), "PracticeDock must expose Hide collapse button");
 		assert.ok(practiceHtml.includes('data-testid="practice-dictation-toggle"'), "PracticeDock must expose built-in mobile mic button");
+		assert.ok(practiceHtml.includes('data-mobile-pill="true"') && practiceHtml.includes("max-md:min-h-12"), "PracticeDock thinking field must match unified 48px mobile pill");
 	});
 });
