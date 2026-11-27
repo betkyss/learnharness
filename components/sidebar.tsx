@@ -203,7 +203,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	return (
 		<SidebarContext.Provider value={{ open: narrow ? (!IS_ELECTRON && drawerOpen) : open, toggle, overlay: narrow && !IS_ELECTRON, close: () => setDrawerOpen(false) }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
-			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity]")}>{children}</div>
+			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity,transform]")}>{children}</div>
 		</SidebarContext.Provider>
 	);
 }
@@ -835,7 +835,17 @@ function SessionsSidebar() {
 			aria-label="Session navigation"
 			inert={!open}
 			onClickCapture={(event) => { if (overlay && (event.target as Element).closest('a[href], [data-testid="new-session"], [data-testid="new-session-practice"]')) close(); }}
-			className={cn("sidebar-motion shrink-0 overflow-hidden duration-200", overlay && "fixed inset-y-0 left-0 z-40", open ? "w-72" : "w-0")}
+			className={cn(
+				"sidebar-motion shrink-0 overflow-hidden duration-200",
+				overlay
+					? cn(
+						"fixed inset-y-0 left-0 z-40 w-72",
+						open ? "translate-x-0 visible pointer-events-auto" : "-translate-x-full invisible pointer-events-none",
+					)
+					: open
+						? "w-72"
+						: "w-0",
+			)}
 			aria-hidden={!open}
 		>
 			<div className="flex h-full w-72 flex-col border-r bg-sidebar">
@@ -1052,7 +1062,7 @@ function SessionsSidebar() {
 					{/* Settings entry (settings-app wave): same row language as
 					    New session — quiet, bottom-pinned, opens the centered
 					    dialog (also mod+, in the keyboard registry). */}
-					<div className="px-3 pb-3 pt-1">
+					<div className="lh-sidebar-footer px-3 pb-3 pt-1">
 						<Hint label="Settings" action="open-settings" side="right">
 							<button
 								type="button"

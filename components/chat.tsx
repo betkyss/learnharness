@@ -149,6 +149,8 @@ const GRADIENT_H = 24;
 // vs EXPAND_DIST absorbs trackpad drift.
 const COLLAPSE_DIST = 96;
 const EXPAND_DIST = 16;
+const INITIAL_VISIBLE_MESSAGES = 30;
+const LOAD_OLDER_STEP = 40;
 
 /**
  * Server-sync channel for artifact renderers: the CENTRAL jobs poll in Chat
@@ -341,6 +343,47 @@ export function Chat({
 	};
 	const textTarget = (): Extract<PluginSubmissionTarget, { type: "text" }> | undefined => surfaceTarget ? { type: "text", sessionId: chatId, sessionKind: kind === "practice" ? "practice" : "teaching", surfaceTarget, channels: ["content"] } : undefined;
 	const scrollContextRef = useRef<StickToBottomContext | null>(null);
+	const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_MESSAGES);
+	const showAllMessages = useCallback(() => setVisibleCount(Infinity), []);
+	const pendingScrollRestoreRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+	useIsoLayoutEffect(() => {
+		setVisibleCount(typeof window !== "undefined" && Boolean(window.location.hash) ? Infinity : INITIAL_VISIBLE_MESSAGES);
+		pendingScrollRestoreRef.current = null;
+	}, [chatId]);
+	useEffect(() => {
+		const onLocationChange = () => {
+			if (window.location.hash) showAllMessages();
+		};
+		window.addEventListener("hashchange", onLocationChange);
+		window.addEventListener("popstate", onLocationChange);
+		return () => {
+			window.removeEventListener("hashchange", onLocationChange);
+			window.removeEventListener("popstate", onLocationChange);
+		};
+	}, [showAllMessages]);
+	const visibleStart = Math.max(0, messages.length - visibleCount);
+	const visibleStartRef = useRef(visibleStart);
+	visibleStartRef.current = visibleStart;
+	const loadEarlierMessages = useCallback(() => {
+		const scroller = scrollContextRef.current?.scrollRef.current;
+		if (scroller) {
+			scrollContextRef.current?.stopScroll();
+			pendingScrollRestoreRef.current = {
+				scrollHeight: scroller.scrollHeight,
+				scrollTop: scroller.scrollTop,
+			};
+		}
+		setVisibleCount((prev) => prev + LOAD_OLDER_STEP);
+	}, []);
+	useIsoLayoutEffect(() => {
+		const saved = pendingScrollRestoreRef.current;
+		if (!saved) return;
+		pendingScrollRestoreRef.current = null;
+		const scroller = scrollContextRef.current?.scrollRef.current;
+		if (!scroller) return;
+		const delta = scroller.scrollHeight - saved.scrollHeight;
+		if (delta !== 0) scroller.scrollTop = saved.scrollTop + delta;
+	}, [visibleStart]);
 	const sourceTextParts = useMemo(() => firstSourceTextParts(messages), [messages]);
 	const newestTurnFrom = newestLearnerTurnFrom(messages);
 	const sideEntries = useMemo(() => sideEntryPoints(nativeMessages, messages), [nativeMessages, messages]);
@@ -1057,16 +1100,24 @@ export function Chat({
 	const citationActions = useMemo<CitationActions>(() => ({
 		editComment: (citation, source) => setCitationEdit({ citation, link: source.link, start: source.start, host: source.host, input: source.host.closest<HTMLElement>("[data-file-path-input]") ?? undefined }),
 		openSource: (citation) => {
-			const context = scrollContextRef.current;
-			revealCitationSource({
-				transcript: transcriptElementRef.current,
-				scroll: context ? { scrollRef: context.scrollRef, stopScroll: context.stopScroll } : null,
-				citation,
-				currentChatId: chatId,
-				navigate: (href) => router.push(href),
-			});
+			const run = () => {
+				const context = scrollContextRef.current;
+				revealCitationSource({
+					transcript: transcriptElementRef.current,
+					scroll: context ? { scrollRef: context.scrollRef, stopScroll: context.stopScroll } : null,
+					citation,
+					currentChatId: chatId,
+					navigate: (href) => router.push(href),
+				});
+			};
+			if (citation.chatId === chatId && visibleStartRef.current > 0) {
+				showAllMessages();
+				requestAnimationFrame(run);
+				return;
+			}
+			run();
 		},
-	}), [chatId, router]);
+	}), [chatId, router, showAllMessages]);
 	useEffect(() => {
 		if (dictation.active) {
 			dictationWasActiveRef.current = true;
@@ -1550,6 +1601,48 @@ export function Chat({
 		if (localStreamRef.current || turnInFlightRef.current) return;
 		void syncFromServer();
 	});
+	const canonicalMessagesRef = useRef(canonicalMessages);
+	canonicalMessagesRef.current = canonicalMessages;
+	const errorRef = useRef(error);
+	errorRef.current = error;
+	useServerResync(() => {
+		void (async () => {
+			try {
+				const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}?view=meta`, { cache: "no-store" });
+				if (!submissionMounted.current) return;
+				if (res.status === 401) {
+					if (typeof window !== "undefined" && window.location.pathname !== "/_login") {
+						window.location.replace("/_login");
+					}
+					return;
+				}
+				if (!res.ok) return;
+				const meta = (await res.json()) as {
+					messageCount: number;
+					lastMessageId: string | null;
+					turnInFlight: boolean;
+					turnError?: string;
+					compacting: boolean;
+				};
+				if (!submissionMounted.current) return;
+				setCompacting(Boolean(meta.compacting));
+				if (meta.turnInFlight) {
+					if (!localStreamRef.current && !turnInFlightRef.current) attachToRunningTurn();
+					return;
+				}
+				if (!localStreamRef.current && !turnInFlightRef.current) {
+					const canonical = canonicalMessagesRef.current;
+					const diverged =
+						meta.messageCount !== canonical.length ||
+						meta.lastMessageId !== (canonical.at(-1)?.id ?? null) ||
+						Boolean(meta.turnError) !== Boolean(errorRef.current);
+					if (diverged) void syncFromServer();
+				}
+			} catch {
+				/* transient network error — next reconnect heals */
+			}
+		})();
+	});
 
 	const onSend = () => {
 		if (!isInteractionScopeEligible(sessionFindScopeRef.current, controller) || submissionRunner.occupied) return;
@@ -1747,7 +1840,7 @@ export function Chat({
 					<PluginSessionTopBarActions readContext={actionContext} captureContext={captureActionContext} refreshRef={refreshPluginActions} />
 				</TopBar>
 
-				<SessionFind scopeRef={sessionFindScopeRef} scrollContextRef={scrollContextRef} />
+				<SessionFind scopeRef={sessionFindScopeRef} scrollContextRef={scrollContextRef} onOpen={showAllMessages} />
 				<div ref={sessionFindScopeRef} className="relative flex min-h-0 flex-1">
 				<Conversation className="h-full min-w-0 flex-1" initial="instant" contextRef={scrollContextRef}>
 					<SessionMessageNavigation />
@@ -1761,8 +1854,22 @@ export function Chat({
 								/>
 							)}
 
-							{messages.map((m, mi) =>
-								m.role === "user" && isSubagentSteer(m) ? (
+							{visibleStart > 0 && (
+								<div className="flex justify-center py-1">
+									<button
+										type="button"
+										data-testid="load-earlier-messages"
+										onClick={loadEarlierMessages}
+										className="cursor-pointer rounded-full border border-border/70 bg-card/60 px-3 py-1 font-ui text-xs text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-foreground"
+									>
+										Show earlier messages ({visibleStart} older)
+									</button>
+								</div>
+							)}
+
+							{messages.slice(visibleStart).map((m, offset) => {
+								const mi = visibleStart + offset;
+								return m.role === "user" && isSubagentSteer(m) ? (
 									// Sub-agent delivery (wake-pipeline steer): NO message bubble — the
 									// artifact card sits in the transcript column directly, full width
 									// and centered like the teacher's artifacts (contracts.ts "THE ASYNC
@@ -1970,7 +2077,8 @@ export function Chat({
 									</Message>
 									)}
 								</Fragment>
-							))}
+							);
+							})}
 
 							{/* THE placeholder, ACTION-gated (owner, optimistic round
 							    3, 2026-10-02): spinner + shimmered Thinking… from the
@@ -2898,7 +3006,7 @@ export function DockOverlay({
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
 			<div className="h-6 bg-gradient-to-t from-background via-background/85 to-transparent" />
-			<div ref={blockRef} className="relative bg-background pb-5">
+			<div ref={blockRef} className="lh-dock-block pointer-events-auto relative bg-background pb-5">
 				<div ref={dockRef} data-dock-width={adaptedW ?? undefined} className={DOCK} style={adaptedW ? { maxWidth: adaptedW } : undefined}>
 					<div ref={viewportRef} data-dock-viewport="" className="pointer-events-auto">
 					<div ref={bodyRef}>

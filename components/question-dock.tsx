@@ -1107,19 +1107,19 @@ function QuestionDockForm({
 				data-dock-scroll-area={columns ? undefined : ""}
 				data-session-find-root=""
 				data-testid={columns ? "question-columns" : undefined}
-				className={columns ? "grid" : cn("max-h-[var(--dock-max-h,55dvh)] overflow-y-auto", STACKED_AREA_PAD)}
+				className={columns ? "grid" : cn("max-h-[var(--dock-max-h,55dvh)] overflow-y-auto overscroll-y-contain", STACKED_AREA_PAD)}
 				style={columns ? { gridTemplateColumns: `minmax(0, 1fr) ${columns.answer}px` } : undefined}
 			>
 				<div
 					data-dock-scroll-area={columns ? "" : undefined}
-					className={columns ? cn("max-h-[var(--dock-max-h,55dvh)] min-w-0 overflow-y-auto", QUESTION_COLUMN_PAD) : "contents"}
+					className={columns ? cn("max-h-[var(--dock-max-h,55dvh)] min-w-0 overflow-y-auto overscroll-y-contain", QUESTION_COLUMN_PAD) : undefined}
 				>
 					{questionPart}
 				</div>
-				<div className={columns ? cn("max-h-[var(--dock-max-h,55dvh)] min-h-0 min-w-0", ANSWER_COLUMN_FRAME) : "contents"}>
+				<div className={columns ? cn("max-h-[var(--dock-max-h,55dvh)] min-h-0 min-w-0", ANSWER_COLUMN_FRAME) : undefined}>
 					<div
 						data-dock-scroll-area={columns ? "" : undefined}
-						className={columns ? cn("flex min-h-0 flex-col overflow-y-auto", ANSWER_OPTIONS_PAD) : "contents"}
+						className={columns ? cn("flex min-h-0 flex-col overflow-y-auto overscroll-y-contain", ANSWER_OPTIONS_PAD) : undefined}
 					>
 						{optionList}
 						{confidenceRow}

@@ -132,6 +132,31 @@ export function asAgentMessages(messages: readonly LhMessage[]): AgentMessage[] 
 	return messages as unknown as AgentMessage[];
 }
 
+/** Strip opaque provider-replay signatures (`thinkingSignature`, `textSignature`)
+ *  from assistant content blocks before sending messages to the browser. Never
+ *  mutates input messages or blocks; disk storage stays intact. */
+export function sanitizeMessagesForClient(messages: readonly LhMessage[]): LhMessage[] {
+	return messages.map((message) => {
+		if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
+		let changed = false;
+		const content = message.content.map((block) => {
+			if (!block || typeof block !== "object") return block;
+			if (block.type === "thinking" && "thinkingSignature" in block) {
+				changed = true;
+				const { thinkingSignature: _sig, ...rest } = block;
+				return rest;
+			}
+			if (block.type === "text" && "textSignature" in block) {
+				changed = true;
+				const { textSignature: _sig, ...rest } = block;
+				return rest;
+			}
+			return block;
+		});
+		return changed ? ({ ...message, content } as LhMessage) : message;
+	});
+}
+
 /** Side-question markers (#16) never change what the record's tail
  *  means: a closed side thread leaves a dismissal pause, a Retry, a
  *  recovery, or an owed continuation exactly as it found them. */

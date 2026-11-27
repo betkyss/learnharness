@@ -128,4 +128,17 @@ describe("eventsResponse (the SSE seam)", () => {
 		assert.match(decode(value!), /event: chats-changed/);
 		await reader.cancel();
 	});
+
+	it("flushOnOpen emits an initial SSE comment immediately before subsequent events", async () => {
+		const res = eventsResponse({ flushOnOpen: true });
+		const reader = res.body!.getReader();
+		const first = await reader.read();
+		assert.equal(first.done, false);
+		assert.equal(decode(first.value!), ": open\n\n");
+		emit("chats-changed", {});
+		const next = await reader.read();
+		assert.equal(next.done, false);
+		assert.match(decode(next.value!), /event: chats-changed/);
+		await reader.cancel();
+	});
 });

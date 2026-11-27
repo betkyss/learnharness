@@ -57,6 +57,10 @@ for (const thinking of [false, true]) for (const overflow of [false, true]) test
         if (url === "/api/models") return Response.json({ providers: [], models: [], slots: {} });
         if (url === "/api/settings") return Response.json({});
         if (url === "/api/chats/one") return Response.json({ id: "one", messages });
+        if (url === "/api/chats/one?view=settings") return Response.json({ settings: undefined });
+        if (url === "/api/chats/one?view=coverage") return Response.json({ coverage: null });
+        if (url === "/api/chats/one?view=stats") return Response.json({ turns: [], pricing: undefined });
+        if (url === "/api/chats/one?view=meta") return Response.json({ messageCount: messages.length, lastMessageId: messages.at(-1)?.id ?? null, turnInFlight: false, turnError: undefined, compacting: false });
         if (url === "/api/chats/one/side-chats") return Response.json({ threads: [] });
         if (url === "/api/jobs?chatId=one") return Response.json({ jobs: [], turnInFlight: false });
         assert.fail(`Unexpected fixture request: ${url}`);

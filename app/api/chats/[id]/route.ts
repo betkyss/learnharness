@@ -1,12 +1,35 @@
 import { compactionInFlight, deleteChatSession, getChat, isTurnRunning, sessionCoverage, sessionCost, stores, turnFailure, type ChatDeleteMode, pluginQuestionAvailabilityOf, reconcilePluginQuestionCompatibility, type QuestionTypeResolver, getPluginQuestionTypeResolver, getPluginHost, pluginProblemAvailabilityOf, type ProblemTypeResolver } from "@/src/server";
-import { pendingPluginQuestionOf, activeProblemOf } from "@/src/core";
+import { pendingPluginQuestionOf, activeProblemOf, sanitizeMessagesForClient } from "@/src/core";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
-	if (new URL(req.url).searchParams.get("view") === "stats") {
+	const view = new URL(req.url).searchParams.get("view");
+	if (view === "stats") {
 		// Stats refreshes don't adopt history or need plugin availability.
 		const chat = getChat(id);
 		return chat ? Response.json({ turns: chat.turns, pricing: sessionCost(chat) })
+			: Response.json({ error: "Not found" }, { status: 404 });
+	}
+	if (view === "coverage") {
+		const chat = getChat(id);
+		return chat ? Response.json({ coverage: sessionCoverage(id) })
+			: Response.json({ error: "Not found" }, { status: 404 });
+	}
+	if (view === "settings") {
+		const chat = getChat(id);
+		return chat ? Response.json({ settings: chat.settings })
+			: Response.json({ error: "Not found" }, { status: 404 });
+	}
+	if (view === "meta") {
+		const chat = getChat(id);
+		return chat
+			? Response.json({
+					messageCount: chat.messages.length,
+					lastMessageId: chat.messages.at(-1)?.id ?? null,
+					turnInFlight: isTurnRunning(id),
+					turnError: turnFailure(id),
+					compacting: compactionInFlight(id),
+				})
 			: Response.json({ error: "Not found" }, { status: 404 });
 	}
 	await reconcilePluginQuestionCompatibility(stores.chatStore, id);
@@ -39,7 +62,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	const { imageSnapshots: _imageSnapshots, ...record } = chat;
 	return Response.json({
 		...record,
-		messages: chat.messages,
+		messages: sanitizeMessagesForClient(chat.messages),
 		pluginQuestionAvailability: pluginQuestionAvailabilityOf(chat, questionResolver),
 		pluginProblemAvailability: pluginProblemAvailabilityOf(chat, problemResolver),
 		pricing: sessionCost(chat),

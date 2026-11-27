@@ -762,6 +762,8 @@ body {
 }
 
 /* The entire form scrolls as one unit, including confidence, thinking and submit. */
+[data-dock-scroll-area] { overscroll-behavior-y: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+[data-dock-viewport] { touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 [data-dock-whole-scroll="true"] [data-dock-scroll-area] { max-height: none; min-height: 0; overflow: visible; }
 [data-dock-whole-scroll="true"] [data-dock-viewport] { overscroll-behavior-y: contain; }
 .graph-cost-panel { overflow-wrap: anywhere; }
@@ -876,6 +878,38 @@ body {
  .source-metadata > .source-date { display: none; }
  .source-mobile-metadata { display: block; }
  .source-mobile-metadata[open] { flex-basis: 100%; }
- .source-mobile-metadata[open] > span { display: block; }
- .knowledge-statement { padding-block: 12px; }
+  .source-mobile-metadata[open] > span { display: block; }
+  .knowledge-statement { padding-block: 12px; }
+}
+
+/* iOS / PWA safe-area insets (env() resolves to 0px on desktop; Electron untouched). */
+html:not(.lh-electron) .lh-top-bar {
+	padding-top: env(safe-area-inset-top, 0px);
+	height: calc(3.75rem + env(safe-area-inset-top, 0px));
+}
+html:not(.lh-electron) [data-session-sidebar] .lh-lights-gutter {
+	padding-top: calc(0.75rem + env(safe-area-inset-top, 0px));
+}
+html:not(.lh-electron) [data-session-sidebar] .lh-sidebar-footer {
+	padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+html:not(.lh-electron) .lh-dock-block,
+html:not(.lh-electron) [data-home-dock] {
+	padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+}
+html:not(.lh-electron) .home-surface > header {
+	padding-top: calc(0.5rem + env(safe-area-inset-top, 0px));
+}
+@media (max-width: 767px) {
+	html:not(.lh-electron) .graph-toolbar {
+		top: calc(52px + env(safe-area-inset-top, 0px));
+	}
+}
+@media (max-height: 500px) {
+	html:not(.lh-electron) [data-session-sidebar] .lh-lights-gutter {
+		padding-top: calc(4px + env(safe-area-inset-top, 0px));
+	}
+	html:not(.lh-electron) [data-home-dock] {
+		padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+	}
 }
