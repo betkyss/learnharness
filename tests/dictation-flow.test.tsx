@@ -2,7 +2,7 @@ import React, { act } from "react";
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { parseHTML } from "linkedom";
-import { finishDictation, useDictation, useDictationTarget, type Dictation } from "../components/dictation.tsx";
+import { _resetAudioGraphForTests, finishDictation, useDictation, useDictationTarget, type Dictation } from "../components/dictation.tsx";
 import { notifySettingsSaved } from "../components/settings-signal.ts";
 import { useDictationLanguage } from "../components/dictation-preference.ts";
 import { isDictationActive, useDictationActive } from "../components/dictation-state.ts";
@@ -373,4 +373,67 @@ test("microphone permission resolving after unmount immediately stops the late s
 	assert.equal(f.state.stops, 1);
 	assert.equal(Socket.all.length, 0);
 	assert.equal(isDictationActive(), false);
+});
+
+test("BUG-3 iOS PWA: unlocks suspended AudioContext synchronously on tap, falls back to ScriptProcessor when worklet fails, and flushes queued audio when stopped while connecting", async () => {
+	_resetAudioGraphForTests();
+	const f = await fixture("en");
+	let resumeCalls = 0;
+	let scriptProcessorCreated = 0;
+	const audioHook: { onProcess?: (e: { inputBuffer: { getChannelData: () => Float32Array } }) => void } = {};
+
+	class SuspendedIosAudioContext {
+		state: "suspended" | "running" = "suspended";
+		sampleRate = 48_000;
+		destination = {};
+		audioWorklet = { addModule: async () => { throw new Error("worklet blocked"); } };
+		async resume() {
+			resumeCalls++;
+			this.state = "running";
+		}
+		createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+		createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }
+		createScriptProcessor() {
+			scriptProcessorCreated++;
+			const node = {
+				set onaudioprocess(fn: typeof audioHook.onProcess) { audioHook.onProcess = fn; },
+				get onaudioprocess() { return audioHook.onProcess; },
+				connect() {},
+				disconnect() {},
+			};
+			return node;
+		}
+	}
+	Object.defineProperty(globalThis, "AudioContext", { configurable: true, writable: true, value: SuspendedIosAudioContext });
+
+	await f.mount();
+	await act(async () => { f.dictation.toggle(); });
+	assert.ok(resumeCalls >= 1, "AudioContext.resume() must be called inside start()");
+	assert.equal(scriptProcessorCreated, 1, "must fall back to ScriptProcessorNode when AudioWorklet fails");
+	const socket = Socket.all[0]!;
+	assert.equal(socket.readyState, Socket.CONNECTING);
+
+	// Emit 48kHz audio while still CONNECTING (classic mobile Wi-Fi/LTE latency)
+	audioHook.onProcess?.({ inputBuffer: { getChannelData: () => new Float32Array(6144).fill(0.3) } });
+
+	// Stop while socket is still CONNECTING: must NOT discard queued speech!
+	await act(async () => { f.dictation.stop(); });
+	assert.equal(f.dictation.phase, "stopping", "must wait for CONNECTING socket to flush queued frames instead of dropping them");
+
+	// Socket finishes opening -> flushes PCM + sends Finalize + CloseStream
+	await act(async () => { socket.open(); });
+	assert.ok(socket.sent.some((item) => item instanceof ArrayBuffer), "queued PCM frames must flush on open");
+	assert.equal(socket.sent.at(-2), JSON.stringify({ type: "Finalize" }));
+	assert.equal(socket.sent.at(-1), JSON.stringify({ type: "CloseStream" }));
+
+	// Even if Deepgram only sends an interim result before closing, fallback commits it instead of leaving an empty composer
+	await act(async () => {
+		socket.dispatchEvent(Object.assign(new Event("message"), {
+			data: JSON.stringify({ type: "Results", is_final: false, channel: { alternatives: [{ transcript: "Проверка диктовки" }] } }),
+		}));
+		socket.end(1000);
+	});
+	assert.deepEqual(f.state.appends, ["Проверка диктовки"]);
+	assert.equal(f.dictation.phase, "idle");
+	_resetAudioGraphForTests();
 });

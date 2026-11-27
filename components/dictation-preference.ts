@@ -6,13 +6,18 @@ import {
 	type DictationLanguage, type UserSettings,
 } from "@/src/core";
 import { notifySettingsSaved, onSettingsSaved } from "@/components/settings-signal";
+import { fetchSettingsSwr, invalidateSwr, setSwrData, SWR_KEYS, type SettingsApiPayload } from "@/components/client-swr";
 
 const INITIAL = { language: undefined as DictationLanguage | undefined, saving: false, error: null as string | null };
 
 /** One confirmed preference and one write in flight, shared by every surface.
  * The factory keeps transport tests isolated without a second persistence path.
  */
-export function createDictationLanguageStore(request: typeof fetch, saved: () => void = () => {}) {
+export function createDictationLanguageStore(
+	request: typeof fetch,
+	saved: () => void = () => {},
+	readSettings?: (force: boolean) => Promise<SettingsApiPayload>,
+) {
 	let snapshot = INITIAL;
 	let reading: Promise<DictationLanguage> | null = null;
 	let writing: Promise<boolean> | null = null;
@@ -32,9 +37,14 @@ export function createDictationLanguageStore(request: typeof fetch, saved: () =>
 		needsRead = true;
 		reading = Promise.resolve().then(async () => {
 			try {
-				const res = await request("/api/settings");
-				if (!res.ok) throw new Error();
-				const body = await res.json() as { settings: UserSettings | null };
+				let body: { settings: UserSettings | null };
+				if (readSettings) {
+					body = await readSettings(refresh);
+				} else {
+					const res = await request("/api/settings");
+					if (!res.ok) throw new Error();
+					body = await res.json() as { settings: UserSettings | null };
+				}
 				if (!("settings" in body)) throw new Error();
 				const record = sanitizeUserSettings(body.settings);
 				if (body.settings !== null && record === null) throw new Error();
@@ -70,6 +80,7 @@ export function createDictationLanguageStore(request: typeof fetch, saved: () =>
 				const body = await res.json() as { settings: UserSettings };
 				const confirmed = body.settings?.dictation?.language;
 				if (!isDictationLanguage(confirmed)) throw new Error();
+				if (readSettings) setSwrData<SettingsApiPayload>(SWR_KEYS.settings, { settings: body.settings });
 				needsRead = false;
 				publish({ language: confirmed, error: null });
 				saved();
@@ -104,12 +115,19 @@ export function createDictationLanguageStore(request: typeof fetch, saved: () =>
 }
 
 let announcingSave = false;
-const store = createDictationLanguageStore((...args) => fetch(...args), () => {
-	// All our readers already received the confirmed PUT response. Keep the
-	// repo's notification contract without depending on a redundant GET.
-	announcingSave = true;
-	try { notifySettingsSaved("dictation"); } finally { announcingSave = false; }
-});
+const store = createDictationLanguageStore(
+	(...args) => fetch(...args),
+	() => {
+		// All our readers already received the confirmed PUT response. Keep the
+		// repo's notification contract without depending on a redundant GET.
+		announcingSave = true;
+		try { notifySettingsSaved("dictation"); } finally { announcingSave = false; }
+	},
+	(force) => {
+		if (force) invalidateSwr(SWR_KEYS.settings);
+		return fetchSettingsSwr({ force, freshMs: force ? 0 : 15_000 });
+	},
+);
 let readers = 0;
 let stopSignals: (() => void) | undefined;
 

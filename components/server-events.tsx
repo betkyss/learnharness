@@ -24,7 +24,7 @@
  * React glue is an adapter seam like lh:turn-state (untested by
  * precedent, components/session.ts).
  */
-import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { SERVER_EVENT_TYPES, type ServerEventType, type ServerEvents } from "@/src/core";
 
 /** The minimal source surface the provider consumes — EventSource behind
@@ -78,10 +78,27 @@ const DEFAULT_RESYNC_CONTEXT: ResyncContext = { reason: "reconnect", full: true,
  *  errors are isolated per the bus's law (one bad consumer never breaks
  *  the window), and dispatch iterates a snapshot (an unsubscribe during
  *  dispatch is safe). */
+export type ConnectionStatus = "connected" | "reconnecting";
+
 export function createNotifyHub() {
 	const byType = new Map<string, Set<(data: never) => void>>();
 	const resyncs = new Set<(ctx: ResyncContext) => void>();
+	const statusListeners = new Set<() => void>();
+	let connectionStatus: ConnectionStatus = "connected";
+	const setConnectionStatus = (next: ConnectionStatus) => {
+		if (connectionStatus === next) return;
+		connectionStatus = next;
+		for (const cb of [...statusListeners]) {
+			try { cb(); } catch {}
+		}
+	};
 	return {
+		getConnectionStatus: () => connectionStatus,
+		setConnectionStatus,
+		subscribeConnectionStatus(cb: () => void) {
+			statusListeners.add(cb);
+			return () => { statusListeners.delete(cb); };
+		},
 		subscribe<K extends ServerEventType>(type: K, cb: (payload: ServerEvents[K]) => void) {
 			const set = byType.get(type) ?? new Set<(data: never) => void>();
 			byType.set(type, set);
@@ -232,10 +249,12 @@ export function connectManagedChannel({
 
 	const markActivity = () => {
 		lastActivityAt = now();
+		hub.setConnectionStatus("connected");
 	};
 
 	const probeAuth = () => {
 		hadChannelError = true;
+		hub.setConnectionStatus("reconnecting");
 		if (disposed || !fetchImpl || authProbeInFlight) return;
 		const t = now();
 		if (t - lastAuthProbeAt < authProbeCooldownMs) return;
@@ -416,4 +435,43 @@ export function useServerResync(cb: (ctx: ResyncContext) => void): void {
 			off();
 		};
 	}, [hub]);
+}
+
+const subscribeNoop = () => () => {};
+const getConnected = (): ConnectionStatus => "connected";
+
+/** Observe live SSE connection state ("connected" | "reconnecting") for subtle sync UI. */
+export function useServerConnectionState(): ConnectionStatus {
+	const hub = useContext(EventsContext);
+	return useSyncExternalStore(
+		hub ? (cb) => hub.subscribeConnectionStatus(cb) : subscribeNoop,
+		hub ? hub.getConnectionStatus : getConnected,
+		getConnected,
+	);
+}
+
+/** Subtle, debounced reconnect pill — appears only when SSE stays degraded >1.5s. */
+export function ConnectionStatusPill({ className }: { className?: string }) {
+	const status = useServerConnectionState();
+	const [visible, setVisible] = useState(false);
+	useEffect(() => {
+		if (status !== "reconnecting") {
+			setVisible(false);
+			return;
+		}
+		const timer = setTimeout(() => setVisible(true), 1500);
+		return () => clearTimeout(timer);
+	}, [status]);
+	if (!visible) return null;
+	return (
+		<span
+			role="status"
+			aria-live="polite"
+			data-testid="connection-status-pill"
+			className={className ?? "inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-card/90 px-2 py-0.5 text-xs text-muted-foreground"}
+		>
+			<span className="size-1.5 animate-pulse rounded-full bg-amber-500" aria-hidden />
+			<span>Syncing…</span>
+		</span>
+	);
 }

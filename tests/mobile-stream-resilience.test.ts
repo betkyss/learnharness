@@ -298,4 +298,81 @@ describe("P0-2 & P0-1: SessionModel foreground recovery, tail loading, and incre
 		assert.equal(mid2[0], mid1[0], "streaming update must not recreate settled prefix message objects");
 		assert.equal(mid2[mid2.length - 2], mid1[mid1.length - 2]);
 	});
+
+	it("BUG-2: retries transient network drop on initial resumeStream(true) and clears stale STREAM_DROPPED when canonical server record settles cleanly", async () => {
+		let streamAttempts = 0;
+		const settledReply: LhMessage = {
+			id: "msg_a_recovered",
+			role: "assistant",
+			api: "openai-responses",
+			provider: "chatgpt",
+			model: "gpt-5.4",
+			timestamp: 2000,
+			stopReason: "stop",
+			usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 20, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			content: [{ type: "text", text: "Recovered answer after resume" }],
+		};
+		const model = new SessionModel({
+			chatId: "chat_bug2",
+			initialMessages: [{ id: "msg_u_1", role: "user", content: "Explain", timestamp: 1000 }],
+			maxStreamRecoveries: 2,
+			recoveryBackoffMs: [0, 0],
+			fetch: (async (input) => {
+				const url = String(input);
+				if (url === "/api/chats/chat_bug2/stream") {
+					streamAttempts++;
+					if (streamAttempts === 1) throw new TypeError("Load failed");
+					return new Response(
+						`data: ${JSON.stringify({ type: "turn-settled" })}\n\ndata: [DONE]\n\n`,
+						{ status: 200, headers: { "content-type": "text/event-stream" } },
+					);
+				}
+				return Response.json({
+					messages: [{ id: "msg_u_1", role: "user", content: "Explain", timestamp: 1000 }, settledReply],
+					turnInFlight: false,
+				});
+			}) as typeof fetch,
+		});
+
+		await model.resumeStream(true);
+		assert.equal(streamAttempts, 2, "must retry transient network error even from recoveryAttempt=0");
+		assert.equal(model.status, "ready");
+		assert.equal(model.getState().error, null);
+		assert.equal(model.getState().messages.at(-1)?.parts.at(-1)?.text, "Recovered answer after resume");
+
+		// If retries are exhausted and STREAM_DROPPED is shown while backgrounded,
+		// a later foreground meta check showing turnInFlight=false clears the stale banner.
+		let dropModelCalls = 0;
+		const droppedModel = new SessionModel({
+			chatId: "chat_bug2_drop",
+			initialMessages: [{ id: "msg_u_1", role: "user", content: "Explain", timestamp: 1000 }],
+			maxStreamRecoveries: 0,
+			fetch: (async (input) => {
+				const url = String(input);
+				if (url === "/api/chats/chat_bug2_drop/stream") {
+					throw new TypeError("Load failed");
+				}
+				dropModelCalls++;
+				return Response.json({
+					messages: [{ id: "msg_u_1", role: "user", content: "Explain", timestamp: 1000 }, settledReply],
+					turnInFlight: false,
+				});
+			}) as typeof fetch,
+		});
+
+		await droppedModel.resumeStream(false, 0);
+		assert.equal(droppedModel.status, "error");
+		assert.match(droppedModel.getState().error?.message ?? "", /connection dropped/i);
+
+		const healed = await droppedModel.recoverFromForeground({
+			turnInFlight: false,
+			messageCount: 2,
+			lastMessageId: "msg_a_recovered",
+		});
+		assert.equal(healed, "settled");
+		assert.ok(dropModelCalls >= 1);
+		assert.equal(droppedModel.status, "ready");
+		assert.equal(droppedModel.getState().error, null, "stale transient STREAM_DROPPED must clear once server record settled cleanly");
+		assert.equal(droppedModel.getState().messages.at(-1)?.parts.at(-1)?.text, "Recovered answer after resume");
+	});
 });

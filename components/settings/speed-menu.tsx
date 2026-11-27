@@ -56,7 +56,7 @@ export function SpeedControl({ provider, modelId, value, inherited, inheritLabel
 			aria-controls={open ? menuId : undefined}
 			title={`Speed: ${label}`}
 			value={label}
-			className={compact ? "h-auto max-md:min-h-9 rounded-full bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur" : undefined}
+			className={compact ? "h-auto max-md:min-h-9 max-md:rounded-full max-md:px-2.5 max-md:text-xs rounded-full bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur" : undefined}
 			onClick={() => { onOpen?.(); window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: testid })); setOpen(!open); }}
 		/>
 		{open && <MenuShell anchorRef={anchor} testid={menuId} preferredSide={compact ? "up" : "down"} menuClass="flex w-52 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl">
@@ -70,8 +70,8 @@ export function SpeedControl({ provider, modelId, value, inherited, inheritLabel
 					buttons[next]?.focus();
 				}
 			}}>
-				{inheritLabel && <button type="button" role="menuitemradio" aria-checked={value === undefined} data-testid="speed-option-inherit" onClick={() => choose(undefined)} className="flex w-full justify-between rounded-lg px-2 py-1.5 text-left hover:bg-muted">Use {inheritLabel}<span>{value === undefined ? "✓" : ""}</span></button>}
-				{speeds.map(speed => <button key={speed} type="button" role="menuitemradio" aria-checked={value === speed || (!inheritLabel && effective === speed)} data-testid={`speed-option-${speed}`} onClick={() => choose(speed)} className="flex w-full justify-between rounded-lg px-2 py-1.5 text-left hover:bg-muted"><span>{SPEED_LABEL[speed]}</span><span>{value === speed || (!inheritLabel && effective === speed) ? "✓" : ""}</span></button>)}
+				{inheritLabel && <button type="button" role="menuitemradio" aria-checked={value === undefined} data-testid="speed-option-inherit" onClick={() => choose(undefined)} className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 max-md:min-h-10 max-md:px-3 max-md:text-sm text-left hover:bg-muted active:bg-muted">Use {inheritLabel}<span>{value === undefined ? "✓" : ""}</span></button>}
+				{speeds.map(speed => <button key={speed} type="button" role="menuitemradio" aria-checked={value === speed || (!inheritLabel && effective === speed)} data-testid={`speed-option-${speed}`} onClick={() => choose(speed)} className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 max-md:min-h-10 max-md:px-3 max-md:text-sm text-left hover:bg-muted active:bg-muted"><span>{SPEED_LABEL[speed]}</span><span>{value === speed || (!inheritLabel && effective === speed) ? "✓" : ""}</span></button>)}
 			</div>
 		</MenuShell>}
 	</span>;

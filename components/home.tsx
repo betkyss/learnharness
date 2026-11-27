@@ -250,6 +250,7 @@ export function Home({
 						practiceSelection={pickedIds}
 						onPracticeSelectionChange={setPracticeProps}
 						onChainSelectClose={() => setChainSelectOpen(false)}
+						deferEmptyUntilLoaded
 					/>
 				) : (
 					<MinimalHome

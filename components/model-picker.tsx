@@ -11,6 +11,7 @@ import { useInteractionLayers } from "@/components/interaction-layers";
 import { isInputShortcutScopeEligible } from "@/components/plugin-input-focus";
 import { Hint } from "@/components/ui/hint";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
+import { fetchSettingsSwr, fetchSwr, getSwrData, setSwrData, SWR_KEYS, type SettingsApiPayload } from "@/components/client-swr";
 import { useModelCatalog } from "@/components/model-catalog";
 import { resolveModelSpeed } from "@/src/core";
 import { SpeedControl } from "./settings/speed-menu";
@@ -41,19 +42,6 @@ export function catalogLimits(catalog: Pick<ModelCatalogResponse, "models">): Ma
  * changing the new-session default. Unpicked reads "—" (the
  * no-factory-fallback language: the UI never presents a default model).
  */
-const inFlightSettingsReads = new Map<string, Promise<unknown>>();
-function fetchSettingsRead<T>(url: string, parse: (r: Response) => Promise<T>): Promise<T> {
-	const existing = inFlightSettingsReads.get(url);
-	if (existing) return existing as Promise<T>;
-	const promise = fetch(url)
-		.then(parse)
-		.finally(() => {
-			if (inFlightSettingsReads.get(url) === promise) inFlightSettingsReads.delete(url);
-		});
-	inFlightSettingsReads.set(url, promise);
-	return promise;
-}
-
 const CHAT_SETTINGS_SAVED_EVENT = "lh:chat-settings-saved";
 
 export function useSessionModelState({
@@ -66,24 +54,33 @@ export function useSessionModelState({
 	onSaved?: () => void;
 }) {
 	const { catalog, refresh } = useModelCatalog();
-	const [models, setModels] = useState<ModelsSettings | undefined>();
+	const [models, setModels] = useState<ModelsSettings | undefined>(
+		() => getSwrData<SettingsApiPayload>(SWR_KEYS.settings)?.settings?.models ?? undefined,
+	);
 	// A successful read with no settings is a legacy session; undefined
 	// means no session record is known yet, not permission to inherit Strong.
-	const [session, setSession] = useState<{ settings?: ChatSettings }>();
+	const [session, setSession] = useState<{ settings?: ChatSettings } | undefined>(() =>
+		chatId ? getSwrData<{ settings?: ChatSettings }>(SWR_KEYS.chatSettings(chatId)) : undefined,
+	);
 	const [error, setError] = useState<string | null>(null);
 
-	const readRecord = useCallback(() => {
+	const readRecord = useCallback((force = false) => {
 		if (chatId) {
-			fetchSettingsRead(`/api/chats/${encodeURIComponent(chatId)}?view=settings`, (r) => {
-				if (!r.ok) throw new Error(`session read failed: ${r.status}`);
-				return r.json() as Promise<{ settings?: ChatSettings }>;
-			})
+			fetchSwr<{ settings?: ChatSettings }>(
+				SWR_KEYS.chatSettings(chatId),
+				async () => {
+					const r = await fetch(`/api/chats/${encodeURIComponent(chatId)}?view=settings`);
+					if (!r.ok) throw new Error(`session read failed: ${r.status}`);
+					return (await r.json()) as { settings?: ChatSettings };
+				},
+				{ force, freshMs: force ? 0 : 15_000, persist: true },
+			)
 				.then((body) => setSession({ settings: body.settings }))
 				.catch(() => {
 					/* same read-only posture as a models-section failure */
 				});
 		}
-		fetchSettingsRead("/api/settings", (r) => r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>)
+		fetchSettingsSwr({ force, freshMs: force ? 0 : 15_000 })
 			.then((body) => setModels(body.settings?.models ?? undefined))
 			.catch(() => {
 				/* the record fetch failing leaves the control read-only */
@@ -91,18 +88,21 @@ export function useSessionModelState({
 	}, [chatId]);
 
 	useEffect(() => {
-		readRecord();
+		readRecord(false);
 	}, [readRecord]);
 
 	useSettingsSaved((section) => {
-		if (section === "models") readRecord();
+		if (section === "models") readRecord(true);
 	});
 
 	useEffect(() => {
 		if (!chatId) return;
 		const onChatSaved = (event: Event) => {
 			const detail = (event as CustomEvent<{ chatId?: string; settings?: ChatSettings }>).detail;
-			if (detail?.chatId === chatId) setSession({ settings: detail.settings });
+			if (detail?.chatId === chatId) {
+				setSession({ settings: detail.settings });
+				setSwrData(SWR_KEYS.chatSettings(chatId), { settings: detail.settings }, { persist: true });
+			}
 		};
 		window.addEventListener(CHAT_SETTINGS_SAVED_EVENT, onChatSaved);
 		return () => window.removeEventListener(CHAT_SETTINGS_SAVED_EVENT, onChatSaved);
@@ -142,9 +142,11 @@ export function useSessionModelState({
 					setError(body.error ?? `settings rejected (${res.status})`);
 					return;
 				}
-				const stored = (
-					(await res.json().catch(() => null)) as { settings?: UserSettings } | null
-				)?.settings?.models;
+				const payload = (await res.json().catch(() => null)) as { settings?: UserSettings; fileAccessError?: string | null } | null;
+				const stored = payload?.settings?.models;
+				if (payload?.settings) {
+					setSwrData<SettingsApiPayload>(SWR_KEYS.settings, { settings: payload.settings, fileAccessError: payload.fileAccessError ?? null });
+				}
 				setModels(stored ?? next);
 				onSaved?.();
 				notifySettingsSaved("models");
@@ -172,6 +174,9 @@ export function useSessionModelState({
 				const stored = (await res.json().catch(() => null)) as { settings?: ChatSettings } | null;
 				const nextSettings = stored?.settings ?? next;
 				setSession({ settings: nextSettings });
+				if (chatId) {
+					setSwrData(SWR_KEYS.chatSettings(chatId), { settings: nextSettings }, { persist: true });
+				}
 				if (typeof window !== "undefined" && chatId) {
 					window.dispatchEvent(new CustomEvent(CHAT_SETTINGS_SAVED_EVENT, { detail: { chatId, settings: nextSettings } }));
 				}

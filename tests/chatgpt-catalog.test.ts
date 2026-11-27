@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { piModels } from "../src/agent/models.ts";
-import { refreshConnectionCatalog } from "../src/server/model-catalog.ts";
+import { invalidateConnectionCatalogCache, refreshConnectionCatalog } from "../src/server/model-catalog.ts";
 import { refreshChatGPTModels, chatGPTModels, chatGPTStatus, chatGPTScope, chatGPTScopeCurrent, chatGPTLease, chatGPTAbortController } from "../src/agent/chatgpt-bridge.ts";
 const send = Object.getOwnPropertyDescriptor(process, "send"), connected = Object.getOwnPropertyDescriptor(process, "connected");
 const desktopMarker = process.env.LH_DESKTOP_SERVER, desktopSecret = process.env.LH_DESKTOP_API_SECRET;
@@ -62,4 +62,37 @@ test("account-offered GPT-6.1 Terra resolves from the bundled Responses catalog"
   provider: "chatgpt", id: "gpt-6.1-terra", name: "GPT-6.1 Terra (account)", api: "openai-responses",
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
  }]);
+});
+test("PERF-4: refreshConnectionCatalog serves fresh TTL hits without IPC, revalidates stale entries in background, and respects force/invalidation", async () => {
+ let clock = 100_000;
+ invalidateConnectionCatalogCache();
+ const beforeCount = pending.length;
+ const first = refreshConnectionCatalog("chatgpt", { now: () => clock, freshTtlMs: 60_000, staleTtlMs: 300_000 });
+ assert.equal(pending.length, beforeCount + 1, "cold cache must trigger upstream models refresh");
+ reply(pending.at(-1), { ...value("B", 10, "B", 3), models: [{ id: model.id, name: "Cached Model" }] });
+ await first;
+
+ // Fresh hit within TTL: 0 IPC requests
+ clock += 15_000;
+ await refreshConnectionCatalog("chatgpt", { now: () => clock, freshTtlMs: 60_000, staleTtlMs: 300_000 });
+ assert.equal(pending.length, beforeCount + 1, "within TTL must return immediately without new IPC");
+
+ // Stale-while-revalidate window: returns immediately AND kicks off one background refresh
+ clock += 60_000; // age = 75s (>60s, <300s)
+ await refreshConnectionCatalog("chatgpt", { now: () => clock, freshTtlMs: 60_000, staleTtlMs: 300_000 });
+ assert.equal(pending.length, beforeCount + 2, "stale window must trigger background refresh");
+ const bgReq = pending.at(-1);
+ // Concurrent call while background refresh is in flight coalesces instead of duplicating IPC
+ await refreshConnectionCatalog("chatgpt", { now: () => clock, freshTtlMs: 60_000, staleTtlMs: 300_000 });
+ assert.equal(pending.length, beforeCount + 2);
+ reply(bgReq, { ...value("B", 11, "B", 3), models: [{ id: model.id, name: "Revalidated Model" }] });
+ await new Promise((r) => setTimeout(r, 10));
+ assert.equal(chatGPTModels()[0]?.name, "Revalidated Model");
+
+ // Explicit force (?refresh=1) bypasses fresh TTL
+ const forced = refreshConnectionCatalog("chatgpt", { force: true, now: () => clock, freshTtlMs: 60_000, staleTtlMs: 300_000 });
+ assert.equal(pending.length, beforeCount + 3, "force refresh must bypass cache");
+ reply(pending.at(-1), { ...value("B", 12, "B", 3), models: [{ id: model.id, name: "Forced Model" }] });
+ await forced;
+ assert.equal(chatGPTModels()[0]?.name, "Forced Model");
 });

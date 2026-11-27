@@ -50,6 +50,7 @@ import { AgentSection, composePromptSwitch } from "./agent-section.tsx";
 import type { ModelsSettings } from "@/src/core";
 import { MENU_CLOSE_EVENT, MENU_OPEN_EVENT } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
+import { fetchSettingsSwr, getSwrData, prefetchSettingsBundle, setSwrData, SWR_KEYS, type SettingsApiPayload } from "@/components/client-swr";
 import { KeysSection } from "./keys-section.tsx";
 import { Hint } from "@/components/ui/hint";
 import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
@@ -119,8 +120,12 @@ export function SettingsDialogProvider({
 		// Controlled layers may accept closure before React commits it.
 		if (interactions.getLayer(layerId) && interactions.popTo(layerId) !== "closed") return;
 		interactions.invalidateOpening();
+		// PERF-1: start /api/settings, /api/keys, and /api/custom-provider in
+		// parallel immediately when opening Providers so Keys never waits sequentially.
+		const targetSection = section ? section as SectionId : "keys";
+		if (targetSection === "keys") prefetchSettingsBundle();
 		setNavigationRequest(request => request + 1);
-		setLandOn(section ? section as SectionId : "keys");
+		setLandOn(targetSection);
 		setLandOnRow(row ?? null);
 		setShow(true);
 	}, [interactions, layerId]);
@@ -198,11 +203,17 @@ export function SettingsDialogBody({
 	const standaloneWriteOrder = useRef(newWriteOrder());
 	const writeOrder = inheritedWriteOrder ?? standaloneWriteOrder;
 	const { snapshot } = usePlugins();
-	const [record, setRecord] = useState<UserSettings | null | undefined>(
-		undefined,
-	);
+	const [record, setRecord] = useState<UserSettings | null | undefined>(() => {
+		if (writeOrder.current.record) return writeOrder.current.record;
+		const cached = getSwrData<SettingsApiPayload>(SWR_KEYS.settings);
+		if (!cached) return undefined;
+		return cached.settings ?? { version: CURRENT_SETTINGS_VERSION };
+	});
 	const [error, setError] = useState<string | null>(null);
-	const [fileAccessError, setFileAccessError] = useState<string | null>(null);
+	const [fileAccessError, setFileAccessError] = useState<string | null>(() => {
+		if (writeOrder.current.fileAccessError !== undefined) return writeOrder.current.fileAccessError;
+		return getSwrData<SettingsApiPayload>(SWR_KEYS.settings)?.fileAccessError ?? null;
+	});
 	// MenuShell open-count — drives the content column's scroll lock.
 	const [openMenus, setOpenMenus] = useState(0);
 	const contentRef = useRef<HTMLDivElement | null>(null);
@@ -276,12 +287,16 @@ export function SettingsDialogBody({
 		return () => { authority.listeners.delete(apply); };
 	}, [writeOrder]);
 
-	// Fetch once per dialog mount. 200 {settings: null} is FIRST BOOT.
+	// Fetch once per dialog mount (sharing any in-flight SWR read from open()).
+	// Warm cached snapshots render immediately while fresh truth revalidates.
 	// A GET started before a newer acknowledged save cannot roll it back.
 	useEffect(() => {
 		const authority = writeOrder.current;
 		const acknowledgedAtRead = authority.acknowledged;
-		setRecord(undefined);
+		const cached = authority.record
+			? { settings: authority.record, fileAccessError: authority.fileAccessError ?? null }
+			: getSwrData<SettingsApiPayload>(SWR_KEYS.settings);
+		if (!cached) setRecord(undefined);
 		let alive = true;
 		const applyLoaded = (loaded: UserSettings | null, fileAccessError: string | null = null) => {
 			if (!alive) return;
@@ -293,14 +308,13 @@ export function SettingsDialogBody({
 			setRecord(unchanged ? loaded : authority.record ?? loaded);
 			setFileAccessError(unchanged ? fileAccessError : authority.fileAccessError ?? null);
 		};
-		fetch("/api/settings")
-			.then((r) =>
-				r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`)),
-			)
-			.then((body: { settings: UserSettings | null; fileAccessError?: string }) =>
+		fetchSettingsSwr({ force: loadAttempt > 0, freshMs: 0 })
+			.then((body) =>
 				applyLoaded(body.settings ?? { version: CURRENT_SETTINGS_VERSION }, body.fileAccessError ?? null),
 			)
-			.catch(() => applyLoaded(null));
+			.catch(() => {
+				if (!cached) applyLoaded(null);
+			});
 		return () => { alive = false; };
 	}, [writeOrder, loadAttempt]);
 
@@ -344,6 +358,7 @@ export function SettingsDialogBody({
 					writeOrder.current.acknowledged = ticket;
 					writeOrder.current.record = stored;
 					writeOrder.current.fileAccessError = reply?.fileAccessError ?? null;
+					setSwrData<SettingsApiPayload>(SWR_KEYS.settings, { settings: stored, fileAccessError: writeOrder.current.fileAccessError });
 					for (const apply of writeOrder.current.listeners) apply(stored, writeOrder.current.fileAccessError);
 					// Every accepted response is a full canonical record, including
 					// appearance saved by an earlier, still-pending section request.

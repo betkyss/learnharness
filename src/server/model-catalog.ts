@@ -23,15 +23,127 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { supportedModelSpeeds, type ModelSpeed } from "../core/model-speed.ts";
 import { piModels } from "../agent/models.ts";
 import { customProviderAvailable } from "./custom-provider.ts";
-import { chatGPTConnected, chatGPTModel, chatGPTModels, refreshChatGPTModels } from "../agent/chatgpt-bridge.ts";
+import { chatGPTConnected, chatGPTModel, chatGPTModels, onChatGPTChange, refreshChatGPTModels } from "../agent/chatgpt-bridge.ts";
 import { NATIVE_SUBSCRIPTIONS } from "../core/contracts/subscriptions.ts";
-import { nativeSubscriptionId, nativeSubscriptionConnected, nativeSubscriptionModel, nativeSubscriptionModels, refreshSubscriptionModels } from "../agent/subscription-bridge.ts";
+import { nativeSubscriptionId, nativeSubscriptionConnected, nativeSubscriptionModel, nativeSubscriptionModels, onNativeSubscriptionChange, refreshSubscriptionModels } from "../agent/subscription-bridge.ts";
 
-export async function refreshConnectionCatalog(provider?: string): Promise<void> {
+export const CONNECTION_CATALOG_FRESH_TTL_MS = 60_000;
+export const CONNECTION_CATALOG_STALE_TTL_MS = 5 * 60_000;
+
+interface ConnectionCacheSlot {
+	refreshedAt: number;
+	generation: number;
+	inflight: Promise<void> | null;
+}
+
+interface ConnectionCatalogCacheState {
+	chatgpt: ConnectionCacheSlot;
+	native: ConnectionCacheSlot;
+	subscribed: boolean;
+}
+
+const CONNECTION_CACHE_KEY = Symbol.for("lh.connection.catalog.cache");
+
+function connectionCache(): ConnectionCatalogCacheState {
+	const g = globalThis as typeof globalThis & { [CONNECTION_CACHE_KEY]?: ConnectionCatalogCacheState };
+	if (!g[CONNECTION_CACHE_KEY]) {
+		g[CONNECTION_CACHE_KEY] = {
+			chatgpt: { refreshedAt: 0, generation: 0, inflight: null },
+			native: { refreshedAt: 0, generation: 0, inflight: null },
+			subscribed: false,
+		};
+	}
+	const state = g[CONNECTION_CACHE_KEY];
+	if (!state.subscribed) {
+		state.subscribed = true;
+		onChatGPTChange(() => invalidateConnectionCatalogCache("chatgpt"));
+		onNativeSubscriptionChange(() => invalidateConnectionCatalogCache("native"));
+	}
+	return state;
+}
+
+/** Explicitly expire cached subscription catalog freshness (called on key/provider/subscription changes or ?refresh=1). */
+export function invalidateConnectionCatalogCache(scope?: "chatgpt" | "native"): void {
+	const state = connectionCache();
+	if (!scope || scope === "chatgpt") {
+		state.chatgpt.refreshedAt = 0;
+		state.chatgpt.generation++;
+	}
+	if (!scope || scope === "native") {
+		state.native.refreshedAt = 0;
+		state.native.generation++;
+	}
+}
+
+async function refreshCachedSlot(
+	slot: ConnectionCacheSlot,
+	canServeCache: () => boolean,
+	run: () => Promise<void>,
+	options?: { force?: boolean; now?: () => number; freshTtlMs?: number; staleTtlMs?: number },
+): Promise<void> {
+	const now = options?.now ?? Date.now;
+	const freshTtlMs = options?.freshTtlMs ?? CONNECTION_CATALOG_FRESH_TTL_MS;
+	const staleTtlMs = options?.staleTtlMs ?? CONNECTION_CATALOG_STALE_TTL_MS;
+	const force = options?.force === true;
+
+	const start = (): Promise<void> => {
+		const gen = ++slot.generation;
+		const promise = run()
+			.then(() => {
+				if (slot.generation === gen) slot.refreshedAt = now();
+			})
+			.finally(() => {
+				if (slot.inflight === promise) slot.inflight = null;
+			});
+		slot.inflight = promise;
+		return promise;
+	};
+
+	if (force) {
+		slot.refreshedAt = 0;
+		await start();
+		return;
+	}
+
+	const age = slot.refreshedAt > 0 ? now() - slot.refreshedAt : Infinity;
+	if (slot.refreshedAt > 0 && canServeCache()) {
+		if (age < freshTtlMs) return;
+		if (age < staleTtlMs) {
+			if (!slot.inflight) void start().catch(() => {});
+			return;
+		}
+	}
+
+	if (slot.inflight) {
+		await slot.inflight;
+		return;
+	}
+	await start();
+}
+
+export async function refreshConnectionCatalog(
+	provider?: string,
+	options?: { force?: boolean; now?: () => number; freshTtlMs?: number; staleTtlMs?: number },
+): Promise<void> {
+	const cache = connectionCache();
 	await Promise.all([
 		// The subscription bridge still trusts only the bundled OpenAI catalog.
-		!provider || provider === "chatgpt" ? refreshChatGPTModels(getBuiltinModels("openai").filter((m): m is Model<"openai-responses"> => m.api === "openai-responses")) : Promise.resolve(),
-		!provider || nativeSubscriptionId(provider) ? refreshSubscriptionModels() : Promise.resolve(),
+		!provider || provider === "chatgpt"
+			? refreshCachedSlot(
+					cache.chatgpt,
+					() => !chatGPTConnected() || chatGPTModels().length > 0,
+					() => refreshChatGPTModels(getBuiltinModels("openai").filter((m): m is Model<"openai-responses"> => m.api === "openai-responses")),
+					options,
+				)
+			: Promise.resolve(),
+		!provider || nativeSubscriptionId(provider)
+			? refreshCachedSlot(
+					cache.native,
+					() => !NATIVE_SUBSCRIPTIONS.some((p) => nativeSubscriptionConnected(p.providerId)) || nativeSubscriptionModels().length > 0,
+					() => refreshSubscriptionModels(),
+					options,
+				)
+			: Promise.resolve(),
 	]);
 }
 function connectionModel(provider: string, id: string): Model<Api> | undefined {

@@ -1004,13 +1004,18 @@ export class SessionModel {
 		await this.resumeStream(true, maxRecoveries, recoveryAttempt + 1);
 	}
 
-	private async fetchView(url: string, signal: AbortSignal | undefined, recoveringDrop: boolean): Promise<Response> {
+	private async fetchView(
+		url: string,
+		signal: AbortSignal | undefined,
+		recoveringDrop: boolean,
+		canRecoverNetwork = recoveringDrop,
+	): Promise<Response> {
 		try {
 			const res = await this.fetch(url, { signal });
 			if (recoveringDrop && !res.ok) throw new Error((await res.text()) || STREAM_DROPPED);
 			return res;
 		} catch (err) {
-			if (recoveringDrop && !signal?.aborted) throw new StreamReadError(err);
+			if (canRecoverNetwork && !signal?.aborted) throw new StreamReadError(err);
 			throw err;
 		}
 	}
@@ -1026,6 +1031,7 @@ export class SessionModel {
 	): Promise<void> {
 		const maxRecoveries = typeof allowRecovery === "number" ? allowRecovery : allowRecovery ? this.maxStreamRecoveries : 0;
 		const isRecoveryPass = recoveryAttempt > 0 || maxRecoveries === 0;
+		const canRecover = recoveryAttempt < maxRecoveries;
 		// External reattachment supersedes unresolved POST preview ownership.
 		// Normal post-ack reattach keeps its preview until the atomic record swap.
 		this.retireImagePreview(this.imagePostOwner);
@@ -1056,15 +1062,15 @@ export class SessionModel {
 					});
 				}
 			}
-			const res = await this.fetchView(`/api/chats/${encodeURIComponent(this.chatId)}/stream`, controller.signal, isRecoveryPass);
+			const res = await this.fetchView(`/api/chats/${encodeURIComponent(this.chatId)}/stream`, controller.signal, isRecoveryPass, canRecover || isRecoveryPass);
 			if (this.consumeAbort !== controller) return;
 			if (!res.ok) throw new Error((await res.text()) || "Failed to attach to the running turn.");
 			await this.consumeStream(res, controller, maxRecoveries, recoveryAttempt);
 		} catch (err) {
 			if (this.consumeAbort !== controller || controller.signal.aborted) return; // intentionally cancelled
-			// If a transient recovery attempt failed and we still have retry budget,
+			// If a transient stream/network error occurred and we still have retry budget,
 			// wait out backoff and retry read-only reattach before surfacing error.
-			if (err instanceof StreamReadError && recoveryAttempt < maxRecoveries && recoveryAttempt > 0) {
+			if (err instanceof StreamReadError && recoveryAttempt < maxRecoveries) {
 				const backoff = this.recoveryBackoffMs[Math.min(recoveryAttempt, this.recoveryBackoffMs.length - 1)] ?? 0;
 				try {
 					if (backoff > 0) await delay(backoff, controller.signal);
@@ -1082,19 +1088,21 @@ export class SessionModel {
 				this.tail = this.tail.filter(m => !this.unconfirmedAnswers.has(m.id));
 				this.unconfirmedAnswers.clear();
 			});
-			this.setError(isRecoveryPass && err instanceof StreamReadError ? STREAM_DROPPED : (err as Error).message);
+			this.setError(err instanceof StreamReadError ? STREAM_DROPPED : (err as Error).message);
 			this.setStatus("error");
 		}
 	}
 
 	/**
-	 * Foreground resume recovery (P0-2): when an iOS/mobile tab returns from
-	 * background, a fetch() SSE reader can hang indefinitely on a half-open
-	 * socket even though the turn already settled (or is still streaming on a
-	 * dead socket). Given fresh `?view=meta` truth from the server:
-	 * - `!meta.turnInFlight`: abort the frozen stream, clear live state, and
-	 *   reconcile immediately so the final response appears without reload.
-	 * - `meta.turnInFlight`: abort the stale reader and cleanly reattach via
+	 * Foreground resume recovery (P0-2 / BUG-2): when an iOS/mobile tab returns
+	 * from background, a fetch() SSE reader can hang indefinitely on a half-open
+	 * socket or reject with a transient STREAM_DROPPED even though the turn
+	 * already settled (or is still streaming server-side). Given fresh `?view=meta`
+	 * truth from the server:
+	 * - `!meta.turnInFlight`: abort any frozen stream, clear live state, and
+	 *   reconcile immediately so the final response appears without reload (and
+	 *   any stale transient STREAM_DROPPED banner clears).
+	 * - `meta.turnInFlight`: abort any stale reader and cleanly reattach via
 	 *   `resumeStream(true)` without duplicating text.
 	 */
 	async recoverFromForeground(
@@ -1106,7 +1114,8 @@ export class SessionModel {
 		},
 		ctx?: { reason?: string; hiddenMs?: number },
 	): Promise<"settled" | "reattached" | "noop"> {
-		if (this.statusValue !== "submitted" && this.statusValue !== "streaming") {
+		const isTransientDrop = this.statusValue === "error" && this.errorValue?.message === STREAM_DROPPED;
+		if (this.statusValue !== "submitted" && this.statusValue !== "streaming" && !isTransientDrop) {
 			return "noop";
 		}
 		if (!meta.turnInFlight) {
@@ -1124,17 +1133,18 @@ export class SessionModel {
 			if (this.reconciliationValue === "ready") this.onReattachSettled?.(reconciledRecord);
 			return "settled";
 		}
-		// If this resync was a gentle focus/short-resume check (not a network drop,
-		// watchdog timeout, pageshow, or >= 3s background freeze) and the active
-		// stream received bytes/pings recently, keep the healthy reader alive
-		// instead of aborting and replaying the turn stream unnecessarily.
+		// If this resync was a gentle focus check (not a background hide >= 1s,
+		// network drop, watchdog timeout, or pageshow) and the active stream
+		// received bytes/pings recently, keep the healthy reader alive instead of
+		// aborting and replaying the turn stream unnecessarily.
 		const forceReattach =
+			isTransientDrop ||
 			!ctx ||
 			ctx.reason === "online" ||
 			ctx.reason === "reconnect" ||
 			ctx.reason === "watchdog" ||
 			ctx.reason === "pageshow" ||
-			(ctx.hiddenMs ?? 0) >= 3_000;
+			(ctx.hiddenMs ?? 0) >= 1_000;
 		if (!forceReattach && this.lastStreamActivityAtValue > 0 && Date.now() - this.lastStreamActivityAtValue < 10_000) {
 			return "noop";
 		}
@@ -1515,6 +1525,9 @@ export class SessionModel {
 			if (turnError !== undefined) {
 				this.errorValue = { message: turnError };
 				this.automaticContinuationBlocked = true;
+			} else if (this.errorValue?.message === STREAM_DROPPED) {
+				this.errorValue = null;
+				if (this.statusValue === "error") this.statusValue = "ready";
 			}
 			this.forgetResolvedDrafts(record);
 			const pluginKeys = new Set(pluginQuestionCallsOf(record).map(call => pluginQuestionOccurrenceKey(call.occurrence)));

@@ -132,7 +132,7 @@ export function questionCardStandIn(doc: Document, c: QuestionCardContent): { qu
 		const icon = mark(!c.multiSelect);
 		const letter = c.optionLetters?.[i];
 		if (letter) icon.append(el("span", QC_OPTION_LETTER, letter));
-		list.append(el("button", QC_OPTION_ROW, icon, el("span", "", ...contents(option))));
+		list.append(el("button", QC_OPTION_ROW, icon, el("span", "min-w-0 flex-1", ...contents(option))));
 	}
 	if (c.kind === "quiz") list.append(el("button", cn(QC_OPTION_ROW, "border-dashed"), mark(true), el("span", "", "I don't know")));
 	if (c.kind === "ask") {
@@ -973,7 +973,7 @@ function QuestionDockForm({
 									</span>
 								)}
 							</span>
-							<span>
+							<span className="min-w-0 flex-1">
 								<ToolContentResponse>{opt.label}</ToolContentResponse>
 								{kind !== "quiz" && opt.description && (
 									// Option subtext renders in Source Sans 3 (owner's mockup);
@@ -1098,7 +1098,7 @@ function QuestionDockForm({
 	);
 
 	return (
-		<div ref={rootRef} data-testid="question-dock" data-question-layout={columns ? "columns" : "stacked"} className={cn("relative", (qd.options.length > 6 || qd.question.length > 240) && "question-long")}>
+		<div ref={rootRef} data-testid="question-dock" data-question-layout={columns ? "columns" : "stacked"} className={cn("relative max-md:flex max-md:flex-col", (qd.options.length > 6 || qd.question.length > 240) && "question-long")}>
 			{onCollapse && (
 				<button
 					type="button"
@@ -1130,7 +1130,7 @@ function QuestionDockForm({
 				data-dock-scroll-area={columns ? undefined : ""}
 				data-session-find-root=""
 				data-testid={columns ? "question-columns" : undefined}
-				className={columns ? "grid" : cn("max-h-[var(--dock-max-h,55dvh)] overflow-y-auto overscroll-y-contain", STACKED_AREA_PAD)}
+				className={columns ? "grid" : cn("max-h-[var(--dock-max-h,55dvh)] max-md:min-h-0 max-md:flex-1 overflow-y-auto overscroll-y-contain", STACKED_AREA_PAD)}
 				style={columns ? { gridTemplateColumns: `minmax(0, 1fr) ${columns.answer}px` } : undefined}
 			>
 				<div
@@ -1156,7 +1156,7 @@ function QuestionDockForm({
 			    is for dumping, soon dictated; the button submits); text mode
 			    keeps "Your answer" with Enter-to-submit. */}
 			<form
-				className="border-t border-border/60 p-1.5 max-md:border-border/40 max-md:p-2"
+				className="border-t border-border/60 p-1.5 max-md:shrink-0 max-md:border-border/40 max-md:p-2"
 				onSubmit={(e) => {
 					e.preventDefault();
 					submit();

@@ -25,27 +25,81 @@
 class PcmCaptureProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
+		this.targetRate = 16000;
+		this.inputRate = typeof sampleRate === "number" && sampleRate > 0 ? sampleRate : this.targetRate;
+		this.ratio = this.inputRate / this.targetRate;
 		this.frame = new Int16Array(2048);
 		this.count = 0;
+		this.bucketSum = 0;
+		this.bucketFill = 0;
+		this.port.onmessage = (event) => {
+			if (event && event.data && event.data.type === "flush") {
+				this.flush();
+			}
+		};
+	}
+
+	pushSample(sample) {
+		const s = Math.max(-1, Math.min(1, sample));
+		this.frame[this.count++] = s < 0 ? Math.round(s * 0x8000) : Math.round(s * 0x7fff);
+		if (this.count === this.frame.length) {
+			this.port.postMessage({ type: "audio", buffer: this.frame.buffer }, [this.frame.buffer]);
+			this.frame = new Int16Array(2048);
+			this.count = 0;
+		}
+	}
+
+	flush() {
+		if (this.bucketFill > 1e-6 && this.ratio > 1) {
+			this.pushSample(this.bucketSum / this.bucketFill);
+			this.bucketSum = 0;
+			this.bucketFill = 0;
+		}
+		if (this.count > 0) {
+			const tail = this.frame.slice(0, this.count);
+			this.count = 0;
+			this.port.postMessage({ type: "audio", buffer: tail.buffer }, [tail.buffer]);
+		}
 	}
 
 	process(inputs) {
 		const channel = inputs[0] && inputs[0][0];
-		if (!channel) return true; // no input yet — stay alive
+		if (!channel || channel.length === 0) return true; // no input yet — stay alive
 
 		// RMS for the meter (float domain, before conversion).
 		let sumSquares = 0;
 		for (let i = 0; i < channel.length; i++) sumSquares += channel[i] * channel[i];
 		this.port.postMessage({ type: "level", rms: Math.sqrt(sumSquares / channel.length) });
 
-		// Float32 → Int16 (clamp first: a hot mic can exceed ±1.0).
-		for (let i = 0; i < channel.length; i++) {
-			const s = Math.max(-1, Math.min(1, channel[i]));
-			this.frame[this.count++] = s < 0 ? s * 0x8000 : s * 0x7fff;
-			if (this.count === this.frame.length) {
-				this.port.postMessage({ type: "audio", buffer: this.frame }, [this.frame.buffer]);
-				this.frame = new Int16Array(2048);
-				this.count = 0;
+		// Float32 (native hardware rate, e.g. 48kHz on iOS) → 16kHz Int16 PCM.
+		const ratio = this.ratio;
+		if (Math.abs(ratio - 1) < 1e-6) {
+			for (let i = 0; i < channel.length; i++) this.pushSample(channel[i]);
+		} else if (ratio > 1) {
+			for (let i = 0; i < channel.length; i++) {
+				const x = channel[i];
+				let remain = 1;
+				while (remain > 1e-9) {
+					const need = ratio - this.bucketFill;
+					const take = remain < need ? remain : need;
+					this.bucketSum += x * take;
+					this.bucketFill += take;
+					remain -= take;
+					if (this.bucketFill >= ratio - 1e-9) {
+						this.pushSample(this.bucketSum / ratio);
+						this.bucketSum = 0;
+						this.bucketFill = 0;
+					}
+				}
+			}
+		} else {
+			const outLen = Math.max(1, Math.round(channel.length / ratio));
+			for (let o = 0; o < outLen; o++) {
+				const pos = o * ratio;
+				const idx = Math.min(channel.length - 1, Math.floor(pos));
+				const next = Math.min(channel.length - 1, idx + 1);
+				const frac = pos - idx;
+				this.pushSample(channel[idx] * (1 - frac) + channel[next] * frac);
 			}
 		}
 		return true;

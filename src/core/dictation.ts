@@ -88,3 +88,109 @@ export function deepgramListenUrl(language: DictationLanguage): string {
 		"&smart_format=true&punctuate=true&endpointing=300" +
 		`&language=${encodeURIComponent(language)}`;
 }
+
+export const DICTATION_SAMPLE_RATE = 16_000;
+export const DICTATION_FRAME_SAMPLES = 2048;
+
+export interface PcmResampler {
+	/** Process a Float32 mono audio block; returns RMS loudness (0..1) and any completed 16kHz Int16 frames. */
+	push(channel: Float32Array): { rms: number; frames: Int16Array[] };
+	/** Emit any remaining partial samples as a final Int16Array frame (empty if none buffered). */
+	flush(): Int16Array | null;
+}
+
+/**
+ * Downsample Float32 mono audio from any hardware rate (e.g. iOS 48kHz / 44.1kHz
+ * or desktop 16kHz) to 16kHz linear16 PCM frames using an exact weighted box filter.
+ * Mirrors public/worklets/pcm-capture.js for the ScriptProcessorNode fallback and unit tests.
+ */
+export function createPcmResampler(
+	inputRate: number,
+	targetRate = DICTATION_SAMPLE_RATE,
+	frameSamples = DICTATION_FRAME_SAMPLES,
+): PcmResampler {
+	const safeInputRate = Number.isFinite(inputRate) && inputRate > 0 ? inputRate : targetRate;
+	const ratio = safeInputRate / targetRate;
+	let frame = new Int16Array(frameSamples);
+	let count = 0;
+	let bucketSum = 0;
+	let bucketFill = 0;
+
+	const toInt16 = (sample: number): number => {
+		const s = Math.max(-1, Math.min(1, sample));
+		return s < 0 ? Math.round(s * 0x8000) : Math.round(s * 0x7fff);
+	};
+
+	const emitSample = (sample: number, frames: Int16Array[]) => {
+		frame[count++] = toInt16(sample);
+		if (count === frame.length) {
+			frames.push(frame);
+			frame = new Int16Array(frameSamples);
+			count = 0;
+		}
+	};
+
+	return {
+		push(channel: Float32Array) {
+			const frames: Int16Array[] = [];
+			if (channel.length === 0) return { rms: 0, frames };
+			let sumSquares = 0;
+			for (let i = 0; i < channel.length; i++) {
+				const x = channel[i]!;
+				sumSquares += x * x;
+			}
+			const rms = Math.sqrt(sumSquares / channel.length);
+
+			if (Math.abs(ratio - 1) < 1e-6) {
+				for (let i = 0; i < channel.length; i++) emitSample(channel[i]!, frames);
+			} else if (ratio > 1) {
+				for (let i = 0; i < channel.length; i++) {
+					const x = channel[i]!;
+					let remain = 1;
+					while (remain > 1e-9) {
+						const need = ratio - bucketFill;
+						const take = remain < need ? remain : need;
+						bucketSum += x * take;
+						bucketFill += take;
+						remain -= take;
+						if (bucketFill >= ratio - 1e-9) {
+							emitSample(bucketSum / ratio, frames);
+							bucketSum = 0;
+							bucketFill = 0;
+						}
+					}
+				}
+			} else {
+				// Upsampling fallback (rare: inputRate < 16kHz) via linear interpolation.
+				const outLen = Math.max(1, Math.round(channel.length / ratio));
+				for (let o = 0; o < outLen; o++) {
+					const pos = o * ratio;
+					const idx = Math.min(channel.length - 1, Math.floor(pos));
+					const next = Math.min(channel.length - 1, idx + 1);
+					const frac = pos - idx;
+					emitSample(channel[idx]! * (1 - frac) + channel[next]! * frac, frames);
+				}
+			}
+			return { rms, frames };
+		},
+		flush() {
+			const frames: Int16Array[] = [];
+			if (bucketFill > 1e-6 && ratio > 1) {
+				emitSample(bucketSum / bucketFill, frames);
+				bucketSum = 0;
+				bucketFill = 0;
+			}
+			if (frames.length > 0 && count === 0) return frames[0]!;
+			if (count === 0) return null;
+			const tail = frame.slice(0, count);
+			count = 0;
+			if (frames.length > 0) {
+				const combined = new Int16Array(frames[0]!.length + tail.length);
+				combined.set(frames[0]!);
+				combined.set(tail, frames[0]!.length);
+				return combined;
+			}
+			return tail;
+		},
+	};
+}

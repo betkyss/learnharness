@@ -23,6 +23,10 @@ export interface DockHeightMeasurements {
 	/** The question's UNCAPPED height (its scroll areas' hidden overflow
 	 *  added back); defaults to questionHeight. */
 	questionNaturalHeight?: number;
+	/** Mobile virtual keyboard open (UX-2): keep the answer/thinking form +
+	 *  Submit button pinned at the bottom while the upper question/options
+	 *  region scrolls independently above it. */
+	pinFormToBottom?: boolean;
 }
 
 /** Owner (session-appearance-layout): a scroll area showing fewer than about
@@ -38,6 +42,17 @@ export function dockHeightBudget(m: DockHeightMeasurements) {
 	const questionMaxHeight = m.questionHeight === null
 		? null
 		: Math.max(viewportMaxHeight - (naturalHeight - m.questionHeight), 0);
+	// On mobile with software keyboard open (UX-2), keep the bottom form +
+	// Submit button pinned visible instead of letting whole-dock scroll push
+	// the submit button offscreen when typing multiline thinking text.
+	if (m.pinFormToBottom && questionMaxHeight !== null) {
+		return {
+			viewportMaxHeight,
+			shellMaxHeight,
+			questionMaxHeight,
+			scrollWholeContent: false,
+		};
+	}
 	// A cap that would clip the question down to less than a usable content
 	// viewport (its padding plus about three lines) is useless: deliberately
 	// uncap the question and scroll the whole content instead. A question
@@ -122,6 +137,11 @@ export function syncDockHeight(elements: DockHeightElements, expanded: boolean) 
 	const question = expanded ? content.querySelector<HTMLElement>(DOCK_HEIGHT_REGION) : null;
 	const height = (el: HTMLElement) => el.getBoundingClientRect().height;
 	const shellStyle = getComputedStyle(shell);
+	const pinFormToBottom =
+		typeof document !== "undefined" &&
+		typeof window !== "undefined" &&
+		document.documentElement.dataset.keyboardOpen === "true" &&
+		window.innerWidth < 768;
 	const budget = dockHeightBudget({
 		columnHeight: column.clientHeight,
 		outsideHeight: Math.max(height(block) - height(viewport), 0),
@@ -132,6 +152,7 @@ export function syncDockHeight(elements: DockHeightElements, expanded: boolean) 
 		questionPaddingHeight: question ? regionChrome(question) : 0,
 		questionMinContentHeight: question ? minContentHeight(question) : 0,
 		...(question ? { questionNaturalHeight: naturalRegionHeight(question, height(question)) } : {}),
+		pinFormToBottom,
 	});
 	block.dataset.dockWholeScroll = String(budget.scrollWholeContent);
 	if (budget.questionMaxHeight === null) block.style.removeProperty("--dock-max-h");

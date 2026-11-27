@@ -120,6 +120,21 @@ export interface MobileSessionSheetBodyProps {
 	closeBtnRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
+/** UX-1 mobile sheet swipe-down dismiss rule (exported for unit tests). */
+export function shouldCommitSheetDismiss(opts: {
+	dy: number;
+	dx: number;
+	durationMs: number;
+	startedInHeader: boolean;
+	scrollTopAtStart: number;
+}): boolean {
+	if (!opts.startedInHeader && opts.scrollTopAtStart > 2) return false;
+	if (opts.dy < 36) return false;
+	if (Math.abs(opts.dx) > opts.dy * 0.85) return false;
+	const velocity = opts.dy / Math.max(opts.durationMs, 1);
+	return opts.dy >= 88 || (velocity >= 0.45 && opts.dy >= 36);
+}
+
 /** Pure fullscreen T3-Code-inspired session settings body (exportable for SSR/unit tests). */
 export function MobileSessionSheetBody({
 	chatId,
@@ -147,6 +162,85 @@ export function MobileSessionSheetBody({
 	const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 	const [expandedOption, setExpandedOption] = useState<"thinking" | "speed" | null>(null);
 	const [turnsExpanded, setTurnsExpanded] = useState(false);
+	const [dragY, setDragY] = useState(0);
+	const [dragging, setDragging] = useState(false);
+	const scrollBodyRef = useRef<HTMLDivElement>(null);
+	const swipeRef = useRef<{
+		startX: number;
+		startY: number;
+		lastX: number;
+		lastY: number;
+		startTime: number;
+		startedInHeader: boolean;
+		scrollTopAtStart: number;
+		locked: boolean;
+	} | null>(null);
+
+	const beginSwipe = useCallback((e: React.TouchEvent, startedInHeader: boolean) => {
+		if (e.touches.length !== 1) return;
+		const scrollTopAtStart = scrollBodyRef.current?.scrollTop ?? 0;
+		if (!startedInHeader && scrollTopAtStart > 2) return;
+		const touch = e.touches[0]!;
+		swipeRef.current = {
+			startX: touch.clientX,
+			startY: touch.clientY,
+			lastX: touch.clientX,
+			lastY: touch.clientY,
+			startTime: Date.now(),
+			startedInHeader,
+			scrollTopAtStart,
+			locked: false,
+		};
+	}, []);
+
+	const moveSwipe = useCallback((e: React.TouchEvent) => {
+		const swipe = swipeRef.current;
+		if (!swipe || e.touches.length !== 1) return;
+		const touch = e.touches[0]!;
+		swipe.lastX = touch.clientX;
+		swipe.lastY = touch.clientY;
+		const dy = touch.clientY - swipe.startY;
+		const dx = touch.clientX - swipe.startX;
+		if (!swipe.locked) {
+			if (dy < 8) {
+				if (dy < -8 || Math.abs(dx) > 14) swipeRef.current = null;
+				return;
+			}
+			if (Math.abs(dx) > dy * 0.9) {
+				swipeRef.current = null;
+				return;
+			}
+			if (!swipe.startedInHeader && (scrollBodyRef.current?.scrollTop ?? 0) > 2) {
+				swipeRef.current = null;
+				return;
+			}
+			swipe.locked = true;
+			setDragging(true);
+		}
+		setDragY(Math.max(0, dy));
+	}, []);
+
+	const endSwipe = useCallback(() => {
+		const swipe = swipeRef.current;
+		swipeRef.current = null;
+		if (!swipe) return;
+		const finalY = Math.max(0, swipe.lastY - swipe.startY);
+		const finalX = swipe.lastX - swipe.startX;
+		setDragging(false);
+		setDragY(0);
+		if (
+			swipe.locked &&
+			shouldCommitSheetDismiss({
+				dy: finalY,
+				dx: finalX,
+				durationMs: Date.now() - swipe.startTime,
+				startedInHeader: swipe.startedInHeader,
+				scrollTopAtStart: swipe.scrollTopAtStart,
+			})
+		) {
+			onClose();
+		}
+	}, [onClose]);
 
 	const groups = useMemo(
 		() => groupModelsByProvider(models, query, effectiveProvider),
@@ -195,10 +289,23 @@ export function MobileSessionSheetBody({
 		<div
 			data-testid="mobile-session-sheet"
 			className="flex h-full w-full flex-col bg-background text-foreground"
+			style={dragY > 0 || dragging ? {
+				transform: `translateY(${dragY}px)`,
+				transition: dragging ? "none" : "transform 180ms cubic-bezier(0.22, 1, 0.36, 1)",
+			} : undefined}
 		>
-			{/* Header: T3 Code exact geometry (54px + safe-area-top, circular ✕ and ✓) */}
-			<header className="lh-mobile-fs-header shrink-0 border-b border-border/60 bg-background">
-				<div className="flex h-[54px] items-center justify-between gap-3 px-4">
+			{/* Header: T3 Code exact geometry (54px + safe-area-top, subtle iOS grabber, circular ✕ and ✓) */}
+			<header
+				className="lh-mobile-fs-header shrink-0 border-b border-border/60 bg-background"
+				onTouchStart={(e) => beginSwipe(e, true)}
+				onTouchMove={moveSwipe}
+				onTouchEnd={endSwipe}
+				onTouchCancel={endSwipe}
+			>
+				<div className="flex justify-center pt-1.5" aria-hidden>
+					<span data-testid="mobile-session-sheet-grabber" className="h-1 w-9 rounded-full bg-muted-foreground/30" />
+				</div>
+				<div className="flex h-[50px] items-center justify-between gap-3 px-4">
 					<button
 						ref={closeBtnRef}
 						type="button"
@@ -225,7 +332,14 @@ export function MobileSessionSheetBody({
 			</header>
 
 			{/* Scrollable body */}
-			<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
+			<div
+				ref={scrollBodyRef}
+				onTouchStart={(e) => beginSwipe(e, false)}
+				onTouchMove={moveSwipe}
+				onTouchEnd={endSwipe}
+				onTouchCancel={endSwipe}
+				className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3"
+			>
 				<div className="flex flex-col gap-4 pb-3">
 					{error && (
 						<p role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 px-3.5 py-2.5 text-sm text-destructive">
@@ -499,9 +613,9 @@ export function MobileSessionSheetBody({
 				</div>
 			</div>
 
-			{/* Sticky bottom search bar (T3 Code IMG_1027 / IMG_1028 style, 16px anti-zoom) */}
-			<div className="shrink-0 border-t border-border/50 bg-background/95 px-4 pt-2 pb-[calc(10px+env(safe-area-inset-bottom,0px))] backdrop-blur">
-				<div className="flex h-11 items-center gap-2 rounded-full border border-border/80 bg-card px-3.5">
+			{/* Sticky bottom search bar (SYM-1 unified h-10 rounded-xl + SPACE-1 compact safe bottom, 16px anti-zoom) */}
+			<div className="lh-mobile-sheet-footer shrink-0 border-t border-border/50 bg-background/95 px-4 pt-2 pb-[var(--mobile-safe-bottom,calc(10px+env(safe-area-inset-bottom,0px)))] backdrop-blur">
+				<div className="flex h-10 items-center gap-2 rounded-xl border border-border/80 bg-card px-3">
 					<SearchIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
 					<input
 						type="search"
@@ -566,9 +680,10 @@ export function MobileSessionControl({
 
 	const handleOpen = useCallback(() => {
 		setError(null);
-		refresh();
+		// Avoid hammering /api/models mid-turn when the catalog is already hydrated.
+		if (!catalog) refresh();
 		setOpen(true);
-	}, [refresh, setError]);
+	}, [catalog, refresh, setError]);
 
 	const handleClose = useCallback(() => {
 		setOpen(false);

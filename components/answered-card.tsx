@@ -234,7 +234,7 @@ export function AnsweredCard({ answer: savedAnswer, input, toolCallId }: { answe
 										{(key || sel) && <GlyphMark kind={key ? "check" : "x"} className="size-3.5" />}
 									</span>
 								)}
-								<span data-answered-option-label="" className={cn(!sel && "text-muted-foreground")}>
+								<span data-answered-option-label="" className={cn("min-w-0 flex-1", !sel && "text-muted-foreground")}>
 									<ToolContentResponse>{opt.label}</ToolContentResponse>
 									{descByIndex.get(opt.index) && (
 										// Ask-option subtext (owner, 2026-10-12): same markdown path

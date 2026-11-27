@@ -780,8 +780,20 @@ body {
 .draft-invitation > div { padding: 0; }
 .practice-problem:not([open]) summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .practice-problem[open] summary > span + span { display: none; }
-/* Keep short inline formulas together. A long formula gets its own horizontal scroll. */
-.lh-prose .katex:not(.katex-display .katex) { display: inline-block; max-width: 100%; overflow-x: auto; overflow-y: hidden; vertical-align: middle; white-space: nowrap; }
+/* Keep short inline formulas together outside session surfaces too without
+ * overriding [data-session-surface] glyph-room math, baseline alignment, or
+ * .lh-nobreak groups. */
+.lh-prose :not(.katex-display, .lh-nobreak) > .katex {
+	display: inline-block;
+	padding: 0.5em 0.2em;
+	margin: -0.5em -0.2em;
+	max-width: calc(100% + 0.4em);
+	overflow-x: auto;
+	overflow-y: hidden;
+	vertical-align: baseline;
+	baseline-source: first;
+	white-space: nowrap;
+}
 @media (max-width: 767px) {
 
  .settings-control { max-width: 100%; }
@@ -1005,11 +1017,30 @@ html:not(.lh-electron) .lh-floating-header {
 	}
 	html:not(.lh-electron) .lh-dock-block,
 	html:not(.lh-electron) [data-home-dock] {
-		padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+		padding-bottom: var(--mobile-safe-bottom, calc(0.5rem + env(safe-area-inset-bottom, 0px)));
+	}
+	html:not(.lh-electron) [data-session-sidebar] .lh-sidebar-footer {
+		padding-bottom: var(--mobile-safe-bottom, calc(0.75rem + env(safe-area-inset-bottom, 0px)));
+	}
+	html:not(.lh-electron) .lh-mobile-sheet-footer {
+		padding-bottom: var(--mobile-safe-bottom, calc(0.625rem + env(safe-area-inset-bottom, 0px)));
 	}
 	html[data-keyboard-open="true"]:not(.lh-electron) .lh-dock-block,
-	html[data-keyboard-open="true"]:not(.lh-electron) [data-home-dock] {
+	html[data-keyboard-open="true"]:not(.lh-electron) [data-home-dock],
+	html[data-keyboard-open="true"]:not(.lh-electron) .lh-mobile-sheet-footer {
 		padding-bottom: 0.5rem;
+	}
+	/* UX-2: when iOS virtual keyboard opens over QuestionDock, cap the input
+	   height so the pinned Submit button and input stay 100% visible above the keyboard. */
+	html[data-keyboard-open="true"] [data-testid="question-dock"] [contenteditable] {
+		min-height: 40px;
+		max-height: 6.5rem;
+		overflow-y: auto;
+	}
+	/* UX-1: crisp mobile touch responsiveness without WebKit gray tap flash. */
+	button, a, [role="button"] {
+		-webkit-tap-highlight-color: transparent;
+		touch-action: manipulation;
 	}
 	html:not(.lh-electron) .lh-mobile-fs-header {
 		padding-top: env(safe-area-inset-top, 0px);
@@ -1054,11 +1085,22 @@ html:not(.lh-electron) .lh-floating-header {
 		height: var(--vvh, var(--lh-app-height, 100dvh));
 	}
 }
+@media (display-mode: standalone) and (max-width: 767px) {
+	/* SPACE-1 / SPACE-2: unified compact bottom-inset token for iOS standalone PWA
+	   (~22pt on iPhone 13 with 34pt safe-area -> ~9pt clean air above the Home indicator,
+	   cutting 20-28pt of excess dead space across composer, dock, sidebar, sheets & settings). */
+	:root {
+		--mobile-safe-bottom: max(12px, calc(env(safe-area-inset-bottom, 0px) - 12px));
+	}
+	html, body, .lh-app-root {
+		overscroll-behavior: none;
+	}
+}
 @media (max-height: 500px) {
 	html:not(.lh-electron) [data-session-sidebar] .lh-lights-gutter {
 		padding-top: calc(4px + env(safe-area-inset-top, 0px));
 	}
 	html:not(.lh-electron) [data-home-dock] {
-		padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+		padding-bottom: var(--mobile-safe-bottom, calc(8px + env(safe-area-inset-bottom, 0px)));
 	}
 }

@@ -42,6 +42,7 @@ import { useInteractionLayer, useInteractionLayers, useOptionalInteractionLayers
 import { isInteractionScopeEligible } from "@/components/plugin-input-focus";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
+import { fetchSwr, getSwrData, invalidateSwr, SWR_KEYS } from "@/components/client-swr";
 import { DictationLanguageSetting } from "@/components/dictation-language";
 
 /** One pi-ai provider with plain API-key auth (the Platform seam —
@@ -370,9 +371,11 @@ export function KeysSection({
 }: {
 	initialRow?: string;
 }) {
-	const [statuses, setStatuses] = useState<AuthKeyStatus[] | null>(null);
-	const [providers, setProviders] = useState<ProviderKeyInfo[] | undefined>(undefined);
-	const [loading, setLoading] = useState(true);
+	const initialKeysCache = getSwrData<KeysResponse>(SWR_KEYS.keys);
+	const initialCustomCache = getSwrData<CustomStatus | null>(SWR_KEYS.customProvider);
+	const [statuses, setStatuses] = useState<AuthKeyStatus[] | null>(() => initialKeysCache?.keys ?? null);
+	const [providers, setProviders] = useState<ProviderKeyInfo[] | undefined>(() => initialKeysCache?.providers);
+	const [loading, setLoading] = useState(() => initialKeysCache === undefined);
 	const [loadError, setLoadError] = useState(false);
 	/** The unfolded row (its id), null = all folded. Seeded by the
 	 *  deep-link (initialRow) and re-followed when it retargets. */
@@ -384,7 +387,7 @@ export function KeysSection({
 	const [addingEditors, setAddingEditors] = useState<ProviderKeyInfo[]>([]);
 	const [addError, setAddError] = useState<string | null>(null);
 	/** The custom endpoint's status + whether its connect editor is open. */
-	const [custom, setCustom] = useState<CustomStatus | null>(null);
+	const [custom, setCustom] = useState<CustomStatus | null>(() => initialCustomCache ?? null);
 	const [addingCustom, setAddingCustom] = useState(false);
 	const [customEditorMounted, setCustomEditorMounted] = useState(false);
 	const editorScopeRef = useRef<HTMLDivElement>(null);
@@ -404,31 +407,40 @@ export function KeysSection({
 		setAddingEditors(editors => editors.filter(provider => provider.id !== id));
 	};
 
-	const reload = async () => {
-		setLoading(statuses === null);
+	const reload = async (force = false) => {
+		setLoading((prev) => (statuses === null ? true : prev));
 		setLoadError(false);
-		try {
-			const response = await fetch("/api/keys");
-			if (!response.ok) throw new Error(`status ${response.status}`);
-			const body = await response.json() as KeysResponse;
-			setStatuses(body.keys ?? []);
-			if (body.providers) setProviders(body.providers);
-		} catch {
+		const keysPromise = fetchSwr<KeysResponse>(
+			SWR_KEYS.keys,
+			async () => {
+				const response = await fetch("/api/keys");
+				if (!response.ok) throw new Error(`status ${response.status}`);
+				return (await response.json()) as KeysResponse;
+			},
+			{ force, freshMs: 0, persist: true },
+		);
+		const customPromise = fetchSwr<CustomStatus | null>(
+			SWR_KEYS.customProvider,
+			() => readCustomStatus(),
+			{ force, freshMs: 0, persist: true },
+		);
+		const [keysResult, customResult] = await Promise.allSettled([keysPromise, customPromise]);
+		if (keysResult.status === "fulfilled") {
+			setStatuses(keysResult.value.keys ?? []);
+			if (keysResult.value.providers) setProviders(keysResult.value.providers);
+		} else {
 			setLoadError(true);
-		} finally {
-			setLoading(false);
 		}
+		setLoading(false);
 		// Best-effort and independent: the custom endpoint's status must never
 		// blank the provider-key list above if its fetch fails.
-		try {
-			setCustom(await readCustomStatus());
-		} catch {
-			/* custom status unavailable — leave it unset */
+		if (customResult.status === "fulfilled") {
+			setCustom(customResult.value);
 		}
 	};
 
 	useEffect(() => {
-		void reload();
+		void reload(false);
 	}, []);
 
 	// The deep-link follow: a retarget while the section is open (the
@@ -448,7 +460,8 @@ export function KeysSection({
 			const body = (await res.json().catch(() => ({}))) as { error?: string };
 			return body.error ?? `Save failed (${res.status})`;
 		}
-		await reload();
+		invalidateSwr(SWR_KEYS.keys);
+		await reload(true);
 		// The cross-surface keys signal (zero-keys wave): the zero-keys pill,
 		// the setup dialog's stage advance, and any other keys reader hear
 		// that a key landed — deletions included (see deleteKey below).
@@ -458,7 +471,8 @@ export function KeysSection({
 
 	async function deleteKey(id: string): Promise<void> {
 		await fetch(`/api/keys/${id}`, { method: "DELETE" }).catch(() => undefined);
-		await reload();
+		invalidateSwr(SWR_KEYS.keys);
+		await reload(true);
 		notifySettingsSaved("keys");
 	}
 
@@ -468,7 +482,9 @@ export function KeysSection({
 		const res = await fetch("/api/custom-provider", { method: "DELETE", headers: { "content-type": "application/json", "if-match": revision }, body: JSON.stringify({}) }).catch(() => null);
 		if (!res?.ok) return res ? ((await res.json().catch(() => ({}))).error ?? "Disconnect failed.") : "Disconnect failed. Check your connection.";
 		discardCustomEditor();
-		await reload();
+		invalidateSwr(SWR_KEYS.customProvider);
+		invalidateSwr(SWR_KEYS.keys);
+		await reload(true);
 		notifySettingsSaved("keys");
 		return null;
 	}

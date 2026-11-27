@@ -26,7 +26,7 @@ export function SettingsSection({
 	testid?: string;
 }) {
 	return (
-		<section data-testid={testid} className="px-6 py-5">
+		<section data-testid={testid} className="px-6 py-5 max-md:px-4 max-md:pb-[calc(1.25rem+var(--mobile-safe-bottom,0px))]">
 			<h2 className="text-base font-medium text-foreground">{title}</h2>
 			{hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
 			<div className="mt-4 flex flex-col gap-3">{children}</div>
@@ -95,7 +95,7 @@ export function SettingsMenuTrigger({
 		{...props}
 		disabled={disabled}
 		className={cn(
-			"flex h-8 items-center gap-1 rounded-sm border border-border bg-background px-1.5 font-ui text-xs text-foreground transition-colors",
+			"flex h-8 max-md:h-auto max-md:min-h-10 max-md:rounded-xl max-md:px-3 max-md:text-sm items-center gap-1 rounded-sm border border-border bg-background px-1.5 font-ui text-xs text-foreground transition-colors active:bg-accent/70",
 			disabled || unavailable ? "cursor-not-allowed" : "hover:border-muted-foreground/50",
 			className,
 		)}
@@ -113,11 +113,11 @@ export function SettingsSegmentedControl<T extends string>({ label, options, val
 	testidPrefix?: string;
 	onChange: (value: T) => void;
 }) {
-	return <div role="radiogroup" aria-label={label} className="flex rounded-lg border border-border/60 bg-muted/30 p-0.5">
+	return <div role="radiogroup" aria-label={label} className="flex rounded-lg max-md:rounded-xl border border-border/60 bg-muted/30 p-0.5">
 		{options.map(option => <button key={option.value} type="button" role="radio" aria-checked={option.value === value}
 			data-testid={testidPrefix ? `${testidPrefix}-${option.value}` : undefined}
 			disabled={disabled} onClick={() => onChange(option.value)}
-			className={cn("h-8 rounded-md px-3 text-sm font-medium transition-colors",
+			className={cn("h-8 max-md:min-h-10 max-md:rounded-lg rounded-md px-3 text-sm font-medium transition-colors",
 				option.value === value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
 			{option.label}
 		</button>)}
@@ -213,7 +213,7 @@ export function ThinSelect({
 			disabled={disabled}
 			onChange={(e) => onChange(e.target.value)}
 			className={cn(
-				"h-10 md:h-8 rounded-sm border border-border bg-background px-1.5 font-ui text-base md:text-xs text-foreground outline-none",
+				"h-10 md:h-8 rounded-xl md:rounded-sm border border-border bg-background px-3 md:px-1.5 font-ui text-base md:text-xs text-foreground outline-none",
 				disabled && "cursor-not-allowed",
 			)}
 		>
@@ -342,7 +342,7 @@ export function CommitInput({
 					e.currentTarget.blur();
 				}
 			}}
-			className="h-10 md:h-8 w-full max-w-40 sm:w-40 rounded-sm border border-border bg-background px-2 font-ui text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+			className="h-10 md:h-8 w-full max-w-40 sm:w-40 rounded-xl md:rounded-sm border border-border bg-background px-3 md:px-2 font-ui text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
 		/>
 	);
 }

@@ -80,6 +80,8 @@ import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
 import { useActivity } from "@/components/activity-dock";
 import { useServerEvent, useServerResync } from "@/components/server-events";
+import { BrailleSpinner } from "@/components/braille-spinner";
+import { fetchSwr, getSwrData, setSwrData, SWR_KEYS } from "@/components/client-swr";
 import { MenuShell } from "@/components/menu-shell.tsx";
 import { useInteractionLayers } from "@/components/interaction-layers";
 import { isInteractionScopeEligible } from "@/components/plugin-input-focus";
@@ -913,7 +915,7 @@ export function GraphChromeRow({
 						side="bottom"
 					>
 					<div className="relative">
-						<SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+						<SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 md:size-3.5 -translate-y-1/2 text-muted-foreground" />
 						<input
 							ref={searchInputRef}
 							value={query}
@@ -921,7 +923,7 @@ export function GraphChromeRow({
 							placeholder="Search knowledge…"
 							aria-label="Search knowledge"
 							spellCheck={false}
-							className="h-8 md:h-7 w-full rounded-lg border bg-background pl-8 text-base md:text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
+							className="h-10 md:h-7 w-full rounded-xl md:rounded-lg border bg-background pl-9 md:pl-8 text-base md:text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
 						/>
 					</div>
 					</Hint>
@@ -1020,6 +1022,7 @@ export function GraphView({
 	onPracticeSelectionChange,
 	onChainSelectClose,
 	folderFilterSlot,
+	deferEmptyUntilLoaded = false,
 }: {
 	/** Where the folder filter control portals: the home header's top-left
 	 *  chrome, after the sidebar toggle. Absent → no folder filter control. */
@@ -1033,13 +1036,17 @@ export function GraphView({
 	practiceSelection?: ReadonlySet<string>;
 	onPracticeSelectionChange?: (nodes: { id: string; name: string; statement: string }[]) => void;
 	onChainSelectClose?: () => void;
+	/** PERF-3: show a loading state instead of the empty-graph copy until the
+	 *  initial /api/graph read settles (used by Home; SSR pins keep default false). */
+	deferEmptyUntilLoaded?: boolean;
 }) {
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const interactions = useInteractionLayers();
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const cardRef = useRef<HTMLDivElement | null>(null);
 	const { resolvedMode, colors } = useAppearance();
-	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
+	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(() => getSwrData<GraphSnapshot>(SWR_KEYS.graph) ?? null);
+	const [graphLoaded, setGraphLoaded] = useState(() => getSwrData<GraphSnapshot>(SWR_KEYS.graph) !== undefined);
 	const [selected, setSelected] = useState<Selection | null>(null);
 	useEffect(() => {
 		const close = () => {
@@ -1067,7 +1074,7 @@ export function GraphView({
 	// (user-facing since 2026-09-13; the dev-session era is over). Loaded
 	// once after mount; every user change saves back, debounced. Defaults
 	// render until the load resolves — a fraction of a second at worst.
-	const [settings, setSettings] = useState<GraphRenderSettings>(DEFAULT_RENDER_SETTINGS);
+	const [settings, setSettings] = useState<GraphRenderSettings>(() => getSwrData<GraphRenderSettings>(SWR_KEYS.graphRenderSettings) ?? DEFAULT_RENDER_SETTINGS);
 	// The two nested sections, unpacked for the renderer feed effects
 	// below (same names the old session state had).
 	const regionTuning = settings.regions;
@@ -1086,6 +1093,7 @@ export function GraphView({
 		setSettings(update);
 	};
 	const saveToServer = (s: RenderSettings) => {
+		setSwrData(SWR_KEYS.graphRenderSettings, s, { persist: true });
 		fetch("/api/graph/render-settings", {
 			method: "PUT",
 			headers: { "content-type": "application/json" },
@@ -1093,12 +1101,20 @@ export function GraphView({
 		}).catch((err) => console.error("[graph] settings save failed:", err));
 	};
 	useEffect(() => {
-		fetch("/api/graph/render-settings")
-			.then((res) => (res.ok ? (res.json() as Promise<unknown>) : null))
-			.then((raw) => {
+		fetchSwr<GraphRenderSettings | null>(
+			SWR_KEYS.graphRenderSettings,
+			async () => {
+				const res = await fetch("/api/graph/render-settings");
+				if (!res.ok) return null;
+				const raw = (await res.json()) as unknown;
+				return raw !== null ? sanitizeRenderSettings(raw) : null;
+			},
+			{ freshMs: 0, persist: true },
+		)
+			.then((sanitized) => {
 				// Apply only if the user hasn't already moved a slider —
 				// if they outran the network, their change wins.
-				if (raw !== null && !userTouched.current) setSettings(sanitizeRenderSettings(raw));
+				if (sanitized !== null && !userTouched.current) setSettings(sanitized);
 			})
 			.catch(() => {
 				// server unreachable → in-memory defaults keep working
@@ -1175,12 +1191,25 @@ export function GraphView({
 	}, [chainSelectOpen]);
 	useEffect(() => {
 		let cancelled = false;
-		fetch("/api/graph")
-			.then((res) => res.json() as Promise<GraphSnapshot>)
+		fetchSwr<GraphSnapshot>(
+			SWR_KEYS.graph,
+			async () => {
+				const res = await fetch("/api/graph");
+				if (!res.ok) throw new Error(`graph fetch ${res.status}`);
+				return (await res.json()) as GraphSnapshot;
+			},
+			{ force: refreshTick > 0, freshMs: 0, persist: true },
+		)
 			.then((data) => {
-				if (!cancelled) setSnapshot(data);
+				if (!cancelled) {
+					setSnapshot(data);
+					setGraphLoaded(true);
+				}
 			})
-			.catch((err) => console.error("[graph] fetch failed:", err));
+			.catch((err) => {
+				console.error("[graph] fetch failed:", err);
+				if (!cancelled) setGraphLoaded(true);
+			});
 		return () => {
 			cancelled = true;
 		};
@@ -1259,15 +1288,22 @@ export function GraphView({
 	// when a pipeline run finishes (running -> none) so fresh spend lands
 	// without a manual reload. Best-effort: a fetch failure never blocks
 	// the view — the pill just stays on its last numbers.
-	const [costs, setCosts] = useState<GraphCostSummary | null>(null);
-	const refreshCosts = useCallback(() => {
-		fetch("/api/graph/costs")
-			.then((res) => res.json() as Promise<GraphCostSummary>)
+	const [costs, setCosts] = useState<GraphCostSummary | null>(() => getSwrData<GraphCostSummary>(SWR_KEYS.graphCosts) ?? null);
+	const refreshCosts = useCallback((force = false) => {
+		fetchSwr<GraphCostSummary>(
+			SWR_KEYS.graphCosts,
+			async () => {
+				const res = await fetch("/api/graph/costs");
+				if (!res.ok) throw new Error(`graph costs ${res.status}`);
+				return (await res.json()) as GraphCostSummary;
+			},
+			{ force, freshMs: 0, persist: true },
+		)
 			.then(setCosts)
 			.catch(() => {});
 	}, []);
 	useEffect(() => {
-		refreshCosts();
+		refreshCosts(false);
 	}, [refreshCosts]);
 	// The same disappearance rule as the snapshot refresh (owner
 	// 2026-09-28): usage persists per JOB (per-chunk jobs), so costs refresh
@@ -1275,7 +1311,7 @@ export function GraphView({
 	const prevRunIds = useRef(new Set<string>());
 	useEffect(() => {
 		const gone = [...prevRunIds.current].some((id) => !pipelineRuns.some((r) => r.id === id));
-		if (gone && prevRunIds.current.size > 0) refreshCosts();
+		if (gone && prevRunIds.current.size > 0) refreshCosts(true);
 		prevRunIds.current = new Set(pipelineRuns.map((r) => r.id));
 	}, [pipelineRuns, refreshCosts]);
 
@@ -1289,7 +1325,7 @@ export function GraphView({
 	useEffect(() => {
 		const onRevision = () => {
 			setRefreshTick((t) => t + 1);
-			refreshCosts();
+			refreshCosts(true);
 		};
 		window.addEventListener("lh:graph-revision", onRevision);
 		return () => window.removeEventListener("lh:graph-revision", onRevision);
@@ -1387,11 +1423,14 @@ export function GraphView({
 	}, [snapshot]);
 
 	// Construct the renderer once the canvas exists; destroy when it goes
-	// away (the empty-graph placeholder replaces it). The callbacks are
-	// created once and read through refs, so they never go stale.
-	const isEmpty = snapshot === null || snapshot.nodes.length === 0;
+	// away (the empty-graph or loading placeholder replaces it). Separate
+	// `isLoading` from genuinely empty (`PERF-3`) so navigating to Knowledge
+	// never flashes "Start a session to begin learning." while loading.
+	const isLoading = deferEmptyUntilLoaded && snapshot === null && !graphLoaded;
+	const isEmpty = !isLoading && (snapshot === null || snapshot.nodes.length === 0);
+	const canvasHidden = isLoading || isEmpty;
 	useEffect(() => {
-		if (isEmpty) return;
+		if (canvasHidden) return;
 		const canvas = canvasRef.current;
 		if (!canvas) return;
 		// Persisted camera (2026-09-15): the graph reopens exactly where the
@@ -1503,7 +1542,7 @@ export function GraphView({
 			}
 			renderer.destroy();
 		};
-	}, [isEmpty]);
+	}, [canvasHidden]);
 
 	// Feed #1 — data: positions + edges + clusters + resolved colors. Runs
 	// after the layout effect (same commit, declaration order) and after
@@ -1536,14 +1575,14 @@ export function GraphView({
 			// Match the app typography (Geist via the body's stack).
 			fontFamily: getComputedStyle(document.body).fontFamily,
 		});
-	}, [snapshot, isEmpty, resolvedMode, colors]);
+	}, [snapshot, canvasHidden, resolvedMode, colors]);
 
 	// Feed #2 — settings: just marks the frame dirty. No rebuild, no
 	// re-layout, no camera touch (the whole point of the new renderer).
 	const deferredSettings = useDeferredValue(settings);
 	useEffect(() => {
 		rendererRef.current?.setSettings(deferredSettings);
-	}, [deferredSettings, isEmpty]);
+	}, [deferredSettings, canvasHidden]);
 
 	// Feed #3 — visibility: hidden nodes drop out of rendering, picking,
 	// hover, AND labels; edges drop when either endpoint is hidden.
@@ -1551,32 +1590,39 @@ export function GraphView({
 		rendererRef.current?.setVisible(filtering ? visibleIds : null);
 		// The open detail card cannot outlive its node's visibility.
 		setSelected((sel) => (sel && visibleIds.has(sel.node.id) ? sel : null));
-	}, [visibleIds, filtering, isEmpty]);
+	}, [visibleIds, filtering, canvasHidden]);
 
-	// Feed #4 — region tuning. `isEmpty` in the deps (same as Feed #2):
+	// Feed #4 — region tuning. `canvasHidden` in the deps (same as Feed #2):
 	// the settings fetch resolves BEFORE the snapshot creates the renderer,
 	// so the load-time run hits a null renderer and would never re-fire —
 	// the renderer would silently keep the default tuning forever.
 	useEffect(() => {
 		rendererRef.current?.setRegionTuning(regionTuning);
-	}, [regionTuning, isEmpty]);
+	}, [regionTuning, canvasHidden]);
 
 	// Feed #5 — physics tuning: rebuilds the live sim in place (drag pins
 	// survive; a mid-settle change re-anneals, the honest response). Same
-	// isEmpty dep as Feed #4 — see there.
+	// canvasHidden dep as Feed #4 — see there.
 	useEffect(() => {
 		rendererRef.current?.setPhysicsTuning(physicsTuning);
-	}, [physicsTuning, isEmpty]);
+	}, [physicsTuning, canvasHidden]);
 
 	useLayoutEffect(() => {
 		const card = cardRef.current, container = containerRef.current;
 		if (!selected || !card || !container) return;
 		return observeNodeCardPosition(card, container, selected.anchor);
-	}, [selected, isEmpty]);
+	}, [selected, canvasHidden]);
 
 	return (
 		<div className="relative h-full w-full">
-			{isEmpty ? (
+			{isLoading ? (
+				<div data-testid="graph-loading" className="flex h-full w-full items-center justify-center px-4">
+					<div className="flex items-center gap-2 text-xs text-muted-foreground">
+						<BrailleSpinner label="Loading knowledge graph" />
+						<span>Loading knowledge graph…</span>
+					</div>
+				</div>
+			) : isEmpty ? (
 				// The empty graph keeps the first action clear without zero-valued statistics.
 				<div className="flex h-full w-full items-center justify-center px-4">
 					<div className="flex flex-col items-center gap-3 text-center text-muted-foreground">
@@ -1688,13 +1734,13 @@ export function GraphView({
 				{/* The actions row (empty-graph chrome wave, owner 2026-09-25):
 				    Import Notes always — the empty graph's entry point; search +
 				    settings only when nodes exist, fading in on their mount. */}
-				{folderFilterSlot && !isEmpty && organization && createPortal(
+				{folderFilterSlot && !canvasHidden && organization && createPortal(
 					<GraphFolderFilterControl organization={organization} listed={listedFolders}
 						selected={folderSelection} onChange={setFolderSelection} />,
 					folderFilterSlot,
 				)}
 				<GraphChromeRow
-					isEmpty={isEmpty}
+					isEmpty={canvasHidden}
 					query={query}
 					onQuery={setQuery}
 					noMatch={snapshot !== null && visibleIds.size === 0 && query.trim() !== ""}

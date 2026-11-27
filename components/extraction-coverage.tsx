@@ -5,6 +5,7 @@ import { useActivity } from "@/components/activity-dock";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
 import { useSettingsSaved } from "@/components/settings-signal";
+import { fetchSettingsSwr } from "@/components/client-swr";
 import { formatTokens } from "@/components/usage-format";
 import { Hint } from "@/components/ui/hint";
 import { timeAgo } from "@/components/sidebar";
@@ -68,11 +69,9 @@ export interface GraphRead {
 
 /** Exported for the render pin (the ringFill precedent): resolves the
  *  raw settings delta to the factory-true graph section. */
-export async function fetchGraphRead(): Promise<GraphRead | null> {
+export async function fetchGraphRead(force = false): Promise<GraphRead | null> {
 	try {
-		const res = await fetch("/api/settings");
-		if (!res.ok) return null;
-		const body = (await res.json()) as { settings?: Parameters<typeof resolveSettings>[0] };
+		const body = await fetchSettingsSwr({ force, freshMs: force ? 0 : 15_000 });
 		const graph = resolveSettings(body.settings ?? null).graph;
 		return { enabled: graph.enabled, chunkTokens: graph.extractionChunkTokens };
 	} catch {

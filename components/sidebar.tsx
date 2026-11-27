@@ -27,6 +27,7 @@ import { useServerEvent, useServerResync } from "@/components/server-events";
 import type { ChatListItem } from "@/src/core";
 import { kbdEventForAction } from "@/src/core";
 import { notifySettingsSaved } from "@/components/settings-signal";
+import { canSpeculativelyPrefetch, getSwrData, prefetchChatTail, setSwrData, SWR_KEYS } from "@/components/client-swr";
 import { PluginWidgets } from "@/components/plugins";
 import { PluginSidebarActions } from "@/components/plugin-chrome";
 import { HostContentRootContext, HostRouteLifetimeProvider } from "@/components/host-content-root";
@@ -102,11 +103,37 @@ declare global {
 	}
 }
 
-const SidebarContext = createContext<{ open: boolean; toggle: () => void; overlay: boolean; close: () => void }>({
- overlay: false, close: () => {},
+const SidebarContext = createContext<{ open: boolean; toggle: () => void; overlay: boolean; openOverlay: () => void; close: () => void }>({
+ overlay: false, openOverlay: () => {}, close: () => {},
 	open: false,
 	toggle: () => {},
 });
+
+/** UX-1 mobile gestures: left-edge swipe opens overlay sidebar even over
+ *  horizontally scrollable code/tables; swipe-left closes it cleanly. */
+export const EDGE_SWIPE_ZONE_PX = 28;
+
+export function shouldStartEdgeSidebarSwipe(opts: {
+	clientX: number;
+	overlay: boolean;
+	open: boolean;
+	hasModalDialog: boolean;
+}): boolean {
+	return opts.overlay && !opts.open && !opts.hasModalDialog && opts.clientX >= 0 && opts.clientX <= EDGE_SWIPE_ZONE_PX;
+}
+
+export function shouldCommitSidebarSwipe(opts: {
+	dx: number;
+	dy: number;
+	durationMs: number;
+	direction: "open" | "close";
+}): boolean {
+	const signed = opts.direction === "open" ? opts.dx : -opts.dx;
+	if (signed < 28) return false;
+	if (Math.abs(opts.dy) > signed * 0.85) return false;
+	const velocity = signed / Math.max(opts.durationMs, 1);
+	return signed >= 56 || (velocity >= 0.35 && signed >= 28);
+}
 
 export function useSidebar() {
 	return useContext(SidebarContext);
@@ -206,7 +233,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	}, [toggle]);
 
 	return (
-		<SidebarContext.Provider value={{ open: narrow ? (!IS_ELECTRON && drawerOpen) : open, toggle, overlay: narrow && !IS_ELECTRON, close: () => setDrawerOpen(false) }}>
+		<SidebarContext.Provider value={{ open: narrow ? (!IS_ELECTRON && drawerOpen) : open, toggle, overlay: narrow && !IS_ELECTRON, openOverlay: () => setDrawerOpen(true), close: () => setDrawerOpen(false) }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
 			<div className={cn("lh-app-root flex h-[var(--vvh,var(--lh-app-height,100dvh))]", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity,transform]")}>{children}</div>
 		</SidebarContext.Provider>
@@ -316,6 +343,7 @@ export function SessionRow({
 	chat,
 	active,
 	onOpen,
+	onPrefetch,
 	kbdSelected = false,
 	onContextMenu,
 	depth = 0,
@@ -325,6 +353,7 @@ export function SessionRow({
 	compact?: boolean;
 	active: boolean;
 	onOpen: () => void;
+	onPrefetch?: () => void;
 	/** Folder depth in the sidebar tree (0 = unfiled). */
 	depth?: number;
 	/** Keyboard-cycle highlight (shortcut wave A: Alt+↑/↓ + Alt+Enter) —
@@ -337,11 +366,13 @@ export function SessionRow({
 		<button
 			type="button"
 			onClick={onOpen}
+			onPointerDown={onPrefetch}
+			onMouseEnter={onPrefetch}
 			onContextMenu={onContextMenu}
 			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
 			data-session-id={chat.id}
 			className={cn(
-				"relative flex w-full items-center gap-2 text-left hover:bg-accent",
+				"relative flex w-full items-center gap-2 text-left hover:bg-accent active:bg-accent/80",
 				onContextMenu ? "pr-10 md:pr-3" : "pr-3",
 				compact ? SIDEBAR_COMPACT_ROW : "py-2 max-md:min-h-11 max-md:py-2.5",
 				active && "bg-accent",
@@ -469,7 +500,14 @@ function SessionsSidebar() {
 	const { appearance: { compactSessionList } } = useAppearance();
 	const interactions = useInteractionLayers();
 	const { open, toggle, overlay, close } = useSidebar();
-	const [chats, setChats] = useState<ChatListItem[] | null>(null);
+	const [chats, setChats] = useState<ChatListItem[] | null>(() => getSwrData<ChatListItem[]>(SWR_KEYS.chats) ?? null);
+	const updateChats = useCallback((updater: ChatListItem[] | null | ((prev: ChatListItem[] | null) => ChatListItem[] | null)) => {
+		setChats((prev) => {
+			const next = typeof updater === "function" ? updater(prev) : updater;
+			if (next) setSwrData(SWR_KEYS.chats, next, { persist: true });
+			return next;
+		});
+	}, []);
 	const [query, setQuery] = useState("");
 	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
 	useEffect(() => {
@@ -538,14 +576,45 @@ function SessionsSidebar() {
 		try {
 			const res = await fetch("/api/chats", { cache: "no-store" });
 			const d = (await res.json()) as { chats: ChatListItem[] };
-			setChats(d.chats);
+			updateChats(d.chats);
 		} catch {
 			// a transient failure keeps the last snapshot
 			setChats((prev) => prev ?? []);
 		} finally {
 			refreshInFlightRef.current = false;
 		}
-	}, []);
+	}, [updateChats]);
+
+	// Lightweight prefetch (UX-3): warm /chat/new and top 4 visible recent
+	// sessions (route chunk + tail JSON) when sidebar opens or on pointerDown,
+	// respecting Data Saver and deduplicating per route/session.
+	const prefetchedRoutesRef = useRef(new Set<string>());
+	const prefetchChat = useCallback((chat: Pick<ChatListItem, "id" | "title" | "kind">) => {
+		if (!canSpeculativelyPrefetch()) return;
+		const href = `/chat/${chat.id}`;
+		if (!prefetchedRoutesRef.current.has(href)) {
+			prefetchedRoutesRef.current.add(href);
+			try { router.prefetch(href); } catch {}
+		}
+		prefetchChatTail(chat.id, chat);
+	}, [router]);
+
+	useEffect(() => {
+		if (!open || !canSpeculativelyPrefetch()) return;
+		if (!prefetchedRoutesRef.current.has("/chat/new")) {
+			prefetchedRoutesRef.current.add("/chat/new");
+			try { router.prefetch("/chat/new"); } catch {}
+		}
+		const targets = (shown ?? []).slice(0, 4);
+		if (targets.length === 0) return;
+		const timer = setTimeout(() => {
+			for (const chat of targets) {
+				if (pathname === `/chat/${chat.id}`) continue;
+				prefetchChat(chat);
+			}
+		}, 120);
+		return () => clearTimeout(timer);
+	}, [open, shown, pathname, router, prefetchChat]);
 
 	/* Instant rename propagation (2026-09-17): the chat header's rename
 	   commits dispatch lh:chat-renamed; patch the snapshot in place instead
@@ -840,6 +909,7 @@ function SessionsSidebar() {
 							compact={compactSessionList}
 							active={pathname === `/chat/${c.id}`}
 							kbdSelected={kbdId === c.id}
+							onPrefetch={() => prefetchChat(c)}
 							onOpen={() => {
 								setKbdIndex(null);
 								if (overlay) close();
@@ -958,7 +1028,7 @@ function SessionsSidebar() {
 						data-testid="new-session"
 						title="Teaching"
 						onClick={() => void newSession()}
-						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 max-md:min-h-11 max-md:justify-center max-md:rounded-xl max-md:border max-md:border-border/70 max-md:bg-card max-md:px-3 max-md:text-sm max-md:normal-case max-md:tracking-normal max-md:text-foreground text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 max-md:min-h-11 max-md:justify-center max-md:rounded-xl max-md:border max-md:border-border/70 max-md:bg-card max-md:px-3 max-md:text-sm max-md:normal-case max-md:tracking-normal max-md:text-foreground text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:bg-accent/80"
 					>
 						<PlusIcon className="size-3 max-md:size-4 shrink-0" />
 						<span className="min-w-0 truncate">Teaching</span>
@@ -969,7 +1039,7 @@ function SessionsSidebar() {
 						data-testid="new-session-practice"
 						title="Practice"
 						onClick={() => router.push("/chat/new?mode=practice")}
-						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 max-md:min-h-11 max-md:justify-center max-md:rounded-xl max-md:border max-md:border-border/70 max-md:bg-card max-md:px-3 max-md:text-sm max-md:normal-case max-md:tracking-normal max-md:text-foreground text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 max-md:min-h-11 max-md:justify-center max-md:rounded-xl max-md:border max-md:border-border/70 max-md:bg-card max-md:px-3 max-md:text-sm max-md:normal-case max-md:tracking-normal max-md:text-foreground text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:bg-accent/80"
 					>
 						<DumbbellIcon className="size-3 max-md:size-4 shrink-0" />
 						<span className="min-w-0 truncate">Practice</span>
@@ -1032,9 +1102,9 @@ function SessionsSidebar() {
 							}}
 							placeholder="Search…"
 							aria-label="Search sessions"
-							className="h-9 md:h-6 rounded-sm border-border bg-background pl-6 text-base md:text-xs placeholder:text-muted-foreground/60"
+							className="h-10 md:h-6 rounded-xl md:rounded-sm border-border bg-background pl-8 md:pl-6 text-base md:text-xs placeholder:text-muted-foreground/60"
 						/>
-						<SearchIcon className="pointer-events-none absolute left-1.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground/70" />
+						<SearchIcon className="pointer-events-none absolute left-2.5 md:left-1.5 top-1/2 size-4 md:size-3 -translate-y-1/2 text-muted-foreground/70" />
 					</span>
 					{organization && (
 						<Hint label="Add folder" side="bottom">
@@ -1132,7 +1202,7 @@ function SessionsSidebar() {
 									openSettings();
 								}}
 								data-testid="settings-entry"
-								className="flex max-md:min-h-11 max-md:w-full max-md:rounded-xl max-md:px-3 max-md:text-sm max-md:normal-case max-md:tracking-normal max-md:text-foreground items-center gap-2 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="flex max-md:min-h-11 max-md:w-full max-md:rounded-xl max-md:px-3 max-md:text-sm max-md:normal-case max-md:tracking-normal max-md:text-foreground items-center gap-2 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:bg-accent/80"
 							>
 								<SettingsIcon className="size-3" />
 								Settings
@@ -1273,8 +1343,102 @@ function SessionsSidebar() {
 
 /** The app frame: sidebar inline + content. Rendered once in the root layout. */
 export function AppShell({ children }: { children: React.ReactNode }) {
- const { open, overlay, close } = useSidebar();
+ const { open, overlay, openOverlay, close } = useSidebar();
+ const openOverlayRef = useRef(openOverlay); openOverlayRef.current = openOverlay;
  const closeRef = useRef(close); closeRef.current = close;
+ const openRef = useRef(open); openRef.current = open;
+ useEffect(() => {
+  if (!overlay) return;
+  let gesture: {
+   mode: "open" | "close";
+   startX: number;
+   startY: number;
+   startTime: number;
+   lastX: number;
+   lastY: number;
+   locked: boolean;
+  } | null = null;
+  const resetAsideTransform = () => {
+   const aside = document.querySelector<HTMLElement>("[data-session-sidebar]");
+   if (aside) {
+    aside.style.transition = "";
+    aside.style.transform = "";
+   }
+  };
+  const onTouchStart = (event: TouchEvent) => {
+   if (event.touches.length !== 1) {
+    gesture = null;
+    return;
+   }
+   const touch = event.touches[0]!;
+   const isOpen = openRef.current;
+   if (!isOpen) {
+    const hasModal = Boolean(document.querySelector('[role="dialog"]:not([data-session-sidebar])'));
+    if (!shouldStartEdgeSidebarSwipe({ clientX: touch.clientX, overlay: true, open: false, hasModalDialog: hasModal })) return;
+    gesture = { mode: "open", startX: touch.clientX, startY: touch.clientY, startTime: Date.now(), lastX: touch.clientX, lastY: touch.clientY, locked: false };
+   } else {
+    const target = event.target instanceof Element ? event.target : null;
+    const aside = document.querySelector<HTMLElement>("[data-session-sidebar]");
+    if (!aside || !target || (!aside.contains(target) && touch.clientX > aside.getBoundingClientRect().right + 32)) return;
+    gesture = { mode: "close", startX: touch.clientX, startY: touch.clientY, startTime: Date.now(), lastX: touch.clientX, lastY: touch.clientY, locked: false };
+   }
+  };
+  const onTouchMove = (event: TouchEvent) => {
+   if (!gesture || event.touches.length !== 1) return;
+   const touch = event.touches[0]!;
+   const dx = touch.clientX - gesture.startX;
+   const dy = touch.clientY - gesture.startY;
+   gesture.lastX = touch.clientX;
+   gesture.lastY = touch.clientY;
+   if (!gesture.locked) {
+    if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) {
+     gesture = null;
+     resetAsideTransform();
+     return;
+    }
+    const horizontalProgress = gesture.mode === "open" ? dx : -dx;
+    if (horizontalProgress > 10 && horizontalProgress > Math.abs(dy) * 1.15) {
+     gesture.locked = true;
+    } else {
+     return;
+    }
+   }
+   // Claim horizontal edge swipe in capture phase before inner code/table scrollers.
+   if (event.cancelable) event.preventDefault();
+   if (gesture.mode === "close") {
+    const aside = document.querySelector<HTMLElement>("[data-session-sidebar]");
+    if (aside) {
+     aside.style.transition = "none";
+     aside.style.transform = `translateX(${Math.min(0, dx)}px)`;
+    }
+   }
+  };
+  const onTouchEnd = () => {
+   if (!gesture) return;
+   const current = gesture;
+   gesture = null;
+   resetAsideTransform();
+   if (!current.locked) return;
+   const dx = current.lastX - current.startX;
+   const dy = current.lastY - current.startY;
+   const durationMs = Date.now() - current.startTime;
+   if (shouldCommitSidebarSwipe({ dx, dy, durationMs, direction: current.mode })) {
+    if (current.mode === "open") openOverlayRef.current();
+    else closeRef.current();
+   }
+  };
+  window.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+  window.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+  window.addEventListener("touchend", onTouchEnd, { capture: true, passive: true });
+  window.addEventListener("touchcancel", onTouchEnd, { capture: true, passive: true });
+  return () => {
+   resetAsideTransform();
+   window.removeEventListener("touchstart", onTouchStart, { capture: true });
+   window.removeEventListener("touchmove", onTouchMove, { capture: true });
+   window.removeEventListener("touchend", onTouchEnd, { capture: true });
+   window.removeEventListener("touchcancel", onTouchEnd, { capture: true });
+  };
+ }, [overlay]);
  useEffect(() => {
   if (!open || !overlay) return;
   const previous = document.activeElement as HTMLElement | null;

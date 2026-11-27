@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { Hint } from "@/components/ui/hint";
-import { deepgramListenUrl, type DictationLanguage } from "@/src/core";
+import { createPcmResampler, deepgramListenUrl, type DictationLanguage, type PcmResampler } from "@/src/core";
 import { useDictationLanguage } from "@/components/dictation-preference";
 import { setDictationActive } from "@/components/dictation-state";
 import { dispatchFocusedPluginShortcut } from "@/components/plugin-input-focus";
@@ -200,20 +200,52 @@ const warmTokens = createWarmMinter(mintFreshToken);
 
 /* Persistent capture graph (mitigation C, owner 2026-09-27): one
  * app-lifetime AudioContext + a module-load memo. Created under the
- * click gesture (autoplay policy) and NEVER closed — per-run nodes
- * (source, worklet) disconnect at teardown instead. */
+ * click gesture (autoplay policy, especially strict in iOS standalone PWA)
+ * at the device's native hardware sample rate (e.g. 48kHz on iPhone) so
+ * WebKit never mutes or stretches 16kHz captures; pcm-capture.js and the
+ * ScriptProcessor fallback resample cleanly down to 16kHz linear16. */
 let sharedCtx: AudioContext | null = null;
 let workletModule: Promise<void> | null = null;
 
-function ensureAudioGraph(): { ctx: AudioContext; module: Promise<void> } {
-	if (!sharedCtx) sharedCtx = new AudioContext({ sampleRate: 16000 });
+function audioContextCtor(): (typeof AudioContext) | undefined {
+	if (typeof AudioContext !== "undefined") return AudioContext;
+	return (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+}
+
+/** Create and kick-start the shared AudioContext synchronously inside a user
+ *  gesture before any async awaits (required by iOS Safari / standalone PWA). */
+function unlockAudioContext(): AudioContext | null {
+	const Ctor = audioContextCtor();
+	if (!Ctor) return null;
+	if (!sharedCtx || sharedCtx.state === "closed") {
+		sharedCtx = new Ctor();
+		workletModule = null;
+	}
+	if (sharedCtx.state === "suspended") {
+		void sharedCtx.resume?.().catch(() => {});
+	}
+	return sharedCtx;
+}
+
+function ensureAudioGraph(): { ctx: AudioContext; module: Promise<void> | null } {
+	const ctx = unlockAudioContext();
+	if (!ctx) throw new Error("Audio capture is unavailable in this browser");
+	if (!ctx.audioWorklet || typeof ctx.audioWorklet.addModule !== "function") {
+		return { ctx, module: null };
+	}
 	if (!workletModule) {
-		workletModule = sharedCtx.audioWorklet.addModule("/worklets/pcm-capture.js").catch((e: unknown) => {
-			workletModule = null; // failed load: retry next run
+		workletModule = ctx.audioWorklet.addModule("/worklets/pcm-capture.js").catch((e: unknown) => {
+			workletModule = null; // failed load: retry next run or fall back to ScriptProcessor
 			throw e;
 		});
 	}
-	return { ctx: sharedCtx, module: workletModule };
+	return { ctx, module: workletModule };
+}
+
+/** Reset persistent AudioContext cache (tests only). */
+export function _resetAudioGraphForTests(): void {
+	sharedCtx = null;
+	workletModule = null;
 }
 
 /** RMS (0..1) → normalized 0..1 across the audible dB window. */
@@ -379,27 +411,75 @@ export function useDictation({ append, destination = "primary", disabled = false
 	/** Per-run graph nodes — the CONTEXT outlives runs (mitigation C). */
 	const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 	const workletRef = useRef<AudioWorkletNode | null>(null);
+	const fallbackNodeRef = useRef<AudioNode | null>(null);
+	const fallbackGainRef = useRef<AudioNode | null>(null);
+	const fallbackResamplerRef = useRef<PcmResampler | null>(null);
 	/** Frames captured before the socket is OPEN (mitigation A): flushed in
 	 *  order on open; capped at 256 frames (≈32s) with the oldest dropped;
 	 *  cleared at teardown so a dead run's audio can't leak into the next. */
 	const pendingRef = useRef<ArrayBuffer[]>([]);
+	const stopAfterOpenRef = useRef(false);
 	const genRef = useRef(0); // stale-handler guard (dictate pattern)
 	const safetyRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const reconnectsRef = useRef(0);
 	/** The deferred transcript (owner round 2): finals land here during the
 	 *  run and flush into the primary input once, at teardown. */
 	const bufferRef = useRef<string[]>([]);
+	/** Last non-empty non-final transcript, committed only if teardown ends
+	 *  before Deepgram promotes it to is_final. */
+	const interimRef = useRef<string>("");
 	/** Resolvers waiting for the run to fully end (finish(), owner
 	 *  2026-10-01): released by cleanup() — every terminal path runs it. */
 	const waitersRef = useRef<Array<{ resolve: () => void; reject: (error: unknown) => void }>>([]);
 	const appendFailureRef = useRef<{ error: unknown } | null>(null);
 	const appendPendingRef = useRef(false);
 
+	const enqueueAudioFrame = useCallback((buffer: ArrayBuffer) => {
+		const ws = wsRef.current;
+		if (ws && ws.readyState === WebSocket.OPEN) {
+			ws.send(buffer);
+			return;
+		}
+		// Mitigation A: not OPEN yet (handshake or reconnect gap) — queue,
+		// capped; the open handler flushes in order.
+		pendingRef.current.push(buffer);
+		if (pendingRef.current.length > 256) pendingRef.current.shift();
+	}, []);
+
+	const disconnectAudioNodes = useCallback((flushTail: boolean) => {
+		if (flushTail) {
+			try {
+				workletRef.current?.port?.postMessage?.({ type: "flush" });
+			} catch {}
+			const tail = fallbackResamplerRef.current?.flush();
+			if (tail && tail.byteLength > 0) {
+				enqueueAudioFrame(tail.buffer as ArrayBuffer);
+			}
+		}
+		for (const track of streamRef.current?.getTracks() ?? []) track.stop();
+		streamRef.current = null;
+		sourceRef.current?.disconnect();
+		sourceRef.current = null;
+		workletRef.current?.disconnect();
+		workletRef.current = null;
+		fallbackNodeRef.current?.disconnect();
+		fallbackNodeRef.current = null;
+		fallbackGainRef.current?.disconnect();
+		fallbackGainRef.current = null;
+		fallbackResamplerRef.current = null;
+	}, [enqueueAudioFrame]);
+
 	/** Flush into this run's fixed destination. Called exactly once at cleanup; the
 	 *  buffer clears itself so double-cleanup is a no-op. */
 	const flush = useCallback((): unknown => {
-		if (bufferRef.current.length === 0) return;
-		const text = bufferRef.current.join(" ");
+		const parts = bufferRef.current;
+		const interim = interimRef.current.trim();
+		if (interim) {
+			parts.push(interim);
+			interimRef.current = "";
+		}
+		if (parts.length === 0) return;
+		const text = parts.join(" ");
 		bufferRef.current = [];
 		return (destinationRef.current?.append ?? appendRef.current)(text);
 	}, []);
@@ -407,6 +487,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 	/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */
 	const cleanup = useCallback((warmNext = true) => {
 		const endGen = ++genRef.current;
+		stopAfterOpenRef.current = false;
 		let appended: unknown;
 		// A second cleanup (cancel/dispose) cannot turn an unfinished async
 		// append into a successful finish: that would send the old draft.
@@ -424,12 +505,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 			safetyRef.current = null;
 		}
 		pendingRef.current = [];
-		for (const track of streamRef.current?.getTracks() ?? []) track.stop();
-		streamRef.current = null;
-		sourceRef.current?.disconnect();
-		sourceRef.current = null;
-		workletRef.current?.disconnect();
-		workletRef.current = null;
+		disconnectAudioNodes(false);
 		// The AudioContext is app-lifetime (mitigation C) — nodes die, it stays.
 		const ws = wsRef.current;
 		wsRef.current = null;
@@ -463,7 +539,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 			// Both branches consume the promise, including stop-without-finish.
 			void Promise.resolve(appended).then(() => complete(null), (error: unknown) => complete({ error }));
 		} else complete(failure);
-	}, [flush, owner, setPhase]);
+	}, [disconnectAudioNodes, flush, owner, setPhase]);
 
 	/** Open the Deepgram socket and wire its messages. `gen` guards staleness. */
 	const openSocket = useCallback(
@@ -481,6 +557,16 @@ export function useDictation({ append, destination = "primary", disabled = false
 				// faster-than-realtime sends.
 				for (const frame of pendingRef.current) ws.send(frame);
 				pendingRef.current = [];
+				if (stopAfterOpenRef.current) {
+					stopAfterOpenRef.current = false;
+					try {
+						ws.send(JSON.stringify({ type: "Finalize" }));
+						ws.send(JSON.stringify({ type: "CloseStream" }));
+					} catch {
+						cleanup();
+					}
+					return;
+				}
 				setPhase("recording");
 			});
 			ws.addEventListener("message", (ev) => {
@@ -493,17 +579,25 @@ export function useDictation({ append, destination = "primary", disabled = false
 				}
 				if (msg.type === "Results") {
 					const text: string | undefined = msg.channel?.alternatives?.[0]?.transcript;
-					// Only finals stream (interim_results=false). DEFERRED (owner
-					// round 2): they buffer here and reach the input once, at
-					// teardown — the meter is the only live feedback.
-					if (msg.is_final && text) bufferRef.current.push(text);
+					if (msg.is_final) {
+						interimRef.current = "";
+						if (text) bufferRef.current.push(text);
+					} else if (text) {
+						interimRef.current = text;
+					}
+				} else if (msg.type === "Error") {
+					const description = typeof msg.description === "string" && msg.description.trim()
+						? msg.description.trim()
+						: typeof msg.message === "string" && msg.message.trim()
+							? msg.message.trim()
+							: "Speech recognition error";
+					setError(description);
 				}
 			});
 			ws.addEventListener("close", (ev) => {
 				if (gen !== genRef.current) return;
-				if (ev.code === 1000) {
-					// Our own CloseStream landing: finalize now — the stop path's
-					// safety net stays as the no-close backstop only.
+				if (ev.code === 1000 || phaseRef.current === "stopping") {
+					// Our own CloseStream landing (or closing while stopping): finalize now.
 					cleanup();
 					return;
 				}
@@ -546,9 +640,16 @@ export function useDictation({ append, destination = "primary", disabled = false
 		appendFailureRef.current = null;
 		setPhase("connecting");
 		reconnectsRef.current = 0;
+		stopAfterOpenRef.current = false;
 		bufferRef.current = []; // fresh run, fresh buffer (round 2)
+		interimRef.current = "";
 		pendingRef.current = []; // fresh run, fresh queue (mitigation A)
 		const gen = ++genRef.current;
+		// Unlock/create the AudioContext synchronously inside the user tap gesture
+		// BEFORE any async awaits (iOS standalone PWA suspends contexts created later).
+		try {
+			unlockAudioContext();
+		} catch {}
 		let language: DictationLanguage;
 		try {
 			language = await getLanguage();
@@ -583,34 +684,83 @@ export function useDictation({ append, destination = "primary", disabled = false
 			// Mitigation C: app-lifetime context + memoized worklet module —
 			// per-run costs (context creation, module fetch) are gone.
 			const { ctx, module } = ensureAudioGraph();
-			await module;
-			if (ctx.state === "suspended") await ctx.resume();
-			if (gen !== genRef.current) return;
-
-			const worklet = new AudioWorkletNode(ctx, "pcm-capture");
-			workletRef.current = worklet;
-			worklet.port.onmessage = (e) => {
-				if (gen !== genRef.current) return;
-				const msg = e.data as { type: string; rms?: number; buffer?: ArrayBuffer };
-				if (msg.type === "level") {
-					levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
-				} else if (msg.type === "audio") {
-					const ws = wsRef.current;
-					if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg.buffer!);
-					// Mitigation A: not OPEN yet (handshake or reconnect gap) —
-					// queue, capped; the open handler flushes in order.
-					else {
-						pendingRef.current.push(msg.buffer!);
-						if (pendingRef.current.length > 256) pendingRef.current.shift();
-					}
+			let workletReady = false;
+			if (module) {
+				try {
+					await module;
+					workletReady = typeof AudioWorkletNode !== "undefined";
+				} catch {
+					workletReady = false;
 				}
-			};
+			}
+			// Re-resume after getUserMedia: iOS system mic prompts can re-suspend the context.
+			if (ctx.state === "suspended") await ctx.resume?.();
+			if (gen !== genRef.current) return;
+			if (ctx.state === "suspended") {
+				throw new Error("Microphone audio is paused by the browser. Tap Dictate again.");
+			}
+
 			const source = ctx.createMediaStreamSource(stream);
 			sourceRef.current = source;
-			source.connect(worklet);
-			// Pull the graph with silence out (the worklet writes no output) —
-			// an unconnected worklet node is never clocked.
-			worklet.connect(ctx.destination);
+
+			let attachedWorklet = false;
+			if (workletReady) {
+				try {
+					const worklet = new AudioWorkletNode(ctx, "pcm-capture");
+					workletRef.current = worklet;
+					worklet.port.onmessage = (e) => {
+						if (gen !== genRef.current) return;
+						const msg = e.data as { type: string; rms?: number; buffer?: ArrayBuffer | Int16Array };
+						if (msg.type === "level") {
+							levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
+						} else if (msg.type === "audio" && msg.buffer) {
+							const buf = msg.buffer instanceof ArrayBuffer
+								? msg.buffer
+								: msg.buffer.buffer.slice(msg.buffer.byteOffset, msg.buffer.byteOffset + msg.buffer.byteLength);
+							enqueueAudioFrame(buf as ArrayBuffer);
+						}
+					};
+					source.connect(worklet);
+					// Pull the graph with silence out (the worklet writes no output) —
+					// an unconnected worklet node is never clocked.
+					worklet.connect(ctx.destination);
+					attachedWorklet = true;
+				} catch {
+					workletRef.current = null;
+					attachedWorklet = false;
+				}
+			}
+
+			if (!attachedWorklet) {
+				// iOS WebKit fallback when AudioWorklet is unavailable or fails to load.
+				const createScript = (ctx as AudioContext & {
+					createScriptProcessor?: (bufferSize: number, inputChannels: number, outputChannels: number) => ScriptProcessorNode;
+				}).createScriptProcessor;
+				if (typeof createScript !== "function") {
+					throw new Error("Audio capture is not supported in this browser");
+				}
+				const processor = createScript.call(ctx, 4096, 1, 1);
+				const resampler = createPcmResampler(ctx.sampleRate || 48_000);
+				fallbackNodeRef.current = processor;
+				fallbackResamplerRef.current = resampler;
+				processor.onaudioprocess = (event) => {
+					if (gen !== genRef.current) return;
+					const input = event.inputBuffer.getChannelData(0);
+					const { rms, frames } = resampler.push(input);
+					levelRef.current = rms;
+					for (const frame of frames) enqueueAudioFrame(frame.buffer as ArrayBuffer);
+				};
+				source.connect(processor);
+				if (typeof ctx.createGain === "function") {
+					const silentGain = ctx.createGain();
+					silentGain.gain.value = 0;
+					fallbackGainRef.current = silentGain;
+					processor.connect(silentGain);
+					silentGain.connect(ctx.destination);
+				} else {
+					processor.connect(ctx.destination);
+				}
+			}
 		} catch (e) {
 			if (gen !== genRef.current) return;
 			const msg =
@@ -637,25 +787,23 @@ export function useDictation({ append, destination = "primary", disabled = false
 		// Mitigation B: the handshake fires the moment the graph is live,
 		// overlapping any remaining token wait — mic-gated, never before it.
 		openSocket(gen, token, language);
-	}, [openSocket, cleanup, getLanguage, owner, primary, setPhase]);
+	}, [openSocket, cleanup, enqueueAudioFrame, getLanguage, owner, primary, setPhase]);
 
 	const stop = useCallback(() => {
 		const gen = genRef.current;
 		if (phaseRef.current !== "recording" && phaseRef.current !== "connecting") return;
 		setPhase("stopping");
 
-		// Mic dies FIRST — no more audio enqueues (dictate pattern). The
-		// per-run nodes die with it; the AudioContext stays (mitigation C).
-		for (const track of streamRef.current?.getTracks() ?? []) track.stop();
-		streamRef.current = null;
-		sourceRef.current?.disconnect();
-		sourceRef.current = null;
-		workletRef.current?.disconnect();
-		workletRef.current = null;
+		// Flush any partial buffered PCM frame, then stop the mic FIRST so no
+		// more audio enqueues (dictate pattern). AudioContext stays alive.
+		disconnectAudioNodes(true);
 
 		const ws = wsRef.current;
 		if (ws && ws.readyState === WebSocket.OPEN) {
 			try {
+				for (const frame of pendingRef.current) ws.send(frame);
+				pendingRef.current = [];
+				ws.send(JSON.stringify({ type: "Finalize" }));
 				ws.send(JSON.stringify({ type: "CloseStream" }));
 			} catch {
 				cleanup();
@@ -666,10 +814,18 @@ export function useDictation({ append, destination = "primary", disabled = false
 			safetyRef.current = setTimeout(() => {
 				if (gen === genRef.current) cleanup();
 			}, 3000);
+		} else if (ws && ws.readyState === WebSocket.CONNECTING && pendingRef.current.length > 0) {
+			// User spoke while the WebSocket handshake was still opening (common
+			// on mobile Wi-Fi/LTE): wait briefly for open so queued frames flush
+			// and Deepgram returns the transcript instead of discarding speech.
+			stopAfterOpenRef.current = true;
+			safetyRef.current = setTimeout(() => {
+				if (gen === genRef.current) cleanup();
+			}, 3000);
 		} else {
 			cleanup();
 		}
-	}, [cleanup, setPhase]);
+	}, [cleanup, disconnectAudioNodes, setPhase]);
 
 	const cancel = useCallback(() => {
 		if (phaseRef.current === "idle") return;
@@ -677,6 +833,8 @@ export function useDictation({ append, destination = "primary", disabled = false
 		// buffer makes that flush a no-op. Also kills a "stopping" run: the
 		// flush already underway is abandoned (its timer is cleared inside).
 		bufferRef.current = [];
+		interimRef.current = "";
+		stopAfterOpenRef.current = false;
 		cleanup();
 	}, [cleanup]);
 

@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ModelCatalogRefreshResponse, ModelCatalogResponse } from "@/src/core";
 import { onSettingsSaved } from "@/components/settings-signal";
+import { getSwrData, invalidateSwr, setSwrData, SWR_KEYS } from "@/components/client-swr";
 
 // Shared stale-while-revalidate catalog. Metadata refreshes retain the last
-// good snapshot; connection changes clear selectable models immediately.
+// good snapshot (hydrated from bounded sessionStorage across reloads);
+// connection changes clear selectable models immediately.
 let catalogCache: ModelCatalogResponse | undefined;
 let catalogError = false;
 let catalogInflight: Promise<void> | undefined;
@@ -13,6 +15,13 @@ let catalogGeneration = 0;
 let stopCatalogSignals: (() => void) | undefined;
 const catalogReaders = new Set<() => void>();
 const publishCatalog = () => { for (const reader of catalogReaders) reader(); };
+
+function readCachedCatalog(): ModelCatalogResponse | undefined {
+	if (catalogCache !== undefined) return catalogCache;
+	const persisted = getSwrData<ModelCatalogResponse>(SWR_KEYS.models);
+	if (persisted) catalogCache = persisted;
+	return catalogCache;
+}
 
 function fetchCatalog(revalidate = false): void {
 	if (revalidate) { catalogGeneration++; catalogInflight = undefined; }
@@ -23,7 +32,12 @@ function fetchCatalog(revalidate = false): void {
 	catalogInflight = fetch("/api/models")
 		.then((r) => { if (!r.ok) throw new Error(`catalog request failed: ${r.status}`); return r.json() as Promise<ModelCatalogResponse>; })
 		.then((c) => {
-			if (generation === catalogGeneration) { catalogCache = c; catalogError = false; publishCatalog(); }
+			if (generation === catalogGeneration) {
+				catalogCache = c;
+				catalogError = false;
+				setSwrData(SWR_KEYS.models, c, { persist: true });
+				publishCatalog();
+			}
 		})
 		.catch(() => {
 			if (generation === catalogGeneration) { catalogError = true; publishCatalog(); }
@@ -42,6 +56,7 @@ export async function refreshRemoteModelCatalog() {
 		catalogInflight = undefined;
 		catalogCache = catalog;
 		catalogError = false;
+		setSwrData(SWR_KEYS.models, catalog, { persist: true });
 		publishCatalog();
 	} else {
 		// A settings/connection change superseded this response. Re-read the
@@ -52,15 +67,16 @@ export async function refreshRemoteModelCatalog() {
 }
 
 export function useModelCatalog(): { catalog: ModelCatalogResponse | undefined; failed: boolean; refresh: () => void } {
-	const [snapshot, setSnapshot] = useState(() => ({ catalog: catalogCache, failed: catalogError }));
+	const [snapshot, setSnapshot] = useState(() => ({ catalog: readCachedCatalog(), failed: catalogError }));
 	useEffect(() => {
 		const first = catalogReaders.size === 0;
-		const read = () => setSnapshot({ catalog: catalogCache, failed: catalogError });
+		const read = () => setSnapshot({ catalog: readCachedCatalog(), failed: catalogError });
 		catalogReaders.add(read);
 		if (first) {
 			stopCatalogSignals = onSettingsSaved((section) => {
 				if (section === "keys" || section === "claudeCode") {
 					catalogGeneration++; catalogInflight = undefined; catalogCache = undefined;
+					invalidateSwr(SWR_KEYS.models);
 					fetchCatalog();
 				} else if (section === "models") fetchCatalog(true);
 			});

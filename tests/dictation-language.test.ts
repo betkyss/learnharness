@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
-import { DICTATION_LANGUAGES, deepgramListenUrl, isDictationLanguage } from "../src/core/dictation.ts";
+import { createPcmResampler, DICTATION_LANGUAGES, deepgramListenUrl, isDictationLanguage } from "../src/core/dictation.ts";
 import { sanitizeUserSettings } from "../src/core/settings.ts";
 import { resolveSettings } from "../src/core/settings-resolution.ts";
 import { parseDictationSettingsBody } from "../src/server/settings-body.ts";
@@ -79,4 +79,37 @@ it("the section route persists language independently and rejects unsupported va
 	}), { params: Promise.resolve({ section: "general" }) });
 	assert.equal(general.status, 200);
 	assert.deepEqual(readSettings(), { ...saved, general: { autoUpdate: true } }, "auto-update cannot erase dictation language");
+});
+
+describe("BUG-3: PCM resampler downsamples native iOS 48kHz / 44.1kHz mic audio to 16kHz linear16", () => {
+	it("downsamples 48kHz (3:1) and 44.1kHz to exact 16kHz frame counts and flushes partial tails", () => {
+		// 48kHz: 6144 input samples => exactly 2048 output samples (1 full frame) at 16kHz
+		const r48 = createPcmResampler(48_000, 16_000, 2048);
+		const block48 = new Float32Array(6144).fill(0.5);
+		const res48 = r48.push(block48);
+		assert.equal(res48.frames.length, 1);
+		assert.equal(res48.frames[0]!.length, 2048);
+		assert.ok(Math.abs(res48.rms - 0.5) < 1e-5);
+		assert.ok(Math.abs(res48.frames[0]![0]! - Math.round(0.5 * 0x7fff)) <= 1);
+		assert.equal(r48.flush(), null);
+
+		// Partial 48kHz block (900 samples => 300 output samples) flushes on stop instead of dropping speech
+		const partial = r48.push(new Float32Array(900).fill(-0.25));
+		assert.equal(partial.frames.length, 0);
+		const tail = r48.flush();
+		assert.ok(tail);
+		assert.equal(tail!.length, 300);
+		assert.ok(Math.abs(tail![0]! - Math.round(-0.25 * 0x8000)) <= 1);
+
+		// 44.1kHz: 44100 samples (1 second) => ~16000 output samples
+		const r44 = createPcmResampler(44_100, 16_000, 2048);
+		let totalOut = 0;
+		for (let i = 0; i < 44_100; i += 441) {
+			const { frames } = r44.push(new Float32Array(441).fill(0.25));
+			for (const f of frames) totalOut += f.length;
+		}
+		const rem = r44.flush();
+		if (rem) totalOut += rem.length;
+		assert.ok(Math.abs(totalOut - 16_000) <= 2, `expected ~16000 samples, got ${totalOut}`);
+	});
 });

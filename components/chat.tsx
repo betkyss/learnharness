@@ -53,7 +53,8 @@ import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { JobsContext } from "@/components/jobs-context";
 import { StatsBar } from "@/components/stats-bar";
-import { useServerEvent, useServerResync } from "@/components/server-events";
+import { ConnectionStatusPill, useServerEvent, useServerResync } from "@/components/server-events";
+import { cacheChatTail } from "@/components/client-swr";
 import {
 	isProviderKeyRefusal,
 	firstSourceTextParts,
@@ -666,7 +667,29 @@ export function Chat({
 	visibleStartRef.current = visibleStart;
 	const firstVisibleRowIdRef = useRef(firstVisibleRowId);
 	firstVisibleRowIdRef.current = firstVisibleRowId;
+	// UX-3: keep initial long-chat scroll snapped instantly to the bottom during
+	// the initial layout/highlight/dock-measure settle window so the viewport
+	// never visibly crawls from "Show earlier messages" down to the bottom over
+	// 1-3s. Cleared immediately on any user touch, wheel, or Show-earlier tap.
+	const [settlingInitialScroll, setSettlingInitialScroll] = useState(() => initialMessages.length > 0);
+	const settlingInitialScrollRef = useRef(settlingInitialScroll);
+	settlingInitialScrollRef.current = settlingInitialScroll;
+	const stopInitialScrollSettle = useCallback(() => {
+		if (!settlingInitialScrollRef.current) return;
+		settlingInitialScrollRef.current = false;
+		setSettlingInitialScroll(false);
+	}, []);
+	useEffect(() => {
+		if (!settlingInitialScroll) return;
+		const timer = setTimeout(() => {
+			settlingInitialScrollRef.current = false;
+			setSettlingInitialScroll(false);
+		}, 900);
+		return () => clearTimeout(timer);
+	}, [settlingInitialScroll]);
+
 	const loadEarlierMessages = useCallback(() => {
+		stopInitialScrollSettle();
 		const scroller = scrollContextRef.current?.scrollRef.current;
 		const willFetchServer = visibleStartRef.current === 0 && hasEarlierMessagesRef.current;
 		if (scroller) {
@@ -1443,6 +1466,60 @@ export function Chat({
 	// composer, then its comment popover. The transcript's scroll element
 	// arrives late (StickToBottom attaches it), so it is reported up.
 	const [transcriptElement, setTranscriptElement] = useState<HTMLElement | null>(null);
+	// Snap to bottom synchronously before first paint on mount (UX-3) and bind
+	// user-scroll listeners to release initial settle + cleanly dismiss mobile
+	// keyboard on transcript drag without interfering with dock/textarea scroll.
+	const snappedOnMountRef = useRef(false);
+	useIsoLayoutEffect(() => {
+		if (!transcriptElement || snappedOnMountRef.current) return;
+		snappedOnMountRef.current = true;
+		if (messages.length > 0 && typeof window !== "undefined" && !window.location.hash) {
+			transcriptElement.scrollTop = transcriptElement.scrollHeight;
+		}
+	}, [transcriptElement, messages.length]);
+	useEffect(() => {
+		if (!transcriptElement) return;
+		let touchStartY: number | null = null;
+		let touchInsideInput = false;
+		const onWheel = () => stopInitialScrollSettle();
+		const onTouchStart = (event: TouchEvent) => {
+			stopInitialScrollSettle();
+			const touch = event.touches[0];
+			if (!touch) return;
+			const target = event.target instanceof Element ? event.target : null;
+			touchInsideInput = Boolean(target?.closest("[data-dock-viewport], [contenteditable], input, textarea, button"));
+			touchStartY = touch.clientY;
+		};
+		const onTouchMove = (event: TouchEvent) => {
+			if (touchStartY === null || touchInsideInput) return;
+			const touch = event.touches[0];
+			if (!touch) return;
+			if (Math.abs(touch.clientY - touchStartY) < 12) return;
+			touchStartY = null;
+			if (typeof document !== "undefined" && document.documentElement.dataset.keyboardOpen === "true") {
+				const active = document.activeElement;
+				if (active instanceof HTMLElement && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)) {
+					active.blur();
+				}
+			}
+		};
+		const onTouchEnd = () => {
+			touchStartY = null;
+			touchInsideInput = false;
+		};
+		transcriptElement.addEventListener("wheel", onWheel, { passive: true });
+		transcriptElement.addEventListener("touchstart", onTouchStart, { passive: true });
+		transcriptElement.addEventListener("touchmove", onTouchMove, { passive: true });
+		transcriptElement.addEventListener("touchend", onTouchEnd, { passive: true });
+		transcriptElement.addEventListener("touchcancel", onTouchEnd, { passive: true });
+		return () => {
+			transcriptElement.removeEventListener("wheel", onWheel);
+			transcriptElement.removeEventListener("touchstart", onTouchStart);
+			transcriptElement.removeEventListener("touchmove", onTouchMove);
+			transcriptElement.removeEventListener("touchend", onTouchEnd);
+			transcriptElement.removeEventListener("touchcancel", onTouchEnd);
+		};
+	}, [transcriptElement, stopInitialScrollSettle]);
 	const [citationEdit, setCitationEdit] = useState<CitationEditTarget | null>(null);
 	const lastCiteInputRef = useRef<HTMLElement | null>(null);
 	const citeInput = useCallback(() => {
@@ -2065,6 +2142,25 @@ export function Chat({
 		})();
 	});
 
+	// Persist the sanitized tail into the client SWR cache so returning to
+	// this session from the sidebar paints immediately while RSC streams.
+	useEffect(() => {
+		if (canonicalMessages.length === 0) return;
+		cacheChatTail(chatId, {
+			id: chatId,
+			title: titleText,
+			kind,
+			messages: canonicalMessages.slice(-48),
+			totalMessages: totalMessageCount,
+			omittedViewGroups,
+			truncated: hasEarlierMessages,
+			initialPhase: sessionStartPhase,
+			tree: serverPlanTree,
+			pricing,
+			turnInFlight: busy,
+		});
+	}, [chatId, titleText, kind, canonicalMessages, totalMessageCount, omittedViewGroups, hasEarlierMessages, sessionStartPhase, serverPlanTree, pricing, busy]);
+
 	const handleOpenPlan = useCallback(() => setPlanOpen(true), []);
 	const handleRetryMalformed = useCallback((malformed: { messageId: string; contentIndex: number; toolCallId: string }) => {
 		draftRef.current = null;
@@ -2235,6 +2331,7 @@ export function Chat({
 							<div className="hidden sm:block sm:min-w-4 sm:flex-1" aria-hidden="true" />
 					</>
 					)}
+					<ConnectionStatusPill className="lh-no-drag inline-flex shrink-0 items-center gap-1 rounded-full border border-border/70 bg-card/90 px-2 py-0.5 text-xs text-muted-foreground" />
 					{/* The plan chip (owner, plan-placement round): session-level
 					    structure beside the phase chip — access to the full-DAG popup
 					    at every width; the marginalia is the wide-screen glance view. */}
@@ -2283,7 +2380,12 @@ export function Chat({
 
 				<SessionFind scopeRef={sessionFindScopeRef} scrollContextRef={scrollContextRef} onOpen={showAllMessages} />
 				<div ref={sessionFindScopeRef} className="relative flex min-h-0 flex-1">
-				<Conversation className="h-full min-w-0 flex-1" initial="instant" contextRef={scrollContextRef}>
+				<Conversation
+					className="h-full min-w-0 flex-1"
+					initial="instant"
+					resize={settlingInitialScroll ? "instant" : "smooth"}
+					contextRef={scrollContextRef}
+				>
 					<SessionMessageNavigation />
 					<TranscriptElementReporter onElement={setTranscriptElement} />
 					<ConversationContent className="min-h-full gap-0 p-0">
