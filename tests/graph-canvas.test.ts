@@ -16,13 +16,18 @@ import {
 	arrowGeometry,
 	isImpNodeId,
 	boxBlurRound,
+	clickSlopForPointer,
+	effectiveCanvasDpr,
 	fitTransform,
+	GraphCanvasRenderer,
 	labelAlpha,
 	pickNearest,
+	shouldRestoreCamera,
 	wrapRegionLabel,
 	zoomRatioOf,
 	LABELS_FADE_RATIO,
 } from "../components/graph-canvas.ts";
+import { DEFAULT_RENDER_SETTINGS } from "../src/core/render-settings.ts";
 import {
 	sanitizePhysicsTuning,
 	sanitizeRegionTuning,
@@ -428,5 +433,247 @@ describe("applyClusterLabels (the label-only rename channel)", () => {
 			W, MAXL, measure,
 		);
 		assert.equal(changed, false);
+	});
+});
+
+describe("mobile graph helpers (P1-3)", () => {
+	it("fitTransform supports asymmetric top/right/bottom/left padding for mobile toolbar & dock", () => {
+		// 390x844 phone with top chrome 180px, bottom dock 160px, side cluster-label padding 75px:
+		// free box: x in [75, 315] (availW=240, center=195), y in [180, 684] (availH=504, center=432)
+		const t = fitTransform(
+			{ minX: -120, maxX: 120, minY: -100, maxY: 100 },
+			390,
+			844,
+			{ top: 180, right: 75, bottom: 160, left: 75 },
+		);
+		assert.ok(Math.abs(t.k - 1) < 1e-9, `expected k=1, got ${t.k}`);
+		// World center (0, 0) lands at (195, 432) — center of the free band, NOT (195, 422)
+		assert.ok(Math.abs(t.x - 195) < 1e-9, `x=${t.x}`);
+		assert.ok(Math.abs(t.y - 432) < 1e-9, `y=${t.y}`);
+		// Left/right bounds land inside [75, 315] and top/bottom inside [180, 684]
+		assert.ok(-120 * t.k + t.x >= 74.999 && 120 * t.k + t.x <= 315.001);
+		assert.ok(-100 * t.k + t.y >= 179.999 && 100 * t.k + t.y <= 684.001);
+	});
+
+	it("clickSlopForPointer uses larger slop for touch than mouse", () => {
+		assert.equal(clickSlopForPointer("mouse"), 4);
+		assert.equal(clickSlopForPointer("pen"), 4);
+		assert.equal(clickSlopForPointer(undefined), 4);
+		assert.equal(clickSlopForPointer("touch"), 10);
+	});
+
+	it("effectiveCanvasDpr caps coarse-pointer DPR at 2 while leaving desktop untouched", () => {
+		assert.equal(effectiveCanvasDpr(3, true), 2);
+		assert.equal(effectiveCanvasDpr(2, true), 2);
+		assert.equal(effectiveCanvasDpr(1, true), 1);
+		assert.equal(effectiveCanvasDpr(3, false), 3);
+		assert.equal(effectiveCanvasDpr(2, false), 2);
+	});
+
+	it("shouldRestoreCamera drops saved camera when viewport dimensions shifted (desktop↔mobile or rotation)", () => {
+		// Same viewport → restore
+		assert.deepEqual(
+			shouldRestoreCamera({ k: 1.5, x: 100, y: 200, vw: 390, vh: 844 }, 390, 844),
+			{ k: 1.5, x: 100, y: 200 },
+		);
+		// Desktop camera opened on phone → ignore & re-fit
+		assert.equal(
+			shouldRestoreCamera({ k: 1.5, x: 500, y: 400, vw: 1440, vh: 900 }, 390, 844),
+			null,
+		);
+		// Portrait ↔ landscape rotation → ignore & re-fit
+		assert.equal(
+			shouldRestoreCamera({ k: 1.2, x: 180, y: 400, vw: 390, vh: 844 }, 844, 390),
+			null,
+		);
+		// Minor keyboard/address-bar jitter (<=120px) → keep camera
+		assert.deepEqual(
+			shouldRestoreCamera({ k: 1.2, x: 180, y: 400, vw: 390, vh: 844 }, 390, 760),
+			{ k: 1.2, x: 180, y: 400 },
+		);
+	});
+});
+
+describe("GraphCanvasRenderer touch pinch, pointercancel, and touch slop", () => {
+	function makeFakeCanvasEnv() {
+		const listeners = new Map<string, Set<(e: unknown) => void>>();
+		const ctx = {
+			font: "",
+			fillStyle: "",
+			strokeStyle: "",
+			lineWidth: 1,
+			lineCap: "butt",
+			globalAlpha: 1,
+			textAlign: "left",
+			textBaseline: "alphabetic",
+			imageSmoothingEnabled: true,
+			setTransform: () => {},
+			clearRect: () => {},
+			save: () => {},
+			restore: () => {},
+			fill: () => {},
+			stroke: () => {},
+			beginPath: () => {},
+			arc: () => {},
+			moveTo: () => {},
+			lineTo: () => {},
+			fillText: () => {},
+			drawImage: () => {},
+			measureText: (s: string) => ({ width: s.length * 6 }),
+			createRadialGradient: () => ({ addColorStop: () => {} }),
+		};
+		const canvas = {
+			clientWidth: 390,
+			clientHeight: 844,
+			width: 0,
+			height: 0,
+			style: { cursor: "" },
+			getContext: () => ctx,
+			getBoundingClientRect: () => ({ left: 0, top: 0, width: 390, height: 844, right: 390, bottom: 844 }),
+			setPointerCapture: () => {},
+			releasePointerCapture: () => {},
+			addEventListener: (type: string, fn: (e: unknown) => void) => {
+				let set = listeners.get(type);
+				if (!set) listeners.set(type, (set = new Set()));
+				set.add(fn);
+			},
+			removeEventListener: (type: string, fn: (e: unknown) => void) => {
+				listeners.get(type)?.delete(fn);
+			},
+			dispatch: (type: string, event: Record<string, unknown>) => {
+				const full = { preventDefault: () => {}, stopPropagation: () => {}, ...event };
+				for (const fn of [...(listeners.get(type) ?? [])]) fn(full);
+			},
+		};
+		const prev = {
+			window: (globalThis as Record<string, unknown>).window,
+			ResizeObserver: (globalThis as Record<string, unknown>).ResizeObserver,
+			requestAnimationFrame: (globalThis as Record<string, unknown>).requestAnimationFrame,
+			cancelAnimationFrame: (globalThis as Record<string, unknown>).cancelAnimationFrame,
+			Path2D: (globalThis as Record<string, unknown>).Path2D,
+			SVGElement: (globalThis as Record<string, unknown>).SVGElement,
+		};
+		(globalThis as Record<string, unknown>).window = {
+			devicePixelRatio: 3,
+			matchMedia: (q: string) => ({ matches: q.includes("coarse") }),
+		};
+		(globalThis as Record<string, unknown>).ResizeObserver = class {
+			observe() {}
+			disconnect() {}
+		};
+		(globalThis as Record<string, unknown>).requestAnimationFrame = () => 1;
+		(globalThis as Record<string, unknown>).cancelAnimationFrame = () => {};
+		(globalThis as Record<string, unknown>).Path2D = class {
+			moveTo() {}
+			arc() {}
+			lineTo() {}
+			closePath() {}
+		};
+		(globalThis as Record<string, unknown>).SVGElement = class {};
+		const restore = () => {
+			for (const [k, v] of Object.entries(prev)) {
+				if (v === undefined) delete (globalThis as Record<string, unknown>)[k];
+				else (globalThis as Record<string, unknown>)[k] = v;
+			}
+		};
+		return { canvas, restore };
+	}
+
+	it("second touch pointer cancels active node drag and zooms camera without committing positions", () => {
+		const { canvas, restore } = makeFakeCanvasEnv();
+		const selects: string[] = [];
+		const commits: unknown[] = [];
+		const cameras: { k: number; x: number; y: number }[] = [];
+		try {
+			const renderer = new GraphCanvasRenderer(
+				canvas as unknown as HTMLCanvasElement,
+				{
+					onSelect: (id) => selects.push(id),
+					onContext: () => {},
+					onStageClick: () => {},
+					onCameraMove: (t) => cameras.push({ k: t.k, x: t.x, y: t.y }),
+					onCommit: (p) => commits.push(p),
+				},
+				{ k: 1, x: 0, y: 0 },
+			);
+			const nodeA = { id: "n1", x: 100, y: 100, label: "Alpha" };
+			renderer.setSettings(DEFAULT_RENDER_SETTINGS);
+			renderer.setData({
+				nodes: [nodeA, { id: "n2", x: 250, y: 200, label: "Beta" }],
+				edges: [{ from: "n1", to: "n2" }],
+				clusters: [],
+				colors: { node: "#ffffff", edge: "#888888", label: "#888888", hoverText: "#ffffff", clusterLightness: { ring: 60, label: 78 } },
+				fontFamily: "sans-serif",
+			});
+			// Finger 1 presses directly on nodeA
+			canvas.dispatch("pointerdown", { button: 0, isPrimary: true, pointerId: 1, pointerType: "touch", clientX: 100, clientY: 100 });
+			// Finger 2 lands to start a pinch
+			canvas.dispatch("pointerdown", { button: 0, isPrimary: false, pointerId: 2, pointerType: "touch", clientX: 200, clientY: 100 });
+			// Spread fingers apart (distance 100 → 200 = 2x zoom)
+			canvas.dispatch("pointermove", { button: 0, isPrimary: false, pointerId: 2, pointerType: "touch", clientX: 300, clientY: 100 });
+			// Lift both fingers
+			canvas.dispatch("pointerup", { button: 0, isPrimary: false, pointerId: 2, pointerType: "touch", clientX: 300, clientY: 100 });
+			canvas.dispatch("pointerup", { button: 0, isPrimary: true, pointerId: 1, pointerType: "touch", clientX: 100, clientY: 100 });
+
+			assert.equal(selects.length, 0, "pinch must not fire node selection");
+			assert.equal(commits.length, 0, "pinch must not commit mutated node positions");
+			assert.equal((nodeA as { fx?: number | null }).fx ?? null, null, "nodeA fx must be unpinned");
+			assert.equal((nodeA as { fy?: number | null }).fy ?? null, null, "nodeA fy must be unpinned");
+			const lastCam = cameras.at(-1);
+			assert.ok(lastCam && lastCam.k > 1.5, `expected pinch zoom k > 1.5, got ${lastCam?.k}`);
+			renderer.destroy();
+		} finally {
+			restore();
+		}
+	});
+
+	it("pointercancel clears drag state without selecting or committing, and touch tap tolerates 7px jitter", () => {
+		const { canvas, restore } = makeFakeCanvasEnv();
+		const selects: string[] = [];
+		const commits: unknown[] = [];
+		try {
+			const renderer = new GraphCanvasRenderer(
+				canvas as unknown as HTMLCanvasElement,
+				{
+					onSelect: (id) => selects.push(id),
+					onContext: () => {},
+					onStageClick: () => {},
+					onCameraMove: () => {},
+					onCommit: (p) => commits.push(p),
+				},
+				{ k: 1, x: 0, y: 0 },
+			);
+			const nodeA = { id: "n1", x: 100, y: 100, label: "Alpha" };
+			renderer.setSettings(DEFAULT_RENDER_SETTINGS);
+			renderer.setData({
+				nodes: [nodeA, { id: "n2", x: 250, y: 200, label: "Beta" }],
+				edges: [{ from: "n1", to: "n2" }],
+				clusters: [],
+				colors: { node: "#ffffff", edge: "#888888", label: "#888888", hoverText: "#ffffff", clusterLightness: { ring: 60, label: 78 } },
+				fontFamily: "sans-serif",
+			});
+
+			// 1. Touch tap with 7px jitter (< 10px touch slop) selects node cleanly
+			canvas.dispatch("pointerdown", { button: 0, isPrimary: true, pointerId: 10, pointerType: "touch", clientX: 100, clientY: 100 });
+			canvas.dispatch("pointermove", { button: 0, isPrimary: true, pointerId: 10, pointerType: "touch", clientX: 105, clientY: 105 });
+			canvas.dispatch("pointerup", { button: 0, isPrimary: true, pointerId: 10, pointerType: "touch", clientX: 105, clientY: 105 });
+			assert.deepEqual(selects, ["n1"]);
+
+			// 2. Drag then OS pointercancel: unpins node and never selects/commits
+			canvas.dispatch("pointerdown", { button: 0, isPrimary: true, pointerId: 11, pointerType: "touch", clientX: 100, clientY: 100 });
+			canvas.dispatch("pointermove", { button: 0, isPrimary: true, pointerId: 11, pointerType: "touch", clientX: 140, clientY: 130 });
+			canvas.dispatch("pointercancel", { button: 0, isPrimary: true, pointerId: 11, pointerType: "touch", clientX: 140, clientY: 130 });
+			assert.equal((nodeA as { fx?: number | null }).fx ?? null, null, "pointercancel must unpin fx");
+			assert.equal((nodeA as { fy?: number | null }).fy ?? null, null, "pointercancel must unpin fy");
+			assert.deepEqual(selects, ["n1"], "pointercancel must not trigger onSelect");
+			assert.equal(commits.length, 0, "pointercancel must not commit");
+
+			// 3. DPR capped at 2 for coarse-pointer 3x canvas
+			assert.equal(canvas.width, 780);
+			assert.equal(canvas.height, 1688);
+			renderer.destroy();
+		} finally {
+			restore();
+		}
 	});
 });

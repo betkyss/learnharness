@@ -61,6 +61,8 @@ export interface ChatStore {
 	getChat(id: string): ChatRecord | null;
 	/** All sessions, newest activity first (the sidebar's list view). */
 	listChats(): ChatSummary[];
+	/** Cached extraction-run usage per session for graph cost summaries. */
+	listChatExtractions?(): Array<{ id: string; title: string; extractions: ExtractionRunUsage[] }>;
 	/** Persist the full native message list (the record IS the agent
 	 * state — Wave B, owner-approved 2026-09-26). */
 	saveMessages(id: string, messages: LhMessage[]): void;

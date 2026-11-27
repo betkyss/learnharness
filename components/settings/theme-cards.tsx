@@ -38,13 +38,13 @@ function Preview({ theme }: { theme: Theme }) {
 	return (
 		<span
 			aria-hidden
-			className="flex h-11 items-center justify-between rounded-md border px-3"
+			className="flex h-11 min-w-0 items-center justify-between gap-2 overflow-hidden rounded-md border px-3"
 			style={{ background: c.background, borderColor: c.border }}
 		>
-			<span className="font-prose text-xl font-semibold" style={{ color: c.text }}>
+			<span className="shrink-0 font-prose text-xl font-semibold" style={{ color: c.text }}>
 				Aa <i className="font-normal" style={{ color: c.accent }}>ai</i>
 			</span>
-			<span className="flex gap-1.5">
+			<span className="flex shrink-0 gap-1.5">
 				<Dot color={c.surface} edge={c.border} />
 				<Dot color={c.accent} />
 				<Dot color={c.error} />
@@ -142,7 +142,7 @@ export function ThemeCards({
 					Export JSON
 				</button>
 			</div>
-			<div className="grid grid-cols-3 gap-3">
+			<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
 				{themes.map((theme) => {
 					const selected = theme.id === active.id;
 					return (

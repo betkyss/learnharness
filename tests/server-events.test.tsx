@@ -207,7 +207,7 @@ describe("connectManagedChannel — foreground resume reconnect & 401 auth probe
 		assert.equal(win.listenerCount("online"), 0);
 	});
 
-	it("probes /api/chats on source error and redirects only on 401 when not already on /_login", async () => {
+	it("probes /api/health on source error and redirects only on 401 when not already on /_login", async () => {
 		const hub = createNotifyHub();
 		const src = fakeSource();
 		let clock = 0;
@@ -220,7 +220,7 @@ describe("connectManagedChannel — foreground resume reconnect & 401 auth probe
 			connect: () => src,
 			hub,
 			fetchImpl: (async (url) => {
-				assert.equal(url, "/api/chats");
+				assert.equal(url, "/api/health");
 				probes++;
 				if (probeStatus === "throw") throw new TypeError("offline");
 				return new Response(null, { status: probeStatus });

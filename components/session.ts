@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useSyncExternalSto
 import { retainQuestionDraft } from "./question-draft-storage";
 import { pendingQuestionOf } from "@/src/core";
 import type { ChatInput, LhMessage, QuestionAnswerData } from "@/src/core";
-import { SessionModel, type SessionState } from "@/components/session-core";
+import { SessionModel, type SessionRecordSnapshot, type SessionState } from "@/components/session-core";
 
 const subscribeHydration = () => () => {};
 const clientHydrated = () => true;
@@ -28,18 +28,37 @@ export interface UseChatSessionOptions {
 	chatId: string;
 	/** The native record seed (server-rendered page or a full sync). */
 	initialMessages: LhMessage[];
+	/** Total server native messages when SSR delivered a tail slice. */
+	initialTotalMessages?: number;
+	/** Tail window size for canonical GETs until expanded or loaded in full. */
+	initialTailLimit?: number | null;
 	/** Transient settlement failure retained by the server, not the transcript. */
 	initialError?: string;
 	/** Reattach on mount: a turn is running server-side with no live view. */
 	initiallyInFlight?: boolean;
 }
 
-export function useChatSession({ chatId, initialMessages, initialError, initiallyInFlight }: UseChatSessionOptions) {
+export function useChatSession({
+	chatId,
+	initialMessages,
+	initialTotalMessages,
+	initialTailLimit,
+	initialError,
+	initiallyInFlight,
+}: UseChatSessionOptions) {
 	// The model is per-mount (chatId-keyed component); onChange forces the
 	// re-render. The ref pattern keeps it stable across renders.
 	const modelRef = useRef<SessionModel | null>(null);
 	if (modelRef.current === null) {
-		modelRef.current = new SessionModel({ chatId, initialMessages, initialError });
+		modelRef.current = new SessionModel({
+			chatId,
+			initialMessages,
+			initialTotalMessages,
+			initialTailLimit,
+			initialError,
+			maxStreamRecoveries: 3,
+			recoveryBackoffMs: [400, 1200, 2500],
+		});
 	}
 	const model = modelRef.current;
 	const draftsReady = useSyncExternalStore(subscribeHydration, clientHydrated, serverHydrated);
@@ -104,8 +123,14 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 
 	// The reattach settled terminal → the sync-and-continue seam (chat.tsx).
 	const setReattachSettled = useCallback(
-		(fn: () => void) => {
+		(fn: (reconciled?: SessionRecordSnapshot) => void) => {
 			model.setReattachSettled(fn);
+		},
+		[model],
+	);
+	const setRecordAdopted = useCallback(
+		(fn: (record: SessionRecordSnapshot) => void) => {
+			model.onRecordAdopted = fn;
 		},
 		[model],
 	);
@@ -139,6 +164,12 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 	const stop = useCallback(() => model.stop(), [model]);
 	const clearError = useCallback(() => model.clearError(), [model]);
 	const resumeStream = useCallback(() => void model.resumeStream(), [model]);
+	const loadEarlierMessages = useCallback((step?: number) => model.loadEarlierMessages(step), [model]);
+	const loadAllMessages = useCallback(() => model.loadAllMessages(), [model]);
+	const recoverFromForeground = useCallback(
+		(meta: Parameters<SessionModel["recoverFromForeground"]>[0]) => model.recoverFromForeground(meta),
+		[model],
+	);
 
 	return {
 		draftsReady,
@@ -146,6 +177,9 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		activeMessageId: state.activeMessageId,
 		nativeMessages: state.nativeMessages,
 		canonicalMessages: state.canonicalMessages,
+		totalMessageCount: state.totalMessageCount,
+		hasEarlierMessages: state.hasEarlierMessages,
+		loadingEarlier: state.loadingEarlier,
 		reconciliation: state.reconciliation,
 		reconcile,
 		readRecord,
@@ -174,6 +208,10 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		stop,
 		clearError,
 		resumeStream,
+		loadEarlierMessages,
+		loadAllMessages,
+		recoverFromForeground,
 		setReattachSettled,
+		setRecordAdopted,
 	};
 }

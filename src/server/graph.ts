@@ -32,14 +32,16 @@ export function graphView(): GraphSnapshot {
  *  dollars are inferred by the pure core fold (core/cost-summary.ts +
  *  prices.ts) — nothing here stores or caches money. */
 export function graphCosts(): GraphCostSummary {
-	const chats = stores.chatStore
-		.listChats()
-		.flatMap((summary) => {
-			const record = stores.chatStore.getChat(summary.id);
-			return record?.extractions?.length
-				? [{ title: record.title ?? summary.id, extractions: record.extractions }]
-				: [];
-		});
+	const chats = stores.chatStore.listChatExtractions
+		? stores.chatStore.listChatExtractions().map(({ title, extractions }) => ({ title, extractions }))
+		: stores.chatStore
+			.listChats()
+			.flatMap((summary) => {
+				const record = stores.chatStore.getChat(summary.id);
+				return record?.extractions?.length
+					? [{ title: record.title ?? summary.id, extractions: record.extractions }]
+					: [];
+			});
 	const sources = stores.graphStore
 		.readSources()
 		.filter((s) => s.extractions?.length)

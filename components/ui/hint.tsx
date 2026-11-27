@@ -48,7 +48,7 @@ export function Hint({ label, action, binding, side = "top", children }: HintPro
 		<TooltipProvider>
 			<Tooltip>
 				<TooltipTrigger asChild>{children}</TooltipTrigger>
-				<TooltipContent side={side}>{hintText(label, action, binding)}</TooltipContent>
+				<TooltipContent side={side} className="[@media(hover:none)_and_(pointer:coarse)]:hidden">{hintText(label, action, binding)}</TooltipContent>
 			</Tooltip>
 		</TooltipProvider>
 	)

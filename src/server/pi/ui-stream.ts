@@ -112,6 +112,12 @@ export interface PiTurnSubscriber {
 	done(): void;
 }
 
+export interface PiTurnSubscribeOptions {
+	/** Interval (ms) between `: ping\n\n` keepalive frames while the turn is active.
+	 *  Defaults to 15_000ms; 0 disables periodic pings. */
+	heartbeatMs?: number;
+}
+
 /** The server-side turn object (background-turn runner wave, 2026-09-25):
  *  runs the agent decoupled from any single HTTP response and owns the
  *  in-memory event log + the live subscriber set. The POST response and
@@ -120,7 +126,7 @@ export interface PiTurnHandle {
 	/** A fresh subscriber stream: FULL replay of the log, then live events
 	 *  until the turn settles (ending [DONE]). Cancelling it detaches the
 	 *  view only — the turn runs on. */
-	subscribe(): ReadableStream<Uint8Array>;
+	subscribe(options?: PiTurnSubscribeOptions): ReadableStream<Uint8Array>;
 	/** The remote kill — the ONLY way a running turn dies early: sawAbort +
 	 *  agent.abort(); the loop's agent_end does the rest (the settle seam
 	 *  persists the partial transcript to every listener). */
@@ -308,25 +314,40 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	})();
 
 	return {
-		subscribe() {
+		subscribe(options?: PiTurnSubscribeOptions) {
+			const heartbeatMs = options?.heartbeatMs ?? 15_000;
 			let sub: PiTurnSubscriber | undefined;
+			let cleanup: (() => void) | undefined;
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {
 					const encoder = new TextEncoder();
 					let closed = false;
+					let heartbeat: ReturnType<typeof setInterval> | undefined;
+					const teardown = () => {
+						closed = true;
+						if (heartbeat) {
+							clearInterval(heartbeat);
+							heartbeat = undefined;
+						}
+						if (sub) subscribers.delete(sub);
+					};
+					cleanup = teardown;
+					const enqueueRaw = (chunk: string) => {
+						if (closed) return;
+						try {
+							controller.enqueue(encoder.encode(chunk));
+						} catch {
+							/* reader cancelled — stop emitting, keep running */
+							teardown();
+						}
+					};
 					sub = {
 						push(event) {
-							if (closed) return;
-							try {
-								controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-							} catch {
-								/* reader cancelled — stop emitting, keep running */
-								closed = true;
-							}
+							enqueueRaw(`data: ${JSON.stringify(event)}\n\n`);
 						},
 						done() {
 							if (closed) return;
-							closed = true;
+							teardown();
 							try {
 								controller.enqueue(encoder.encode("data: [DONE]\n\n"));
 								controller.close();
@@ -335,6 +356,10 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 							}
 						},
 					};
+					// Flush an initial SSE comment immediately so reverse proxies
+					// and mobile browsers receive headers without waiting for the
+					// first model token.
+					enqueueRaw(": open\n\n");
 					// Attach THEN replay — synchronous, so no event can fall
 					// between replay and live (single-threaded: the agent's
 					// handle() only runs after this stack returns). The compacted
@@ -345,13 +370,18 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 					for (const event of log) sub.push(event);
 					// A subscriber that attached after settle (the unregister
 					// race) still gets the full history + [DONE].
-					if (settled) sub.done();
+					if (settled) {
+						sub.done();
+					} else if (heartbeatMs > 0 && !closed) {
+						heartbeat = setInterval(() => enqueueRaw(": ping\n\n"), heartbeatMs);
+						(heartbeat as { unref?: () => void }).unref?.();
+					}
 				},
 				cancel() {
 					// THE OWNER RULING (2026-09-25): a view leaving NEVER kills
 					// the turn — only the explicit abort channel does. The turn
 					// runs on; the compacted log keeps the state for the next view.
-					if (sub) subscribers.delete(sub);
+					cleanup?.();
 				},
 			});
 			return stream;

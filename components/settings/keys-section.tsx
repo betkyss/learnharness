@@ -221,7 +221,7 @@ function KeyTableRow({
 						data-testid={`${testid}-input`}
 						disabled={busy}
 						autoFocus
-						className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+						className="h-9 md:h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 					/>
 					<button
 						type="button"
@@ -658,7 +658,7 @@ function AddProviderEditor({
 				aria-label={`${provider.label} key`}
 				data-testid={`key-${provider.id}-input`}
 				autoFocus={active}
-				className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+				className="h-9 md:h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 			/>
 			<button
 				type="button"
@@ -912,7 +912,7 @@ function CustomEndpointEditor({
 					data-testid="custom-baseurl-input"
 					disabled={busy}
 					autoFocus={active}
-					className="h-8 min-w-0 w-full rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+					className="h-10 md:h-8 min-w-0 w-full rounded-sm border border-border bg-background px-1.5 font-mono text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 				/>
 			</label>
 			<label className="flex min-w-0 flex-col gap-1 text-xs"><span>Model IDs</span><input
@@ -924,12 +924,12 @@ function CustomEndpointEditor({
 				aria-label="Custom endpoint model IDs"
 				data-testid="custom-models-input"
 				disabled={busy}
-				className="h-8 min-w-0 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+				className="h-10 md:h-8 min-w-0 rounded-sm border border-border bg-background px-1.5 font-mono text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 			/>
  <span id="custom-models-help" className="text-xs leading-relaxed text-muted-foreground">Optional when models can be discovered. Enter comma-separated IDs if the endpoint does not provide a models list.</span>
 			</label>
 			<label className="flex items-center gap-2 text-xs">Authentication
-				<select aria-label="Custom endpoint authentication" data-testid="custom-auth-mode" value={authMode} disabled={busy || pinsBusy} onChange={(e) => { setAuthMode(e.target.value as "keyless" | "apiKey"); setReuseKey(false); }}>
+				<select aria-label="Custom endpoint authentication" data-testid="custom-auth-mode" value={authMode} disabled={busy || pinsBusy} onChange={(e) => { setAuthMode(e.target.value as "keyless" | "apiKey"); setReuseKey(false); }} className="h-10 md:h-8 rounded-sm border border-border bg-background px-1.5 text-base md:text-xs text-foreground">
 					<option value="keyless">Keyless</option><option value="apiKey">API key</option>
 				</select>
 			</label>
@@ -948,7 +948,7 @@ function CustomEndpointEditor({
 					aria-label="Custom endpoint API key"
 					data-testid="custom-key-input"
 					disabled={busy || pinsBusy || keySource === "env"}
-					className="h-8 min-w-0 w-full rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+					className="h-10 md:h-8 min-w-0 w-full rounded-sm border border-border bg-background px-1.5 font-mono text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 				/>}
 				{authMode === "apiKey" && <p className="w-full text-xs text-muted-foreground">{keyPresent ? "Leave blank to keep the effective key. Clearing a key switches to keyless authentication." : "Enter an API key for this endpoint."}</p>}
 				<button
@@ -1004,7 +1004,7 @@ function CustomEndpointEditor({
 										aria-label={`${m.id} context window in tokens`}
 										data-testid={pinTestid("custom-pin-context", m.id)}
 										disabled={pinsBusy}
-										className="h-8 w-20 shrink-0 rounded-sm border border-border bg-background px-1.5 text-right font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+										className="h-10 md:h-8 w-24 md:w-20 shrink-0 rounded-sm border border-border bg-background px-1.5 text-right font-mono text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 									/></label>
 									<label className="flex flex-col gap-1 text-xs text-muted-foreground"><span>Output tokens</span><input
 										type="text"
@@ -1015,7 +1015,7 @@ function CustomEndpointEditor({
 										aria-label={`${m.id} max output tokens`}
 										data-testid={pinTestid("custom-pin-maxtokens", m.id)}
 										disabled={pinsBusy}
-										className="h-8 w-20 shrink-0 rounded-sm border border-border bg-background px-1.5 text-right font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+										className="h-10 md:h-8 w-24 md:w-20 shrink-0 rounded-sm border border-border bg-background px-1.5 text-right font-mono text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
 									/></label>
 									<select
 										value={d.reasoning}
@@ -1023,7 +1023,7 @@ function CustomEndpointEditor({
 										aria-label={`${m.id} reasoning effort support`}
 										data-testid={pinTestid("custom-pin-reasoning", m.id)}
 										disabled={pinsBusy}
-										className="h-8 shrink-0 rounded-sm border border-border bg-background px-1 font-ui text-xs text-foreground outline-none focus:border-muted-foreground/50"
+										className="h-10 md:h-8 shrink-0 rounded-sm border border-border bg-background px-1 font-ui text-base md:text-xs text-foreground outline-none focus:border-muted-foreground/50"
 									>
 										<option value="">Reasoning effort: Use reported</option>
 										<option value="on">Reasoning effort: Supported</option>

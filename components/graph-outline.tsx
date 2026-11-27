@@ -24,6 +24,11 @@ export function GraphOutline({ snapshot, query, visibleIds, onFocus }: { snapsho
  const reading = useRef<HTMLElement>(null);
  useEffect(() => { reading.current?.scrollIntoView({block: "nearest"}); }, [readingChain]);
  useEffect(() => {
+  const close = () => setOpen(false);
+  window.addEventListener("lh:sidebar-overlay-open", close);
+  return () => window.removeEventListener("lh:sidebar-overlay-open", close);
+ }, []);
+ useEffect(() => {
   if (!open) return;
   const dismiss = (e: PointerEvent) => { const target = e.target as Element; if (!anchor.current?.contains(target) && !target.closest('[data-lh-menu]')) setOpen(false); };
   const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); anchor.current?.querySelector('button')?.focus(); } };

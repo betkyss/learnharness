@@ -192,7 +192,7 @@ export function Home({
 		return () => observer.disconnect();
 	}, []);
 	return (
-		<div ref={homeRef} className="relative h-dvh home-surface">
+		<div ref={homeRef} className="relative h-[var(--vvh,100dvh)] home-surface">
 			{/* Window-drag strip (merged chrome, owner 2026-09-17): a dedicated
 			    mask element, deliberately FIRST in the DOM. Electron's app-region
 			    mask resolves by DOM order — a no-drag element subtracts only drag
@@ -322,7 +322,7 @@ export function Home({
 										data-testid={`home-mode-${m}`}
 										onClick={() => setMode(m)}
 										className={
-											"flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs uppercase tracking-wider transition-colors " +
+											"flex items-center gap-1 rounded-sm px-2 py-0.5 max-md:min-h-9 max-md:px-3 text-xs uppercase tracking-wider transition-colors " +
 											(mode === m
 												? "bg-accent text-foreground"
 												: "text-muted-foreground hover:text-foreground")

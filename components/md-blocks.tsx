@@ -265,7 +265,7 @@ export function MarkdownCode(props: ComponentProps<"code"> & ExtraProps) {
 	const startLine = startMatch ? Number.parseInt(startMatch[1]!, 10) : undefined;
 	const lineNumbers = !/\bnoLineNumbers\b/.test(meta);
 	const fallback = (
-		<div className="group/md relative" data-testid="md-code">
+		<div className="group/md relative min-w-0 max-w-full" data-testid="md-code">
 			{!displayOnly && <CopyCorner className="absolute top-1.5 right-2 z-10" getText={() => source} label="Copy code" />}
 			<CodeBlock
 				code={source}

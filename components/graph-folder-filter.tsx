@@ -58,6 +58,11 @@ export function GraphFolderFilterControl({ organization, listed, selected, onCha
 		setOpen(false);
 	}, []);
 	const popupLayer = usePopoverDismiss(rootRef, open, close, { layerRootRef: panelRef });
+	useEffect(() => {
+		const onSidebarOpen = () => setOpen(false);
+		window.addEventListener("lh:sidebar-overlay-open", onSidebarOpen);
+		return () => window.removeEventListener("lh:sidebar-overlay-open", onSidebarOpen);
+	}, []);
 	const controls = () => Array.from(panelRef.current?.querySelectorAll<HTMLElement>("[data-folder-filter-control]:not(:disabled)") ?? []);
 	useLayoutEffect(() => {
 		if (!open || !enterAt.current) return;

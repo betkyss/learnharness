@@ -112,16 +112,23 @@ export function createNotifyHub() {
 export function wireSource(
 	source: NotifySource,
 	hub: ReturnType<typeof createNotifyHub>,
-	options?: { onError?: () => void },
+	options?: { onError?: () => void; onActivity?: () => void },
 ): () => void {
 	let active = true;
 	for (const name of SERVER_EVENT_TYPES) {
 		source.onEvent(name, (raw) => {
-			if (active) hub.dispatch(name, raw);
+			if (!active) return;
+			options?.onActivity?.();
+			hub.dispatch(name, raw);
 		});
 	}
+	source.onEvent("ping", () => {
+		if (active) options?.onActivity?.();
+	});
 	source.onOpen(() => {
-		if (active) hub.fireOpen();
+		if (!active) return;
+		options?.onActivity?.();
+		hub.fireOpen();
 	});
 	if (options?.onError) {
 		source.onError?.(() => {
@@ -150,18 +157,26 @@ export interface ManagedChannelOptions {
 	now?: () => number;
 	reconnectThrottleMs?: number;
 	authProbeCooldownMs?: number;
+	/** Interval (ms) for checking silent/half-open EventSource sockets. 0 disables. */
+	watchdogIntervalMs?: number;
+	/** Silence duration (ms) before the watchdog forces an EventSource reconnect. */
+	staleTimeoutMs?: number;
 }
 
 const DEFAULT_RECONNECT_THROTTLE_MS = 1000;
 const DEFAULT_AUTH_PROBE_COOLDOWN_MS = 5000;
+const DEFAULT_WATCHDOG_INTERVAL_MS = 10_000;
+const DEFAULT_STALE_TIMEOUT_MS = 40_000;
 
 /** Lifecycle wrapper around wireSource (pure, testable without React):
- *  - On foreground resume (hidden → visible), bfcache pageshow (persisted), or
- *    network online, closes the existing source and opens a fresh one
- *    (throttled) so iOS WebKit sockets suspended in background heal immediately
- *    and trigger resync via onOpen.
- *  - On source error, runs a guarded auth probe against /api/chats; only an
- *    explicit 401 redirects to /_login (never transient network/5xx errors). */
+ *  - On foreground resume (hidden → visible), bfcache pageshow (persisted),
+ *    network online, or stale window focus, closes the existing source and
+ *    opens a fresh one (throttled/coalesced) so iOS WebKit sockets suspended in
+ *    background heal immediately and trigger one resync via onOpen.
+ *  - Tracks server activity (open, events, and named `ping` keepalives); if the
+ *    channel goes silent past `staleTimeoutMs` while visible, forces a reconnect.
+ *  - On source error, runs a guarded auth probe against lightweight /api/health;
+ *    only an explicit 401 redirects to /_login (never transient network/5xx). */
 export function connectManagedChannel({
 	connect,
 	hub,
@@ -173,13 +188,20 @@ export function connectManagedChannel({
 	now = () => Date.now(),
 	reconnectThrottleMs = DEFAULT_RECONNECT_THROTTLE_MS,
 	authProbeCooldownMs = DEFAULT_AUTH_PROBE_COOLDOWN_MS,
+	watchdogIntervalMs = DEFAULT_WATCHDOG_INTERVAL_MS,
+	staleTimeoutMs = DEFAULT_STALE_TIMEOUT_MS,
 }: ManagedChannelOptions): () => void {
 	let disposed = false;
 	let disconnect: (() => void) | null = null;
 	let wasHidden = doc?.visibilityState === "hidden";
 	let lastReconnectAt = -Infinity;
+	let lastActivityAt = now();
 	let authProbeInFlight = false;
 	let lastAuthProbeAt = -Infinity;
+
+	const markActivity = () => {
+		lastActivityAt = now();
+	};
 
 	const probeAuth = () => {
 		if (disposed || !fetchImpl || authProbeInFlight) return;
@@ -187,7 +209,7 @@ export function connectManagedChannel({
 		if (t - lastAuthProbeAt < authProbeCooldownMs) return;
 		authProbeInFlight = true;
 		lastAuthProbeAt = t;
-		void Promise.resolve(fetchImpl("/api/chats", { cache: "no-store", credentials: "same-origin" }))
+		void Promise.resolve(fetchImpl("/api/health", { cache: "no-store", credentials: "same-origin" }))
 			.then((res) => {
 				if (!disposed && res.status === 401 && getPathname() !== "/_login") {
 					redirectToLogin();
@@ -203,7 +225,8 @@ export function connectManagedChannel({
 
 	const attach = () => {
 		disconnect?.();
-		disconnect = wireSource(connect(), hub, { onError: probeAuth });
+		lastActivityAt = now();
+		disconnect = wireSource(connect(), hub, { onError: probeAuth, onActivity: markActivity });
 	};
 
 	const reconnect = () => {
@@ -235,16 +258,41 @@ export function connectManagedChannel({
 		reconnect();
 	};
 
+	const onFocus = () => {
+		if (doc?.visibilityState === "hidden") return;
+		if (wasHidden || now() - lastActivityAt > staleTimeoutMs / 2) {
+			wasHidden = false;
+			reconnect();
+		}
+	};
+
 	attach();
 	doc?.addEventListener("visibilitychange", onVisibilityChange);
 	win?.addEventListener("pageshow", onPageShow);
 	win?.addEventListener("online", onOnline);
+	win?.addEventListener("focus", onFocus);
+
+	let watchdog: ReturnType<typeof setInterval> | undefined;
+	if (watchdogIntervalMs > 0 && staleTimeoutMs > 0) {
+		watchdog = setInterval(() => {
+			if (disposed || doc?.visibilityState === "hidden") return;
+			if (now() - lastActivityAt > staleTimeoutMs) {
+				reconnect();
+			}
+		}, watchdogIntervalMs);
+		(watchdog as { unref?: () => void }).unref?.();
+	}
 
 	return () => {
 		disposed = true;
+		if (watchdog) {
+			clearInterval(watchdog);
+			watchdog = undefined;
+		}
 		doc?.removeEventListener("visibilitychange", onVisibilityChange);
 		win?.removeEventListener("pageshow", onPageShow);
 		win?.removeEventListener("online", onOnline);
+		win?.removeEventListener("focus", onFocus);
 		disconnect?.();
 		disconnect = null;
 	};

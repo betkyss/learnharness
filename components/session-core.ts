@@ -34,6 +34,8 @@ import {
 	type LhMessage,
 	type LhViewMessage,
 	type LiveExecution,
+	type Phase3,
+	type PlanTree,
 	type QuestionAnswerData,
 	type QuestionDraft,
 	type TurnUsage,
@@ -51,6 +53,10 @@ export interface PluginQuestionAvailability { questionId: string; status: "avail
 export interface SessionRecordSnapshot {
 	pluginProblemAvailability?: PluginProblemAvailability;
 	messages: LhMessage[];
+	totalMessages?: number;
+	truncated?: boolean;
+	initialPhase?: Phase3;
+	tree?: PlanTree;
 	turnError?: string;
 	pluginQuestionAvailability?: PluginQuestionAvailability;
 	turnInFlight?: boolean;
@@ -84,6 +90,11 @@ export interface SessionModelDeps {
 	/** Injectable retry timing (tests). */
 	pollMs?: number;
 	waitMaxMs?: number;
+	/** Max stream drop recovery attempts (default 1 for deterministic unit tests;
+	 *  browser hook sets 3 with backoff for mobile resilience). */
+	maxStreamRecoveries?: number;
+	/** Backoff delays (ms) before each recovery attempt. */
+	recoveryBackoffMs?: readonly number[];
 }
 
 /** A local optimistic id (never a server stamp — absorption and the
@@ -126,16 +137,39 @@ class StreamReadError extends Error {
 	}
 }
 
-/** Wire events; return true ONLY for the explicit completion marker. */
-export async function* sseEvents(reader: ReadableStreamDefaultReader<Uint8Array>): AsyncGenerator<Record<string, unknown>, boolean> {
+/** Wire events; return true ONLY for the explicit completion marker.
+ *  Invokes `onActivity` on EVERY byte chunk read (including `: open` and `: ping`
+ *  SSE comments) so mobile stall/foreground detection knows the socket is alive.
+ *  When `signal` aborts, unblocks a frozen `reader.read()` immediately. */
+export async function* sseEvents(
+	reader: ReadableStreamDefaultReader<Uint8Array>,
+	onActivity?: () => void,
+	signal?: AbortSignal,
+): AsyncGenerator<Record<string, unknown>, boolean> {
 	const decoder = new TextDecoder();
 	let buf = "";
+	const abortPromise = signal
+		? new Promise<never>((_, reject) => {
+			const onAbort = () => {
+				reject(new DOMException("Aborted", "AbortError"));
+			};
+			if (signal.aborted) onAbort();
+			else signal.addEventListener("abort", onAbort, { once: true });
+		})
+		: null;
+	// Prevent unhandled rejection if the stream finishes normally before abort.
+	abortPromise?.catch(() => {});
 	for (;;) {
 		let chunk: ReadableStreamReadResult<Uint8Array>;
-		try { chunk = await reader.read(); }
-		catch (err) { throw new StreamReadError(err); }
+		try {
+			chunk = abortPromise ? await Promise.race([reader.read(), abortPromise]) : await reader.read();
+		} catch (err) {
+			if (signal?.aborted) return false;
+			throw new StreamReadError(err);
+		}
 		const { done, value } = chunk;
 		if (done) return false;
+		if (value && value.byteLength > 0) onActivity?.();
 		buf += decoder.decode(value, { stream: true });
 		for (;;) {
 			const end = buf.indexOf("\n\n");
@@ -221,6 +255,12 @@ export interface SessionState {
 	activeMessageId: string | null;
 	nativeMessages: LhMessage[];
 	canonicalMessages: LhMessage[];
+	/** Total native messages stored server-side (may exceed canonicalMessages.length in tail mode). */
+	totalMessageCount: number;
+	/** True when earlier server messages exist beyond the loaded tail window. */
+	hasEarlierMessages: boolean;
+	/** True while loading an expanded tail or full history from the server. */
+	loadingEarlier: boolean;
 	/** Server-read history only; optimistic bubbles are not delivery proof. */
 	hasConfirmedConversation: boolean;
 	/** Completed conversation usage; null after compaction or before first usage. */
@@ -259,13 +299,20 @@ export function visibleQueuedSteers(
 export interface SessionModelOptions extends SessionModelDeps {
 	chatId: string;
 	initialMessages: LhMessage[];
+	/** Total server native messages when SSR delivered a tail slice. */
+	initialTotalMessages?: number;
+	/** When set, canonical GETs request `?tail=N` until expanded or loaded in full. */
+	initialTailLimit?: number | null;
 	/** Retained, memory-only server failure when reopening a session. */
 	initialError?: string;
 	/** Fires on every state change (the hook re-renders). */
 	onChange?: () => void;
 	/** The reattach settled terminal (turn-settled): no turn running, the
-	 *  record is current — the caller refetches it. */
-	onReattachSettled?: () => void;
+	 *  record is current — receives the already-reconciled snapshot when available
+	 *  so callers do not issue duplicate post-settle GETs. */
+	onReattachSettled?: (reconciled?: SessionRecordSnapshot) => void;
+	/** Fires whenever a canonical GET snapshot is adopted (updates turns/pricing/phase/plan). */
+	onRecordAdopted?: (record: SessionRecordSnapshot) => void;
 }
 
 export class SessionModel {
@@ -276,7 +323,10 @@ export class SessionModel {
 	private steerQueueValue: SteerQueueItem[] = [];
 	private readonly pollMs: number;
 	private readonly waitMaxMs: number;
-	private onReattachSettled?: () => void;
+	private readonly maxStreamRecoveries: number;
+	private readonly recoveryBackoffMs: readonly number[];
+	private onReattachSettled?: (reconciled?: SessionRecordSnapshot) => void;
+	onRecordAdopted?: (record: SessionRecordSnapshot) => void;
 	/** The hook's re-render trigger (set by the adapter). */
 	onChange?: () => void;
 
@@ -285,6 +335,11 @@ export class SessionModel {
 	// at every full sync; the write-ahead absorbs the optimistic entries.
 	private base: LhMessage[];
 	private tail: LhMessage[] = [];
+	private totalMessageCountValue: number;
+	private tailLimit: number | null;
+	private loadingEarlierValue = false;
+	private lastStreamActivityAtValue = 0;
+	private lastReconciledRecord: SessionRecordSnapshot | null = null;
 	private questionDrafts = new Map<string, QuestionDraft>();
 	private pluginQuestionDrafts = new Map<string, PluginQuestionDraft>();
 	private pluginProblemDrafts = new Map<string, PluginProblemDraft>();
@@ -335,11 +390,14 @@ export class SessionModel {
 	readyRef = true;
 
 	private history?: { base: LhMessage[]; tail: LhMessage[]; messages: LhMessage[] };
+	private baseViewCache?: { base: LhMessage[]; view: LhViewMessage[] };
 
 	constructor(opts: SessionModelOptions) {
 		this.chatId = opts.chatId;
 		this.base = copyImmutableData(opts.initialMessages);
 		this.tail = copyImmutableData(this.tail);
+		this.totalMessageCountValue = Math.max(this.base.length, opts.initialTotalMessages ?? this.base.length);
+		this.tailLimit = opts.initialTailLimit ?? null;
 		if (pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) { this.reconciliationValue = "syncing"; this.readyRef = false; }
 		this.errorValue = opts.initialError === undefined ? null : { message: opts.initialError };
 		this.automaticContinuationBlocked = opts.initialError !== undefined;
@@ -350,12 +408,20 @@ export class SessionModel {
 		this.fetch = opts.fetch ?? ((...args) => globalThis.fetch(...args));
 		this.pollMs = opts.pollMs ?? TURN_POLL_MS;
 		this.waitMaxMs = opts.waitMaxMs ?? TURN_WAIT_MAX_MS;
+		this.maxStreamRecoveries = opts.maxStreamRecoveries ?? 1;
+		this.recoveryBackoffMs = opts.recoveryBackoffMs ?? [0];
 		this.onChange = opts.onChange;
 		this.onReattachSettled = opts.onReattachSettled;
+		this.onRecordAdopted = opts.onRecordAdopted;
+	}
+
+	/** Timestamp (ms) of the most recent byte received on the active turn stream. */
+	get lastStreamActivityAt(): number {
+		return this.lastStreamActivityAtValue;
 	}
 
 	/** Injectable settle hook (the adapter wires its ref). */
-	setReattachSettled(fn: () => void): void {
+	setReattachSettled(fn: (reconciled?: SessionRecordSnapshot) => void): void {
 		this.onReattachSettled = fn;
 	}
 
@@ -366,6 +432,71 @@ export class SessionModel {
 		const messages = copyImmutableData([...this.base, ...this.tail]);
 		this.history = { base: this.base, tail: this.tail, messages };
 		return messages;
+	}
+
+	/** Project view with immutable prefix caching so live streaming tokens only
+	 *  re-project the active tail and historical LhViewMessage identities stay stable. */
+	private projectViewCached(
+		messages: LhMessage[],
+		live?: { executions: ReadonlyMap<string, LiveExecution>; inFlight: boolean; streamingIds: ReadonlySet<string> },
+	): LhViewMessage[] {
+		const base = this.base;
+		const tail = this.tail;
+		if (tail.length === 0 && !live) {
+			if (this.baseViewCache?.base !== base) {
+				this.baseViewCache = { base, view: projectView(base) };
+			}
+			return this.baseViewCache.view;
+		}
+		if (base.length > 0 && tail.length > 0 && this.canProjectPrefixIndependently(base, tail, live)) {
+			if (this.baseViewCache?.base !== base) {
+				this.baseViewCache = { base, view: projectView(base) };
+			}
+			const tailView = projectView(tail, live);
+			return [...this.baseViewCache.view, ...tailView];
+		}
+		return projectView(messages, live);
+	}
+
+	private canProjectPrefixIndependently(
+		base: readonly LhMessage[],
+		tail: readonly LhMessage[],
+		live?: { executions: ReadonlyMap<string, LiveExecution>; inFlight: boolean; streamingIds: ReadonlySet<string> },
+	): boolean {
+		const lastBase = base[base.length - 1]!;
+		const firstTail = tail[0]!;
+		const cleanBoundary =
+			lastBase.role === "user" ||
+			firstTail.role === "user" ||
+			(lastBase.role === "custom" &&
+				(lastBase.customType === "probe-handoff" ||
+					lastBase.customType === "practice-next" ||
+					lastBase.customType === "subagent-steer" ||
+					lastBase.customType === "subagent-abort" ||
+					lastBase.customType === "practice-thinking"));
+		if (!cleanBoundary) return false;
+
+		const tailCallIds = new Set<string>();
+		let seenAssistantInTail = false;
+		for (const m of tail) {
+			if (m.role === "custom") {
+				if (m.customType === "compaction") return false;
+				if (m.customType === "plan-block" && !seenAssistantInTail) return false;
+			} else if (m.role === "assistant") {
+				seenAssistantInTail = true;
+				for (const block of m.content) {
+					if (block.type === "toolCall") tailCallIds.add(block.id);
+				}
+			} else if (m.role === "toolResult") {
+				if (!tailCallIds.has(m.toolCallId)) return false;
+			}
+		}
+		if (live) {
+			for (const id of live.executions.keys()) {
+				if (!tailCallIds.has(id)) return false;
+			}
+		}
+		return true;
 	}
 
 	getState(): SessionState {
@@ -383,12 +514,16 @@ export class SessionModel {
 			!this.incompleteUsageIds.has(latest.id) && (!live || latest.id === this.liveFailureId)
 				? { message: latest.errorMessage ?? "An error occurred." }
 				: null;
+		const hasEarlierMessages = this.totalMessageCountValue > this.base.length;
 		return {
-			messages: projectView(messages, live),
+			messages: this.projectViewCached(messages, live),
 			activeMessageId: live ? this.streamingMessageId : null,
 			nativeMessages: messages,
 			canonicalMessages: this.base,
-			hasConfirmedConversation: this.base.some(m => m.role === "user" || m.role === "assistant"),
+			totalMessageCount: Math.max(this.totalMessageCountValue, this.base.length),
+			hasEarlierMessages,
+			loadingEarlier: this.loadingEarlierValue,
+			hasConfirmedConversation: hasEarlierMessages || this.base.some(m => m.role === "user" || m.role === "assistant"),
 			contextTokens: measuredContextTokens(messages, this.incompleteUsageIds),
 			status: this.statusValue,
 			evaluating: this.statusValue === "submitted" && this.evaluationOwner !== null && this.evaluationOwner === this.consumeAbort,
@@ -452,12 +587,21 @@ export class SessionModel {
 		this.invalidateCanonicalReads();
 	}
 
+	private recordUrl(tailLimit: number | null = this.tailLimit): string {
+		const base = `/api/chats/${encodeURIComponent(this.chatId)}`;
+		return tailLimit !== null && Number.isFinite(tailLimit) && tailLimit > 0
+			? `${base}?tail=${Math.floor(tailLimit)}`
+			: base;
+	}
+
 	/** Shared canonical read/adoption seam. A stale or locally canceled read
 	 * returns undefined, never a snapshot callers may adopt independently. */
 	async readRecord(options: SessionRecordReadOptions = {}): Promise<SessionRecordSnapshot | undefined> {
-		const ticket = ++this.canonicalIssued;
+		const mode = options.adoption ?? "replace";
 		const epoch = this.canonicalEpoch;
-		const response = await this.fetchView(`/api/chats/${encodeURIComponent(this.chatId)}`, options.signal, options.recoveringDrop === true);
+		const requestedTail = this.tailLimit;
+		const ticket = ++this.canonicalIssued;
+		const response = await this.fetchView(this.recordUrl(requestedTail), options.signal, options.recoveringDrop === true);
 		if (!response.ok) {
 			const detail = await response.text();
 			if (options.tolerateHttpFailure) return undefined;
@@ -469,17 +613,18 @@ export class SessionModel {
 		const record = JSON.parse(text) as SessionRecordSnapshot;
 		if (!Array.isArray(record.messages)) throw new Error("Could not sync the saved session.");
 		if (epoch !== this.canonicalEpoch || ticket < this.canonicalAcknowledged || options.signal?.aborted || options.isCurrent?.() === false) return undefined;
-		const mode = options.adoption ?? "replace";
 		// Returning undefined also prevents callers from certifying a deferred
 		// append/replace as applied canonical authority. No stale snapshot is queued.
 		if (mode !== "none" && this.imagePostOwner) return undefined;
 		if (mode === "replace" && !options.allowInFlight && (this.statusValue === "submitted" || this.statusValue === "streaming")) return undefined;
 		if (mode === "append") {
-			if (!this.appendMessages(record.messages, record.pluginQuestionAvailability, true, record.pluginProblemAvailability)) return undefined;
+			if (!this.appendMessages(record.messages, record.pluginQuestionAvailability, true, record.pluginProblemAvailability, record.totalMessages, record.truncated)) return undefined;
 			this.canonicalAcknowledged = Math.max(this.canonicalAcknowledged, ticket);
+			this.onRecordAdopted?.(record);
 		} else if (mode === "replace") {
 			this.canonicalAcknowledged = Math.max(this.canonicalAcknowledged, ticket);
-			this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability);
+			this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability, record.totalMessages, record.truncated);
+			this.onRecordAdopted?.(record);
 		}
 		return record;
 	}
@@ -501,6 +646,7 @@ export class SessionModel {
 		if (this.reconciliationTask && this.reconciliationOwner === this.consumeAbort && this.reconciliationConnectionGeneration === this.connectionGeneration) return this.reconciliationTask;
 		this.reconciliationValue = "syncing";
 		this.readyRef = false;
+		this.lastReconciledRecord = null;
 		this.onChange?.();
 		const owner = this.consumeAbort;
 		const connection = this.connectionGeneration;
@@ -518,6 +664,7 @@ export class SessionModel {
 				// A newer successfully adopted GET is authority too; a merely
 				// issued/pending read cannot suppress this terminal response.
 				if (!record && this.canonicalAcknowledged < requiredTicket) return false;
+				if (record) this.lastReconciledRecord = record;
 				this.reconciliationValue = "ready";
 				this.readyRef = this.statusValue === "ready";
 				return true;
@@ -538,6 +685,46 @@ export class SessionModel {
 		})();
 		this.reconciliationTask = task;
 		return task;
+	}
+
+	/** Expand the server tail window by `step` view groups and adopt the larger history. */
+	async loadEarlierMessages(step = 50): Promise<boolean> {
+		if (this.loadingEarlierValue || this.totalMessageCountValue <= this.base.length) return false;
+		if (this.statusValue === "submitted" || this.statusValue === "streaming") return false;
+		this.loadingEarlierValue = true;
+		this.onChange?.();
+		try {
+			const nextLimit = (this.tailLimit ?? 30) + step;
+			this.tailLimit = nextLimit;
+			this.invalidateCanonicalReads();
+			const record = await this.readRecord();
+			if (record && !record.truncated) this.tailLimit = null;
+			return Boolean(record);
+		} catch {
+			return false;
+		} finally {
+			this.loadingEarlierValue = false;
+			this.onChange?.();
+		}
+	}
+
+	/** Load the full session transcript from the server (for SessionFind and #hash links). */
+	async loadAllMessages(): Promise<boolean> {
+		if (this.totalMessageCountValue <= this.base.length && this.tailLimit === null) return true;
+		if (this.loadingEarlierValue) return false;
+		this.loadingEarlierValue = true;
+		this.onChange?.();
+		try {
+			this.tailLimit = null;
+			this.invalidateCanonicalReads();
+			const record = await this.readRecord({ allowInFlight: false });
+			return Boolean(record);
+		} catch {
+			return false;
+		} finally {
+			this.loadingEarlierValue = false;
+			this.onChange?.();
+		}
 	}
 
 	pluginProblemDraft(snapshot: PluginProblemSnapshot): PluginProblemDraft {
@@ -729,13 +916,26 @@ export class SessionModel {
 
 	/** Consume one SSE body to its [DONE] terminal. The turn-settled
 	 *  terminal (stream-route only) fires the settle hook and ends. */
-	async consumeStream(res: Response, controller = this.consumeAbort, allowRecovery = true): Promise<void> {
+	async consumeStream(
+		res: Response,
+		controller = this.consumeAbort,
+		allowRecovery: boolean | number = true,
+		recoveryAttempt = 0,
+	): Promise<void> {
 		if (!res.body) throw new Error("The turn stream body is empty.");
 		const reader = res.body.getReader();
+		const maxRecoveries = typeof allowRecovery === "number" ? allowRecovery : allowRecovery ? this.maxStreamRecoveries : 0;
 		let sawEvent = false;
 		let sawDone = false;
+		this.lastStreamActivityAtValue = Date.now();
 		try {
-			const events = sseEvents(reader);
+			const events = sseEvents(
+				reader,
+				() => {
+					this.lastStreamActivityAtValue = Date.now();
+				},
+				controller?.signal,
+			);
 			for (;;) {
 				let next: IteratorResult<Record<string, unknown>, boolean>;
 				try { next = await events.next(); }
@@ -759,8 +959,13 @@ export class SessionModel {
 				}
 			}
 		} finally {
-			await reader.cancel().catch(() => {});
-			reader.releaseLock();
+			// When our AbortController fired, real fetch() aborts the network
+			// transport itself; avoid forcing reader.cancel() synchronously so
+			// already-superseded streams release cleanly without racing mocks.
+			if (!controller?.signal.aborted) {
+				await reader.cancel().catch(() => {});
+			}
+			try { reader.releaseLock(); } catch { /* already locked/released */ }
 			// A cancelled consume may finish after its replacement has entered
 			// Thinking. Only the current owner can settle shared state.
 			if (this.consumeAbort === controller) {
@@ -769,16 +974,26 @@ export class SessionModel {
 				if (sawDone) {
 					// Do not expose live annotations as canonical editor authority.
 					await this.reconcile();
+					const reconciledRecord = this.lastReconciledRecord ?? undefined;
 					if (this.consumeAbort === controller && this.statusValue !== "error") this.setStatus("ready");
-					if (this.consumeAbort === controller && this.reconciliationValue === "ready") this.onReattachSettled?.();
+					if (this.consumeAbort === controller && this.reconciliationValue === "ready") this.onReattachSettled?.(reconciledRecord);
 				}
 			}
 		}
 		if (this.consumeAbort !== controller || sawDone) return;
-		if (!allowRecovery) throw new StreamReadError(new Error(STREAM_DROPPED));
-		// One read-only recovery: refresh the canonical base, then replay the
+		if (recoveryAttempt >= maxRecoveries) throw new StreamReadError(new Error(STREAM_DROPPED));
+		const backoff = this.recoveryBackoffMs[Math.min(recoveryAttempt, this.recoveryBackoffMs.length - 1)] ?? 0;
+		if (backoff > 0) {
+			try {
+				await delay(backoff, controller?.signal);
+			} catch {
+				return;
+			}
+		}
+		if (this.consumeAbort !== controller || controller?.signal.aborted) return;
+		// Bounded read-only recovery: refresh the canonical base, then replay the
 		// SAME server-owned turn. Never resend the learner's input.
-		await this.resumeStream(true, false);
+		await this.resumeStream(true, maxRecoveries, recoveryAttempt + 1);
 	}
 
 	private async fetchView(url: string, signal: AbortSignal | undefined, recoveringDrop: boolean): Promise<Response> {
@@ -794,18 +1009,15 @@ export class SessionModel {
 
 	/**
 	 * Reattach (the wake/handoff/mount path): a server-side turn with no
-	 * live view of ours. ATTACH-FIRST (owner, reattach round 2026-10-02):
-	 * a fresh-mount reattach passes refetchRecordFirst=false — the page
-	 * render just read the record, so the blocking record round-trip only
-	 * added handshake latency before the instant replay; the running
-	 * turn's partial lives solely in the server event log, and the replay
-	 * rebuilds it regardless of the refetch. Mid-session callers (the
-	 * handoff watch) keep the default: their base may trail the record,
-	 * and the refetch absorbs it (write-ahead adoption) before the replay
-	 * lands on top. The stream then replays the turn from its first event
-	 * through the SAME consume path.
+	 * live view of ours.
 	 */
-	async resumeStream(refetchRecordFirst = true, allowRecovery = true): Promise<void> {
+	async resumeStream(
+		refetchRecordFirst = true,
+		allowRecovery: boolean | number = true,
+		recoveryAttempt = 0,
+	): Promise<void> {
+		const maxRecoveries = typeof allowRecovery === "number" ? allowRecovery : allowRecovery ? this.maxStreamRecoveries : 0;
+		const isRecoveryPass = recoveryAttempt > 0 || maxRecoveries === 0;
 		// External reattachment supersedes unresolved POST preview ownership.
 		// Normal post-ack reattach keeps its preview until the atomic record swap.
 		this.retireImagePreview(this.imagePostOwner);
@@ -814,22 +1026,6 @@ export class SessionModel {
 		const controller = new AbortController();
 		this.consumeAbort = controller;
 		this.latestRequest = controller;
-		// REPLAY ONTO A CLEAN SLATE (owner, optimistic round 3, 2026-10-02):
-		// the reattach stream replays the turn from its FIRST event — an
-		// aborted earlier attempt (React StrictMode's simulated remount)
-		// must not leave partials the replay would DOUBLE onto. The old
-		// record refetch provided this reset accidentally; attach-first
-		// made it explicit.
-		//
-		// THE FLICKER FIX (owner, 2026-10-10 — connection-diet B follow-up):
-		// on the REFETCH path the clear must NOT precede the fetch — send()
-		// just landed the optimistic answer/note cards in the tail, and any
-		// refetch latency (dev-compile stalls measured at 1.7s) re-showed
-		// the answered-away question for the whole window: card vanished,
-		// dock returned, both snapped back only when the record landed.
-		// The refetch block below swaps base+tail ATOMICALLY when the record
-		// arrives (and clears on failure — the clean-slate guard holds on
-		// every path that actually replays onto a stale tail).
 		if (!refetchRecordFirst) {
 			this.mutate(() => {
 				this.incompleteUsageIds.clear();
@@ -840,7 +1036,7 @@ export class SessionModel {
 		this.setStatus("submitted");
 		try {
 			if (refetchRecordFirst) {
-				const record = await this.readRecord({ signal: controller.signal, allowInFlight: true, recoveringDrop: !allowRecovery, tolerateHttpFailure: true, isCurrent: () => this.consumeAbort === controller });
+				const record = await this.readRecord({ signal: controller.signal, allowInFlight: true, recoveringDrop: isRecoveryPass, tolerateHttpFailure: true, isCurrent: () => this.consumeAbort === controller });
 				if (this.consumeAbort !== controller) return;
 				if (!record) {
 					// The record did not land — restore the clean-slate guard
@@ -852,12 +1048,25 @@ export class SessionModel {
 					});
 				}
 			}
-			const res = await this.fetchView(`/api/chats/${encodeURIComponent(this.chatId)}/stream`, controller.signal, !allowRecovery);
+			const res = await this.fetchView(`/api/chats/${encodeURIComponent(this.chatId)}/stream`, controller.signal, isRecoveryPass);
 			if (this.consumeAbort !== controller) return;
 			if (!res.ok) throw new Error((await res.text()) || "Failed to attach to the running turn.");
-			await this.consumeStream(res, controller, allowRecovery);
+			await this.consumeStream(res, controller, maxRecoveries, recoveryAttempt);
 		} catch (err) {
 			if (this.consumeAbort !== controller || controller.signal.aborted) return; // intentionally cancelled
+			// If a transient recovery attempt failed and we still have retry budget,
+			// wait out backoff and retry read-only reattach before surfacing error.
+			if (err instanceof StreamReadError && recoveryAttempt < maxRecoveries && recoveryAttempt > 0) {
+				const backoff = this.recoveryBackoffMs[Math.min(recoveryAttempt, this.recoveryBackoffMs.length - 1)] ?? 0;
+				try {
+					if (backoff > 0) await delay(backoff, controller.signal);
+				} catch {
+					return;
+				}
+				if (this.consumeAbort !== controller || controller.signal.aborted) return;
+				await this.resumeStream(true, maxRecoveries, recoveryAttempt + 1);
+				return;
+			}
 			this.retireImagePreview(this.imagePreview?.owner ?? null);
 			// A failed record read can leave the optimistic answer in the tail.
 			// Restore its Submit affordance; the next attempt reconciles first.
@@ -865,9 +1074,48 @@ export class SessionModel {
 				this.tail = this.tail.filter(m => !this.unconfirmedAnswers.has(m.id));
 				this.unconfirmedAnswers.clear();
 			});
-			this.setError(!allowRecovery && err instanceof StreamReadError ? STREAM_DROPPED : (err as Error).message);
+			this.setError(isRecoveryPass && err instanceof StreamReadError ? STREAM_DROPPED : (err as Error).message);
 			this.setStatus("error");
 		}
+	}
+
+	/**
+	 * Foreground resume recovery (P0-2): when an iOS/mobile tab returns from
+	 * background, a fetch() SSE reader can hang indefinitely on a half-open
+	 * socket even though the turn already settled (or is still streaming on a
+	 * dead socket). Given fresh `?view=meta` truth from the server:
+	 * - `!meta.turnInFlight`: abort the frozen stream, clear live state, and
+	 *   reconcile immediately so the final response appears without reload.
+	 * - `meta.turnInFlight`: abort the stale reader and cleanly reattach via
+	 *   `resumeStream(true)` without duplicating text.
+	 */
+	async recoverFromForeground(meta: {
+		turnInFlight: boolean;
+		messageCount: number;
+		lastMessageId: string | null;
+		turnError?: string;
+	}): Promise<"settled" | "reattached" | "noop"> {
+		if (this.statusValue !== "submitted" && this.statusValue !== "streaming") {
+			return "noop";
+		}
+		if (!meta.turnInFlight) {
+			this.consumeAbort?.abort();
+			this.consumeAbort = null;
+			this.streamingIds = new Set();
+			this.streamingMessageId = null;
+			this.executions = new Map();
+			this.invalidateCanonicalReads();
+			await this.reconcile();
+			const reconciledRecord = this.lastReconciledRecord ?? undefined;
+			if (this.status !== "error") this.setStatus("ready");
+			if (this.reconciliationValue === "ready") this.onReattachSettled?.(reconciledRecord);
+			return "settled";
+		}
+		// Turn is still running server-side, but foreground resume may have left
+		// the previous mobile fetch reader frozen on a dead socket — cleanly
+		// reattach onto the server's compacted replay + live stream.
+		void this.resumeStream(true);
+		return "reattached";
 	}
 
 	/**
@@ -1217,11 +1465,20 @@ export class SessionModel {
 		this.replaceMessages(record, turnError, availability, problemAvailability);
 	}
 
-	private replaceMessages(record: LhMessage[], turnError?: string, availability?: PluginQuestionAvailability, problemAvailability?: PluginProblemAvailability): void {
+	private replaceMessages(
+		record: LhMessage[],
+		turnError?: string,
+		availability?: PluginQuestionAvailability,
+		problemAvailability?: PluginProblemAvailability,
+		totalMessages?: number,
+		truncated?: boolean,
+	): void {
 		if (this.imagePostOwner) return;
 		record = copyImmutableData(record);
 		this.mutate(() => {
 			this.base = record;
+			this.totalMessageCountValue = Math.max(record.length, totalMessages ?? record.length);
+			if (truncated === false) this.tailLimit = null;
 			this.pluginQuestionAvailability = availability;
 			this.pluginProblemAvailability = problemAvailability;
 			const problemId = activeProblemOf(record)?.pluginProblem?.problemId;
@@ -1252,17 +1509,43 @@ export class SessionModel {
 		this.appendMessages(record);
 	}
 
-	private appendMessages(record: LhMessage[], availability?: PluginQuestionAvailability, updateAvailability = false, problemAvailability?: PluginProblemAvailability): boolean {
+	private appendMessages(
+		record: LhMessage[],
+		availability?: PluginQuestionAvailability,
+		updateAvailability = false,
+		problemAvailability?: PluginProblemAvailability,
+		totalMessages?: number,
+		truncated?: boolean,
+	): boolean {
 		if (this.imagePostOwner) return false;
 		record = copyImmutableData(record);
 		const recordIds = new Set(record.map((m) => (m as { id?: string }).id));
-		const baseAbsorbed = this.base.some((m) => !recordIds.has((m as { id?: string }).id));
-		if (baseAbsorbed) return false; // not a pure append — the idle full sync is the net
+		let nextBase: LhMessage[] = record;
+		if (truncated) {
+			// Sliding tail window: older head messages in `this.base` may have
+			// shifted off the front of the server's tail slice. Preserve them and
+			// merge the new tail cleanly without treating window slide as a rewrite.
+			const baseIds = new Set(this.base.map((m) => (m as { id?: string }).id));
+			const firstOverlapIdx = record.findIndex((m) => baseIds.has((m as { id?: string }).id));
+			if (firstOverlapIdx === -1 && this.base.length > 0) return false;
+			if (firstOverlapIdx >= 0) {
+				const overlapId = (record[firstOverlapIdx]! as { id?: string }).id;
+				const baseCut = this.base.findIndex((m) => (m as { id?: string }).id === overlapId);
+				if (baseCut >= 0) {
+					nextBase = [...this.base.slice(0, baseCut), ...record.slice(firstOverlapIdx)];
+				}
+			}
+		} else {
+			const baseAbsorbed = this.base.some((m) => !recordIds.has((m as { id?: string }).id));
+			if (baseAbsorbed) return false; // not a pure append — the idle full sync is the net
+		}
+		const mergedIds = new Set(nextBase.map((m) => (m as { id?: string }).id));
 		this.mutate(() => {
-			this.base = record;
+			this.base = nextBase;
+			this.totalMessageCountValue = Math.max(nextBase.length, totalMessages ?? nextBase.length);
 			if (updateAvailability) { this.pluginQuestionAvailability = availability; this.pluginProblemAvailability = problemAvailability; }
-			this.forgetResolvedDrafts(record);
-			this.tail = this.tail.filter((m) => !(typeof m.id === "string" && recordIds.has(m.id)) && !absorbed(m, record));
+			this.forgetResolvedDrafts(nextBase);
+			this.tail = this.tail.filter((m) => !(typeof m.id === "string" && mergedIds.has(m.id)) && !absorbed(m, nextBase));
 		});
 		return true;
 	}

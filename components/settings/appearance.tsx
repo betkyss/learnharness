@@ -227,10 +227,23 @@ export function AppearanceProvider({
 	}, [key, vars]);
 
 	// The desktop shell's native chrome (window background, Windows/Linux
-	// control overlay) follows the theme — absent in a browser.
+	// control overlay) and mobile browser/PWA theme-color follow the active theme.
 	const background = colors.background;
 	useEffect(() => {
 		window.lh?.setAppearance?.({ mode, background });
+		if (typeof document === "undefined") return;
+		const existing = document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]');
+		if (existing.length > 0) {
+			for (const tag of existing) {
+				tag.removeAttribute("media");
+				tag.setAttribute("content", background);
+			}
+		} else {
+			const meta = document.createElement("meta");
+			meta.name = "theme-color";
+			meta.content = background;
+			document.head.appendChild(meta);
+		}
 	}, [mode, background]);
 
 	const refreshThemes = useCallback(async () => {

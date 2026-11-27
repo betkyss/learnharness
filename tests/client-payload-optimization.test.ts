@@ -55,6 +55,36 @@ describe("sanitizeMessagesForClient", () => {
 			isError: false,
 			timestamp: 1100,
 		};
+		const errorToolResultMsg: LhMessage = {
+			id: "msg_tool_err",
+			role: "toolResult",
+			toolCallId: "call_err",
+			toolName: "read",
+			content: [{ type: "text", text: "ENOENT: no such file" }],
+			details: { error: "ENOENT" },
+			isError: true,
+			timestamp: 1120,
+		};
+		const pluginToolResultMsg: LhMessage = {
+			id: "msg_tool_plugin",
+			role: "toolResult",
+			toolCallId: "call_plugin",
+			toolName: "custom_plugin_tool",
+			content: [{ type: "text", text: "plugin output text" }],
+			details: { custom: true },
+			isError: false,
+			timestamp: 1140,
+		};
+		const noDetailsToolResultMsg: LhMessage = {
+			id: "msg_tool_nodetails",
+			role: "toolResult",
+			toolCallId: "call_nodetails",
+			toolName: "read",
+			content: [{ type: "text", text: "fallback text needed when details is null" }],
+			details: null,
+			isError: false,
+			timestamp: 1150,
+		};
 		const markerMsg: LhMessage = {
 			id: "msg_marker_1",
 			role: "custom",
@@ -64,16 +94,32 @@ describe("sanitizeMessagesForClient", () => {
 			details: { chatId: "chat_1" },
 			timestamp: 1200,
 		};
-		const input = [userMsg, assistantMsg, toolResultMsg, markerMsg];
+		const input = [
+			userMsg,
+			assistantMsg,
+			toolResultMsg,
+			errorToolResultMsg,
+			pluginToolResultMsg,
+			noDetailsToolResultMsg,
+			markerMsg,
+		];
 		const snapshotBefore = JSON.stringify(input);
 
 		const sanitized = sanitizeMessagesForClient(input);
 
 		assert.equal(JSON.stringify(input), snapshotBefore, "input messages and blocks must never be mutated");
 		assert.notEqual(sanitized, input);
-		assert.equal(sanitized[0], userMsg, "non-assistant messages pass through untouched");
-		assert.equal(sanitized[2], toolResultMsg);
-		assert.equal(sanitized[3], markerMsg);
+		assert.equal(sanitized[0], userMsg, "user messages pass through untouched");
+		// Builtin non-error toolResult with details strips duplicated content
+		assert.notEqual(sanitized[2], toolResultMsg);
+		assert.equal(sanitized[2]!.role, "toolResult");
+		assert.deepEqual(sanitized[2]!.content, []);
+		assert.deepEqual((sanitized[2]! as { details?: unknown }).details, { answer: "4" });
+		// Error, plugin, and null-details toolResults keep their content intact
+		assert.equal(sanitized[3], errorToolResultMsg);
+		assert.equal(sanitized[4], pluginToolResultMsg);
+		assert.equal(sanitized[5], noDetailsToolResultMsg);
+		assert.equal(sanitized[6], markerMsg);
 
 		const outAssistant = sanitized[1]!;
 		assert.equal(outAssistant.role, "assistant");
@@ -87,6 +133,96 @@ describe("sanitizeMessagesForClient", () => {
 		]);
 		assert.equal("thinkingSignature" in outAssistant.content[0]!, false);
 		assert.equal("textSignature" in outAssistant.content[1]!, false);
+	});
+});
+
+describe("GET /api/chats/[id] single-read and ?tail=N pagination", () => {
+	it("serves ?tail=N with clean group boundaries, totalMessages, truncated, and initialPhase while keeping plain GET backwards-compatible", async () => {
+		const record = chatStore.createChat("tail pagination fixture");
+		const msgs: LhMessage[] = [];
+		for (let i = 0; i < 12; i++) {
+			msgs.push({ id: `msg_u_${i}`, role: "user", content: `Question ${i}`, timestamp: 1000 + i * 10 });
+			msgs.push({
+				id: `msg_a_${i}`,
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				timestamp: 1005 + i * 10,
+				stopReason: i === 1 ? "toolUse" : "stop",
+				usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 20, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				content: i === 1
+					? [{ type: "toolCall", id: "call_pd", name: "probe_done", arguments: {} }]
+					: [{ type: "text", text: `Answer ${i}` }],
+			});
+			if (i === 1) {
+				msgs.push({
+					id: "msg_tr_pd",
+					role: "toolResult",
+					toolCallId: "call_pd",
+					toolName: "probe_done",
+					content: [{ type: "text", text: "ok" }],
+					details: { ok: true },
+					isError: false,
+					timestamp: 1016,
+				});
+			}
+		}
+		chatStore.saveMessages(record.id, msgs);
+
+		// ?tail=4 returns only the last 4 view groups (2 user + 2 assistant = 4 messages)
+		const tailRes = await GET(
+			new Request(`http://localhost/api/chats/${record.id}?tail=4`),
+			{ params: Promise.resolve({ id: record.id }) },
+		);
+		assert.equal(tailRes.status, 200);
+		const tailBody = (await tailRes.json()) as {
+			messages: LhMessage[];
+			totalMessages: number;
+			truncated: boolean;
+			initialPhase: string;
+		};
+		assert.equal(tailBody.totalMessages, msgs.length);
+		assert.equal(tailBody.truncated, true);
+		assert.equal(tailBody.initialPhase, "plan", "probe_done happened before the tail window");
+		assert.equal(tailBody.messages.length, 4);
+		assert.equal(tailBody.messages[0]!.id, "msg_u_10");
+		assert.equal(tailBody.messages.at(-1)!.id, "msg_a_11");
+
+		// Plain GET without ?tail= returns full history (backwards-compatible)
+		const fullRes = await GET(
+			new Request(`http://localhost/api/chats/${record.id}`),
+			{ params: Promise.resolve({ id: record.id }) },
+		);
+		assert.equal(fullRes.status, 200);
+		const fullBody = (await fullRes.json()) as { messages: LhMessage[] };
+		assert.equal(fullBody.messages.length, msgs.length);
+		assert.equal(fullBody.messages[0]!.id, "msg_u_0");
+	});
+
+	it("reads chat from chatStore only once on normal GET /api/chats/[id]", async () => {
+		const record = chatStore.createChat("single-read fixture");
+		chatStore.saveMessages(record.id, [
+			{ id: "msg_sr_u", role: "user", content: "Hi", timestamp: 1 },
+			sampleAssistantMessage(),
+		]);
+		const { stores } = await import("../src/server/stores.ts");
+		const origGetChat = stores.chatStore.getChat;
+		let getChatCalls = 0;
+		stores.chatStore.getChat = (id: string) => {
+			if (id === record.id) getChatCalls++;
+			return origGetChat(id);
+		};
+		try {
+			const res = await GET(
+				new Request(`http://localhost/api/chats/${record.id}`),
+				{ params: Promise.resolve({ id: record.id }) },
+			);
+			assert.equal(res.status, 200);
+			assert.equal(getChatCalls, 1, `expected exactly 1 getChat() call, got ${getChatCalls}`);
+		} finally {
+			stores.chatStore.getChat = origGetChat;
+		}
 	});
 });
 

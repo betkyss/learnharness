@@ -113,30 +113,44 @@ const ActivityContext = createContext<{ feed: ActivityFeed; refresh: () => void 
  */
 export function ActivityProvider({ children }: { children: React.ReactNode }) {
 	const [feed, setFeed] = useState<ActivityFeed>(EMPTY_FEED);
-	const [nonce, setNonce] = useState(0);
-	const refresh = useCallback(() => setNonce((n) => n + 1), []);
-	const refreshRef = useRef(refresh);
-	refreshRef.current = refresh;
-	const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-	useEffect(() => {
-		let alive = true;
-		void (async () => {
+	const aliveRef = useRef(true);
+	const inFlightRef = useRef<Promise<void> | null>(null);
+	const lastFetchAtRef = useRef(0);
+	const fetchFeed = useCallback((force = false) => {
+		if (inFlightRef.current) return;
+		const now = Date.now();
+		if (!force && now - lastFetchAtRef.current < 500) return;
+		lastFetchAtRef.current = now;
+		const task = (async () => {
 			try {
 				const res = await fetch("/api/activity");
 				if (res.ok) {
 					const data = (await res.json()) as Partial<ActivityFeed>;
-					if (alive)
+					if (aliveRef.current)
 						setFeed({ jobs: data.jobs ?? [], pluginWorkers: data.pluginWorkers ?? [], extractions: data.extractions ?? [] });
 				}
 			} catch {
 				// transport blip: keep the last feed, announce again next event
+			} finally {
+				inFlightRef.current = null;
 			}
 		})();
+		inFlightRef.current = task;
+	}, []);
+	const refresh = useCallback(() => fetchFeed(true), [fetchFeed]);
+	const refreshRef = useRef(refresh);
+	refreshRef.current = refresh;
+	const dedupedRefreshRef = useRef(() => fetchFeed(false));
+	dedupedRefreshRef.current = () => fetchFeed(false);
+	const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+	useEffect(() => {
+		aliveRef.current = true;
+		fetchFeed(true);
 		return () => {
-			alive = false;
+			aliveRef.current = false;
 		};
-	}, [nonce]);
+	}, [fetchFeed]);
 
 	// Announcements → one trailing fetch per burst (the S4 debounce law).
 	const scheduleAnnouncedFetch = () => {
@@ -149,13 +163,15 @@ export function ActivityProvider({ children }: { children: React.ReactNode }) {
 	useServerEvent("activity-changed", scheduleAnnouncedFetch);
 	useServerEvent("jobs-changed", scheduleAnnouncedFetch);
 	// Reconnect catch-up: events missed while the channel was down.
-	useServerResync(() => refreshRef.current());
+	// Shares in-flight dedupe with visibilitychange so foreground resume only
+	// issues one /api/activity request instead of two back-to-back.
+	useServerResync(() => dedupedRefreshRef.current());
 
-	// The visibility nudge: returning to the tab refetches immediately —
-	// anything missed while hidden lands at once.
+	// The visibility nudge: returning to the tab refetches if resync didn't
+	// just kick one off in the same resume burst.
 	useEffect(() => {
 		const onVisibility = () => {
-			if (document.visibilityState === "visible") setNonce((n) => n + 1);
+			if (document.visibilityState === "visible") dedupedRefreshRef.current();
 		};
 		document.addEventListener("visibilitychange", onVisibility);
 		return () => document.removeEventListener("visibilitychange", onVisibility);

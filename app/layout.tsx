@@ -9,21 +9,24 @@ import { ServerEventsProvider } from "@/components/server-events";
 import { AppearanceProvider } from "@/components/settings/appearance";
 import UpdateBanner from "@/components/update-banner";
 import { PluginsProvider } from "@/components/plugins";
+import { VisualViewportSync } from "@/components/visual-viewport";
+import { effectiveColors } from "@/src/core";
 import { readThemeBoot } from "@/src/server";
 
 // System sans-serif is the default. Keep bundled fonts for code and saved choices.
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
 const prose = Source_Sans_3({ subsets: ["latin"], variable: "--font-sans3" });
 
-export const viewport: Viewport = {
-	width: "device-width",
-	initialScale: 1,
-	viewportFit: "cover",
-	themeColor: [
-		{ media: "(prefers-color-scheme: light)", color: "#ffffff" },
-		{ media: "(prefers-color-scheme: dark)", color: "#090909" },
-	],
-};
+export async function generateViewport(): Promise<Viewport> {
+	const { appearance, theme } = readThemeBoot();
+	const bg = effectiveColors(theme, appearance).background;
+	return {
+		width: "device-width",
+		initialScale: 1,
+		viewportFit: "cover",
+		themeColor: bg,
+	};
+}
 
 export const metadata: Metadata = {
 	title: "Learning Harness",
@@ -31,7 +34,7 @@ export const metadata: Metadata = {
 	appleWebApp: {
 		capable: true,
 		title: "LearnHarness",
-		statusBarStyle: "black-translucent",
+		statusBarStyle: "default",
 	},
 	icons: {
 		icon: "/icon-192.png",
@@ -54,6 +57,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 			suppressHydrationWarning
 		>
 			<body className="min-h-dvh antialiased">
+			<VisualViewportSync />
 			{/* The notification channel rides OUTSIDE everything: sidebar, dock,
 				 and pages all subscribe as the polls retire (push S3, 2026-10-02). */}
 			<ServerEventsProvider>

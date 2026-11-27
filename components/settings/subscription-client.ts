@@ -9,12 +9,30 @@ type Reply<T> = { value: T; browserAction?: string; error?: string };
 const PATH = "/api/subscriptions";
 const headers = { "Content-Type": "application/json", "x-learnharness-subscriptions": "1" };
 
-async function status() {
-	const response = await fetch(PATH, { headers, cache: "no-store" });
-	if (!response.ok) throw new Error("Subscription status is unavailable.");
-	return response.json() as Promise<{ chatgpt: ChatGPTStatus; native: NativeSubscriptionStatus[] }>;
+type SubscriptionsStatusPayload = { chatgpt: ChatGPTStatus; native: NativeSubscriptionStatus[] };
+let inFlightStatus: Promise<SubscriptionsStatusPayload> | null = null;
+let lastStatusPayload: { value: SubscriptionsStatusPayload; at: number } | null = null;
+const STATUS_COALESCE_MS = 250;
+
+async function status(): Promise<SubscriptionsStatusPayload> {
+	if (inFlightStatus) return inFlightStatus;
+	if (lastStatusPayload && Date.now() - lastStatusPayload.at < STATUS_COALESCE_MS) {
+		return lastStatusPayload.value;
+	}
+	const task = (async () => {
+		const response = await fetch(PATH, { headers, cache: "no-store" });
+		if (!response.ok) throw new Error("Subscription status is unavailable.");
+		const value = (await response.json()) as SubscriptionsStatusPayload;
+		lastStatusPayload = { value, at: Date.now() };
+		return value;
+	})().finally(() => {
+		if (inFlightStatus === task) inFlightStatus = null;
+	});
+	inFlightStatus = task;
+	return task;
 }
 async function control<T>(providerId: string, op: string, fields: Record<string, unknown> = {}): Promise<Reply<T>> {
+	lastStatusPayload = null;
 	const response = await fetch(PATH, { method: "POST", headers, body: JSON.stringify({ providerId, op, ...fields }) });
 	if (!response.ok) throw new Error("The subscription connection could not be changed.");
 	return response.json() as Promise<Reply<T>>;

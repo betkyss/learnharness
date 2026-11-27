@@ -318,6 +318,19 @@ const PICKING_PAD = 10;
 
 /** Click vs drag threshold: pointer travel under this many px is a click. */
 const CLICK_SLOP = 4;
+/** Touch tap tolerance: finger pads jitter slightly more than mouse cursors. */
+export const TOUCH_CLICK_SLOP = 10;
+
+export function clickSlopForPointer(pointerType?: string): number {
+	return pointerType === "touch" ? TOUCH_CLICK_SLOP : CLICK_SLOP;
+}
+
+/** Cap backing-store DPR at 2 on coarse-pointer (phone/tablet) devices so
+ *  3x screens don't push ~3M pixels per frame while desktop Retina keeps full DPR. */
+export function effectiveCanvasDpr(devicePixelRatio: number, isCoarsePointer: boolean): number {
+	const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+	return isCoarsePointer ? Math.min(dpr, 2) : dpr;
+}
 /** Live-sim tuning — see the class doc comment. */
 const LIVE_ALPHA_DECAY = 0.05; // snappier anneal than the settle's 0.0228
 const DRAG_ALPHA_TARGET = 0.3; // d3-drag's own reheat constant
@@ -442,19 +455,61 @@ export function labelAlpha(
 	return clamp01(1 - (ratio - labelZoom) / span);
 }
 
-/** The camera transform that frames `bbox` in a w×h viewport with padding. */
+export type FitPadding = number | { top: number; right: number; bottom: number; left: number };
+
+export function normalizeFitPadding(padding: FitPadding): { top: number; right: number; bottom: number; left: number } {
+	if (typeof padding === "number") {
+		return { top: padding, right: padding, bottom: padding, left: padding };
+	}
+	return padding;
+}
+
+/** Validate a persisted camera against the current viewport dimensions.
+ *  Drops stale transforms when the viewport switched form-factor or orientation
+ *  (e.g. desktop↔mobile or portrait↔landscape) so the graph re-fits cleanly. */
+export function shouldRestoreCamera(
+	stored: { k?: unknown; x?: unknown; y?: unknown; vw?: unknown; vh?: unknown } | null | undefined,
+	currentW: number,
+	currentH: number,
+): { k: number; x: number; y: number } | null {
+	if (
+		!stored ||
+		typeof stored.k !== "number" || !Number.isFinite(stored.k) || stored.k <= 0 ||
+		typeof stored.x !== "number" || !Number.isFinite(stored.x) ||
+		typeof stored.y !== "number" || !Number.isFinite(stored.y)
+	) {
+		return null;
+	}
+	if (
+		typeof stored.vw === "number" && Number.isFinite(stored.vw) && stored.vw > 0 &&
+		typeof stored.vh === "number" && Number.isFinite(stored.vh) && stored.vh > 0 &&
+		currentW > 0 && currentH > 0
+	) {
+		if (Math.abs(stored.vw - currentW) > 120 || Math.abs(stored.vh - currentH) > 120) {
+			return null;
+		}
+	}
+	return { k: stored.k, x: stored.x, y: stored.y };
+}
+
+/** The camera transform that frames `bbox` in a w×h viewport with symmetric or asymmetric padding. */
 export function fitTransform(
 	bbox: { minX: number; maxX: number; minY: number; maxY: number },
 	w: number,
 	h: number,
-	padding: number,
+	padding: FitPadding,
 ): { x: number; y: number; k: number } {
+	const pad = normalizeFitPadding(padding);
 	const bw = Math.max(bbox.maxX - bbox.minX, 1e-6);
 	const bh = Math.max(bbox.maxY - bbox.minY, 1e-6);
-	const k = Math.min((w - 2 * padding) / bw, (h - 2 * padding) / bh);
+	const availW = Math.max(1, w - pad.left - pad.right);
+	const availH = Math.max(1, h - pad.top - pad.bottom);
+	const k = Math.min(availW / bw, availH / bh);
 	const cx = (bbox.minX + bbox.maxX) / 2;
 	const cy = (bbox.minY + bbox.maxY) / 2;
-	return { x: w / 2 - cx * k, y: h / 2 - cy * k, k };
+	const targetCx = pad.left + availW / 2;
+	const targetCy = pad.top + availH / 2;
+	return { x: targetCx - cx * k, y: targetCy - cy * k, k };
 }
 
 /** The arrowhead geometry for a directed edge a→b: shaft endpoints
@@ -619,7 +674,15 @@ export class GraphCanvasRenderer {
 	private simById = new Map<string, LayoutNode>();
 	private simActive = false;
 	private dragId: string | null = null;
+	private dragPointerId: number | null = null;
 	private dragOrigin: Pt | null = null;
+	private dragStartNodePos: Pt | null = null;
+	private activePointers = new Map<number, Pt>();
+	private pinchActive = false;
+	private manualPinch = false;
+	private pinchPrev: { dist: number; mid: Pt } | null = null;
+	private fitPaddingProvider: (() => FitPadding) | null = null;
+	private regionDraftBlur = false;
 	private simMoved = false; // any real movement since the last commit
 	private commitTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -714,6 +777,7 @@ export class GraphCanvasRenderer {
 		canvas.addEventListener("pointermove", this.onPointerMove);
 		canvas.addEventListener("pointerdown", this.onPointerDown);
 		canvas.addEventListener("pointerup", this.onPointerUp);
+		canvas.addEventListener("pointercancel", this.onPointerCancel);
 		canvas.addEventListener("pointerleave", this.onPointerLeave);
 		// Right-click → the caller's context menu (node interlude). Always
 		// preventDefault: the native menu on a full-bleed custom canvas is
@@ -865,7 +929,7 @@ export class GraphCanvasRenderer {
 		// No settings yet → nothing is drawn; patch the data side only and
 		// let the next build derive the wrap (same guard the build uses).
 		if (!settings) {
-			applyClusterLabels(data.clusters, [], labels, REGION_LABEL_MAX_WIDTH, REGION_LABEL_MAX_LINES, () => 0);
+			applyClusterLabels(data.clusters, [], labels, this.regionLabelMaxWidth(), REGION_LABEL_MAX_LINES, () => 0);
 			return;
 		}
 		const ctx = this.ctx;
@@ -875,7 +939,7 @@ export class GraphCanvasRenderer {
 			data.clusters,
 			this.regionMeta,
 			labels,
-			REGION_LABEL_MAX_WIDTH,
+			this.regionLabelMaxWidth(),
 			REGION_LABEL_MAX_LINES,
 			(s) => ctx.measureText(s).width,
 		);
@@ -889,6 +953,51 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	}
 
+	/** Optional dynamic padding provider so fit()/focusNodes() clear mobile toolbars & docks. */
+	setFitPadding(provider: (() => FitPadding) | null): void {
+		this.fitPaddingProvider = provider;
+	}
+
+	private resolveFitPadding(w: number, h: number): { top: number; right: number; bottom: number; left: number } {
+		const base = normalizeFitPadding(this.fitPaddingProvider ? this.fitPaddingProvider() : 40);
+		let { top, right, bottom, left } = base;
+		// On narrow screens, reserve horizontal breathing room for centered cluster labels
+		// so side labels stay inside the viewport after Fit.
+		if (w < 640 && this.data && this.data.clusters.length > 0 && (this.settings?.clusterLabels ?? true)) {
+			const labelMargin = Math.min(Math.round(this.regionLabelMaxWidth() / 2), Math.round(w * 0.22));
+			left = Math.max(left, labelMargin);
+			right = Math.max(right, labelMargin);
+		}
+		// Never let padding collapse available dimensions to <= 0.
+		if (left + right >= w - 40) {
+			const side = Math.max(12, Math.floor((w - 40) / 2));
+			left = side;
+			right = side;
+		}
+		if (top + bottom >= h - 40) {
+			const vert = Math.max(12, Math.floor((h - 40) / 2));
+			top = vert;
+			bottom = vert;
+		}
+		return { top, right, bottom, left };
+	}
+
+	private regionLabelMaxWidth(): number {
+		const w = this.viewW || this.canvas.clientWidth;
+		if (w > 0 && w < 640) {
+			return Math.min(REGION_LABEL_MAX_WIDTH, Math.max(120, Math.round(w * 0.42)));
+		}
+		return REGION_LABEL_MAX_WIDTH;
+	}
+
+	private isCoarsePointer(): boolean {
+		return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+	}
+
+	private effectiveDpr(): number {
+		return effectiveCanvasDpr(typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1, this.isCoarsePointer());
+	}
+
 	/** Frame the whole graph (padding included). Keeps the camera on later
 	 *  setData calls — call fit() only for an explicit re-frame (the
 	 *  first-ever open; afterwards the caller-persisted camera wins). */
@@ -897,7 +1006,8 @@ export class GraphCanvasRenderer {
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
 		if (w < 10 || h < 10) return; // layout not ready yet; the ResizeObserver retries
-		const t = fitTransform(this.worldBBox, w, h, 40);
+		const pad = this.resolveFitPadding(w, h);
+		const t = fitTransform(this.worldBBox, w, h, pad);
 		this.kFit = t.k;
 		this.hasFit = true;
 		select(this.canvas).call(
@@ -921,10 +1031,13 @@ export class GraphCanvasRenderer {
 			minY: Math.min(...nodes.map((n) => n.y)) - 40,
 			maxY: Math.max(...nodes.map((n) => n.y)) + 80,
 		};
-		const t = fitTransform(box, w, h, 40);
+		const pad = this.resolveFitPadding(w, h);
+		const t = fitTransform(box, w, h, pad);
 		t.k = Math.min(t.k, 1.5);
-		t.x = w / 2 - (box.minX + box.maxX) / 2 * t.k;
-		t.y = h / 2 - (box.minY + box.maxY) / 2 * t.k;
+		const availW = Math.max(1, w - pad.left - pad.right);
+		const availH = Math.max(1, h - pad.top - pad.bottom);
+		t.x = pad.left + availW / 2 - (box.minX + box.maxX) / 2 * t.k;
+		t.y = pad.top + availH / 2 - (box.minY + box.maxY) / 2 * t.k;
 		select(this.canvas).call(this.zoomBehavior.transform, zoomIdentity.translate(t.x, t.y).scale(t.k));
 		if (selectNode) {
 			const node = nodes[0]!;
@@ -939,7 +1052,7 @@ export class GraphCanvasRenderer {
 		if (!this.worldBBox) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40).k;
+		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, this.resolveFitPadding(w, h)).k;
 	}
 
 	destroy(): void {
@@ -948,12 +1061,19 @@ export class GraphCanvasRenderer {
 		this.sim = null;
 		this.simActive = false;
 		this.dragId = null;
+		this.dragPointerId = null;
+		this.dragStartNodePos = null;
+		this.activePointers.clear();
+		this.pinchActive = false;
+		this.manualPinch = false;
+		this.pinchPrev = null;
 		this.resizeObserver.disconnect();
 		select(this.canvas).on(".zoom", null);
 		this.canvas.removeEventListener("wheel", this.onWheel);
 		this.canvas.removeEventListener("pointermove", this.onPointerMove);
 		this.canvas.removeEventListener("pointerdown", this.onPointerDown);
 		this.canvas.removeEventListener("pointerup", this.onPointerUp);
+		this.canvas.removeEventListener("pointercancel", this.onPointerCancel);
 		this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
 		this.canvas.removeEventListener("contextmenu", this.onContextMenu);
 		this.canvas.style.cursor = "";
@@ -976,14 +1096,90 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	};
 
+	private currentPinchMetrics(): { dist: number; mid: Pt } | null {
+		if (this.activePointers.size < 2) return null;
+		const iter = this.activePointers.values();
+		const a = iter.next().value as Pt;
+		const b = iter.next().value as Pt;
+		return {
+			dist: Math.hypot(b.x - a.x, b.y - a.y),
+			mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+		};
+	}
+
+	private cancelDrag(restoreStartPos: boolean): void {
+		const id = this.dragId;
+		const pointerId = this.dragPointerId;
+		const startPos = this.dragStartNodePos;
+		this.dragId = null;
+		this.dragPointerId = null;
+		this.dragOrigin = null;
+		this.dragStartNodePos = null;
+		if (pointerId !== null) {
+			try {
+				this.canvas.releasePointerCapture(pointerId);
+			} catch {
+				/* already released */
+			}
+		}
+		this.canvas.style.cursor = "";
+		if (id) {
+			const n = this.simById.get(id);
+			if (n) {
+				if (restoreStartPos && startPos) {
+					n.x = startPos.x;
+					n.y = startPos.y;
+				}
+				n.fx = null;
+				n.fy = null;
+				n.vx = 0;
+				n.vy = 0;
+			}
+		}
+		if (this.commitTimer) {
+			clearTimeout(this.commitTimer);
+			this.commitTimer = null;
+		}
+		this.sim?.alphaTarget(0);
+		this.simActive = false;
+		this.simMoved = false;
+		this.geoVersion++;
+		this.markDirty();
+	}
+
 	private onPointerMove = (e: PointerEvent) => {
 		const pos = this.eventPos(e);
+		if (this.activePointers.has(e.pointerId)) {
+			this.activePointers.set(e.pointerId, pos);
+		}
+		if (this.pinchActive) {
+			if (this.manualPinch && this.activePointers.size >= 2) {
+				const next = this.currentPinchMetrics();
+				const prev = this.pinchPrev;
+				if (next && prev) {
+					const t = this.transform;
+					const scale = prev.dist > 1 ? next.dist / prev.dist : 1;
+					const nextK = Math.min(Math.max(t.k * scale, 0.02), 40);
+					const actualScale = nextK / t.k;
+					const nextX = next.mid.x - (prev.mid.x - t.x) * actualScale;
+					const nextY = next.mid.y - (prev.mid.y - t.y) * actualScale;
+					select(this.canvas).call(
+						this.zoomBehavior.transform,
+						zoomIdentity.translate(nextX, nextY).scale(nextK),
+					);
+				}
+				this.pinchPrev = next;
+			}
+			return;
+		}
 		if (this.dragId) {
+			if (this.dragPointerId !== null && e.pointerId !== this.dragPointerId) return;
 			const n = this.simById.get(this.dragId);
 			if (n) {
+				const slop = clickSlopForPointer(e.pointerType);
 				const moved =
 					this.dragOrigin !== null &&
-					Math.hypot(pos.x - this.dragOrigin.x, pos.y - this.dragOrigin.y) > CLICK_SLOP;
+					Math.hypot(pos.x - this.dragOrigin.x, pos.y - this.dragOrigin.y) > slop;
 				if (moved) {
 					// First real movement: reheat and glue the node to the cursor.
 					if (this.commitTimer) {
@@ -994,12 +1190,15 @@ export class GraphCanvasRenderer {
 					this.simActive = true;
 					this.markDirty();
 				}
-				const { x: tx, y: ty, k } = this.transform;
-				n.fx = (pos.x - tx) / k;
-				n.fy = (pos.y - ty) / k;
+				if (moved || this.simActive) {
+					const { x: tx, y: ty, k } = this.transform;
+					n.fx = (pos.x - tx) / k;
+					n.fy = (pos.y - ty) / k;
+				}
 			}
 			return;
 		}
+		if (e.pointerType === "touch") return;
 		const node = this.pickAt(pos.x, pos.y);
 		if ((node?.id ?? null) !== this.hoverId) this.setHover(node?.id ?? null);
 		this.canvas.style.cursor = node ? "pointer" : "";
@@ -1012,6 +1211,22 @@ export class GraphCanvasRenderer {
 		// used to open under the menu).
 		if (e.button !== 0) return;
 		const pos = this.eventPos(e);
+		this.activePointers.set(e.pointerId, pos);
+		// Multi-touch gesture (e.g. pinch-to-zoom): immediately cancel any node
+		// drag so pinching near a node never drags it or commits mutated positions.
+		if (this.activePointers.size >= 2) {
+			this.pinchActive = true;
+			this.downPos = null;
+			this.zoomTarget = null;
+			if (this.dragId !== null) {
+				e.preventDefault();
+				this.cancelDrag(true);
+				this.manualPinch = true;
+				this.pinchPrev = this.currentPinchMetrics();
+			}
+			return;
+		}
+		if (e.isPrimary === false) return;
 		const node = this.pickAt(pos.x, pos.y);
 		if (node && this.sim) {
 			// Node press: pin the node (at ITS OWN position — the cursor
@@ -1026,9 +1241,11 @@ export class GraphCanvasRenderer {
 				/* capture is best-effort */
 			}
 			this.dragId = node.id;
+			this.dragPointerId = e.pointerId;
 			this.dragOrigin = pos;
 			const n = this.simById.get(node.id);
 			if (n) {
+				this.dragStartNodePos = typeof n.x === "number" && typeof n.y === "number" ? { x: n.x, y: n.y } : null;
 				n.fx = n.x;
 				n.fy = n.y;
 			}
@@ -1042,11 +1259,25 @@ export class GraphCanvasRenderer {
 
 	private onPointerUp = (e: PointerEvent) => {
 		if (e.button !== 0) return; // right-click is context-menu territory
+		this.activePointers.delete(e.pointerId);
+		if (this.pinchActive) {
+			if (this.activePointers.size < 2) {
+				this.pinchPrev = null;
+				this.manualPinch = false;
+			}
+			if (this.activePointers.size === 0) {
+				this.pinchActive = false;
+			}
+			return;
+		}
 		// Node press ending: click (no slop) → select; drag → release-and-relax.
 		if (this.dragId) {
+			if (this.dragPointerId !== null && e.pointerId !== this.dragPointerId) return;
 			const id = this.dragId;
 			this.dragId = null;
+			this.dragPointerId = null;
 			this.dragOrigin = null;
+			this.dragStartNodePos = null;
 			try {
 				this.canvas.releasePointerCapture(e.pointerId);
 			} catch {
@@ -1073,10 +1304,25 @@ export class GraphCanvasRenderer {
 		const pos = this.eventPos(e);
 		const moved = Math.hypot(pos.x - this.downPos.x, pos.y - this.downPos.y);
 		this.downPos = null;
-		if (moved > CLICK_SLOP) return; // that was a drag (pan), not a click
+		if (moved > clickSlopForPointer(e.pointerType)) return; // that was a drag (pan), not a click
 		const node = this.pickAt(pos.x, pos.y);
 		if (node) this.callbacks.onSelect(node.id, pos);
 		else this.callbacks.onStageClick();
+	};
+
+	private onPointerCancel = (e: PointerEvent) => {
+		this.activePointers.delete(e.pointerId);
+		if (this.activePointers.size < 2) {
+			this.pinchPrev = null;
+			this.manualPinch = false;
+		}
+		if (this.activePointers.size === 0) {
+			this.pinchActive = false;
+		}
+		this.downPos = null;
+		if (this.dragId !== null && (this.dragPointerId === null || e.pointerId === this.dragPointerId)) {
+			this.cancelDrag(true);
+		}
 	};
 
 	/** Right-click: pick the node under the pointer, hand the position to
@@ -1246,12 +1492,12 @@ export class GraphCanvasRenderer {
 		return !done;
 	}
 
-	/** Resize the backing store to the CSS box × devicePixelRatio; all
+	/** Resize the backing store to the CSS box × effective DPR; all
 	 *  drawing then happens in CSS pixels through the DPR transform. */
 	private syncSize(): void {
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = this.effectiveDpr();
 		const bw = Math.max(1, Math.round(w * dpr));
 		const bh = Math.max(1, Math.round(h * dpr));
 		if (this.canvas.width !== bw || this.canvas.height !== bh) {
@@ -1477,10 +1723,11 @@ export class GraphCanvasRenderer {
 		if (settings) {
 			const ctx = this.ctx;
 			const prevFont = ctx.font;
+			const maxLabelWidth = this.regionLabelMaxWidth();
 			ctx.font = `${LABEL_WEIGHT} ${settings.clusterLabelSize}px ${data.fontFamily}`;
 			for (const rm of this.regionMeta) {
 				rm.lines = rm.label
-					? wrapRegionLabel(rm.label, REGION_LABEL_MAX_WIDTH, REGION_LABEL_MAX_LINES, (s) => ctx.measureText(s).width)
+					? wrapRegionLabel(rm.label, maxLabelWidth, REGION_LABEL_MAX_LINES, (s) => ctx.measureText(s).width)
 					: null;
 			}
 			ctx.font = prevFont;
@@ -1621,9 +1868,13 @@ export class GraphCanvasRenderer {
 			}
 			const b = new Float32Array(n);
 			const tmp = new Float32Array(n); // scratch inside each round only
+			const draftBlur = this.simActive && this.isCoarsePointer();
+			this.regionDraftBlur = draftBlur;
 			boxBlurRound(a, tmp, b, bw, bh, blurPx); // a → b
-			boxBlurRound(b, tmp, a, bw, bh, blurPx); // b → a
-			boxBlurRound(a, tmp, b, bw, bh, blurPx); // a → b (result)
+			if (!draftBlur) {
+				boxBlurRound(b, tmp, a, bw, bh, blurPx); // b → a
+				boxBlurRound(a, tmp, b, bw, bh, blurPx); // a → b (result)
+			}
 			// Unpremultiply back into pixels; scale the alpha by edgeAlpha
 			// HERE — the one, final application. Result: constant interior
 			// alpha everywhere covered, tapering only across the blur edges.
@@ -1657,7 +1908,7 @@ export class GraphCanvasRenderer {
 		if (!data || !settings) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		const dpr = window.devicePixelRatio || 1;
+		const dpr = this.effectiveDpr();
 		const ctx = this.ctx;
 
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1665,10 +1916,12 @@ export class GraphCanvasRenderer {
 
 		this.frameCount++;
 		// Regions: rebuild on stale geometry at rest; during the live sim,
-		// every REGION_EVERY-th frame (others blit the last bitmap).
+		// every REGION_EVERY-th frame (2x sparser on coarse-pointer devices).
+		const regionStride = this.isCoarsePointer() ? REGION_EVERY * 2 : REGION_EVERY;
+		const needsFinalBlur = !this.simActive && this.regionDraftBlur;
 		if (
-			this.regionBuiltVersion !== this.geoVersion &&
-			(!this.simActive || this.frameCount % REGION_EVERY === 0)
+			(this.regionBuiltVersion !== this.geoVersion || needsFinalBlur) &&
+			(!this.simActive || this.frameCount % regionStride === 0)
 		) {
 			this.buildRegions();
 			this.regionBuiltVersion = this.geoVersion;

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteFolderDialog, DeleteSessionDialog, folderDeleteCopy, type DeleteDialogCopy } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode, ThemeMode } from "@/src/core";
-import { DumbbellIcon, FolderPlusIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { DumbbellIcon, FolderPlusIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -128,6 +128,11 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const pathname = usePathname();
 	useEffect(() => { setDrawerOpen(false); }, [pathname]);
+	useEffect(() => {
+		if (narrow && !IS_ELECTRON && drawerOpen) {
+			window.dispatchEvent(new Event("lh:sidebar-overlay-open"));
+		}
+	}, [narrow, drawerOpen]);
 
 	useEffect(() => {
 		// Electron shell detection (merged chrome, 2026-09-17): keys the
@@ -203,7 +208,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	return (
 		<SidebarContext.Provider value={{ open: narrow ? (!IS_ELECTRON && drawerOpen) : open, toggle, overlay: narrow && !IS_ELECTRON, close: () => setDrawerOpen(false) }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
-			<div className={cn("flex h-dvh", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity,transform]")}>{children}</div>
+			<div className={cn("flex h-[var(--vvh,100dvh)]", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity,transform]")}>{children}</div>
 		</SidebarContext.Provider>
 	);
 }
@@ -328,7 +333,7 @@ export function SessionRow({
 	/** Right-click opens the context menu (wave 6: Rename / Delete). */
 	onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
-	return (
+	const rowButton = (
 		<button
 			type="button"
 			onClick={onOpen}
@@ -336,7 +341,8 @@ export function SessionRow({
 			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
 			data-session-id={chat.id}
 			className={cn(
-				"relative flex w-full items-center gap-2 pr-3 text-left hover:bg-accent",
+				"relative flex w-full items-center gap-2 text-left hover:bg-accent",
+				onContextMenu ? "pr-10 md:pr-3" : "pr-3",
 				compact ? SIDEBAR_COMPACT_ROW : "py-2",
 				active && "bg-accent",
 				kbdSelected && !active && "bg-accent/60 ring-1 ring-inset ring-border",
@@ -355,6 +361,24 @@ export function SessionRow({
 				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Practice session" />
 			)}
 		</button>
+	);
+	if (!onContextMenu) return rowButton;
+	return (
+		<div className="group/row relative flex w-full items-center">
+			{rowButton}
+			<button
+				type="button"
+				data-testid={`session-actions-${chat.id}`}
+				aria-label={`Session actions for ${chat.title}`}
+				onClick={(e) => {
+					e.stopPropagation();
+					onContextMenu(e);
+				}}
+				className="absolute right-1 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:opacity-100 md:size-6 md:opacity-0 md:group-hover/row:opacity-100 md:group-focus-within/row:opacity-100"
+			>
+				<MoreHorizontalIcon aria-hidden="true" className="size-4 md:size-3.5" />
+			</button>
+		</div>
 	);
 }
 
@@ -404,7 +428,7 @@ export function RenameRow({ chat, onCommit, onCancel, depth = 0, compact = false
 					}}
 					aria-label="Rename session"
 					data-testid="session-rename-input"
-					className={cn("w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none", compact ? sidebarNameFont(true) : "font-ui text-sm font-semibold")}
+					className={cn("w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none text-base md:text-sm", compact ? sidebarNameFont(true) : "font-ui font-semibold")}
 				/>
 				{!compact && <span className="block truncate text-xs text-muted-foreground">{sessionMeta(chat)}</span>}
 			</span>
@@ -971,7 +995,7 @@ function SessionsSidebar() {
 							}}
 							placeholder="Search…"
 							aria-label="Search sessions"
-							className="h-6 rounded-sm border-border bg-background pl-6 text-xs placeholder:text-muted-foreground/60"
+							className="h-9 md:h-6 rounded-sm border-border bg-background pl-6 text-base md:text-xs placeholder:text-muted-foreground/60"
 						/>
 						<SearchIcon className="pointer-events-none absolute left-1.5 top-1/2 size-3 -translate-y-1/2 text-muted-foreground/70" />
 					</span>
@@ -982,7 +1006,7 @@ function SessionsSidebar() {
 								aria-label="Add folder"
 								data-testid="sidebar-add-folder"
 								onClick={() => setCreatingFolder({ parentId: null })}
-								className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="flex size-9 md:size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 							>
 								<FolderPlusIcon className="size-3.5" />
 							</button>
@@ -1006,7 +1030,7 @@ function SessionsSidebar() {
 							data-testid={`kind-filter-${f}`}
 							onClick={() => setFilter(f)}
 							className={cn(
-								"flex-1 rounded-sm px-2 py-1 text-xs uppercase tracking-wider transition-colors",
+								"flex-1 rounded-sm px-2 py-1 max-md:min-h-9 text-xs uppercase tracking-wider transition-colors",
 								kindFilter === f
 									? "bg-accent text-foreground"
 									: "text-muted-foreground hover:text-foreground",
@@ -1066,9 +1090,12 @@ function SessionsSidebar() {
 						<Hint label="Settings" action="open-settings" side="right">
 							<button
 								type="button"
-								onClick={() => openSettings()}
+								onClick={() => {
+									if (overlay) close();
+									openSettings();
+								}}
 								data-testid="settings-entry"
-								className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="flex max-md:min-h-10 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 							>
 								<SettingsIcon className="size-3" />
 								Settings
@@ -1227,7 +1254,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
    }
   };
   document.addEventListener("keydown", onKey);
-  return () => { document.removeEventListener("keydown", onKey); if (previous?.isConnected) previous.focus(); };
+  return () => {
+   document.removeEventListener("keydown", onKey);
+   // On coarse-pointer touch devices (iOS), avoid restoring focus into a text
+   // input/composer when dismissing the overlay sidebar so the keyboard doesn't pop up.
+   const isCoarse = typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)")?.matches);
+   const isTextEntry = Boolean(previous && (previous.tagName === "INPUT" || previous.tagName === "TEXTAREA" || previous.isContentEditable));
+   if (previous?.isConnected && !(isCoarse && isTextEntry)) previous.focus();
+  };
  }, [open, overlay]);
 	const [contentRoot, setContentRoot] = useState<HTMLElement | null>(null);
 	const pathname = usePathname();

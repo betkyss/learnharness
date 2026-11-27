@@ -132,11 +132,60 @@ export function asAgentMessages(messages: readonly LhMessage[]): AgentMessage[] 
 	return messages as unknown as AgentMessage[];
 }
 
+/** Builtin tools whose client cards read structured `details` (or only `isError`
+ *  text), never the model-facing `toolResult.content` duplication. Plugin tools
+ *  stay excluded because registered plugin renderers may read `result.content`. */
+const CLIENT_DETAILS_ONLY_TOOLS = new Set<string>([
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"show_image",
+	"web_search",
+	"web_fetch",
+	"web_fetch_pdf",
+	"pdf_info",
+	"pdf_extract",
+	"pdf_search",
+	"pdf_render",
+	"research",
+	"demo",
+	"visual",
+	"pdf",
+	"quiz",
+	"probe",
+	"probe_done",
+	"explain",
+	"recall",
+	"ask_user_question",
+	"plan_init",
+	"plan_update",
+	"problem",
+	"conclude",
+	"send_to_user",
+	"list_sessions",
+	"list_propositions",
+	"find_candidates",
+]);
+
 /** Strip opaque provider-replay signatures (`thinkingSignature`, `textSignature`)
- *  from assistant content blocks before sending messages to the browser. Never
- *  mutates input messages or blocks; disk storage stays intact. */
+ *  from assistant content blocks and duplicated model-facing `content` from
+ *  builtin non-error `toolResult` messages whose structured `details` already
+ *  powers the UI. Never mutates input messages or blocks; disk storage stays intact. */
 export function sanitizeMessagesForClient(messages: readonly LhMessage[]): LhMessage[] {
 	return messages.map((message) => {
+		if (message.role === "toolResult") {
+			if (
+				!message.isError &&
+				message.details != null &&
+				CLIENT_DETAILS_ONLY_TOOLS.has(message.toolName) &&
+				Array.isArray(message.content) &&
+				message.content.length > 0
+			) {
+				return { ...message, content: [] } as LhMessage;
+			}
+			return message;
+		}
 		if (message.role !== "assistant" || !Array.isArray(message.content)) return message;
 		let changed = false;
 		const content = message.content.map((block) => {

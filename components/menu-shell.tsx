@@ -70,14 +70,18 @@ export interface MenuPlacement {
  *  room and viewport bounds, including short viewports. */
 export function computeMenuPlacement(
 	rect: { top: number; bottom: number; left: number; right: number },
-	viewport: { width: number; height: number },
+	viewport: { width: number; height: number; offsetTop?: number; offsetLeft?: number },
 	contentHeight: number,
 	preferredSide: MenuSide,
 	align: MenuAlign,
 	contentWidth = 0,
 ): MenuPlacement {
-	const availDown = viewport.height - EDGE - (rect.bottom + GAP);
-	const availUp = rect.top - GAP - EDGE;
+	const vpTop = viewport.offsetTop ?? 0;
+	const vpLeft = viewport.offsetLeft ?? 0;
+	const vpBottom = vpTop + viewport.height;
+	const vpRight = vpLeft + viewport.width;
+	const availDown = vpBottom - EDGE - (rect.bottom + GAP);
+	const availUp = rect.top - GAP - (vpTop + EDGE);
 	// contentHeight ≤ 0 (nothing measured yet) keeps the preferred side —
 	// the hidden first pass re-measures and decides with real numbers.
 	let side = preferredSide;
@@ -94,9 +98,9 @@ export function computeMenuPlacement(
 	const maxHeight = Math.min(viewport.height * CAP_VH, Math.max(0, viewport.height - EDGE * 2), room || viewport.height);
 	const height = Math.min(Number.isFinite(contentHeight) ? Math.max(0, contentHeight) : 0, maxHeight);
 	const desiredTop = side === "down" ? rect.bottom + GAP : rect.top - GAP - height;
-	const top = Math.max(EDGE, Math.min(desiredTop, viewport.height - EDGE - height));
+	const top = Math.max(vpTop + EDGE, Math.min(desiredTop, vpBottom - EDGE - height));
 	const desiredLeft = align === "right" ? rect.right - width : rect.left;
-	const left = Math.max(EDGE, Math.min(desiredLeft, viewport.width - EDGE - width));
+	const left = Math.max(vpLeft + EDGE, Math.min(desiredLeft, vpRight - EDGE - width));
 	return { side, style: { left, top, maxWidth: viewportWidth }, maxHeight };
 
 }
@@ -232,9 +236,15 @@ export function MenuShell({
 		const place = () => {
 			const rect = menuAnchorRect({ getAnchorRect: getAnchorRectRef.current, anchorRef, anchorTestid }, document);
 			if (!rect || !menuRef.current) return;
+			const vv = window.visualViewport;
 			const p = computeMenuPlacement(
 				rect,
-				{ width: window.innerWidth, height: window.innerHeight },
+				{
+					width: vv && vv.width > 0 ? vv.width : window.innerWidth,
+					height: vv && vv.height > 0 ? vv.height : window.innerHeight,
+					offsetTop: vv ? vv.offsetTop : 0,
+					offsetLeft: vv ? vv.offsetLeft : 0,
+				},
 				menuRef.current.scrollHeight,
 				preferredSide,
 				align,
@@ -253,12 +263,16 @@ export function MenuShell({
 		if (menuRef.current) mutations?.observe(menuRef.current, { childList: true, subtree: true, characterData: true });
 		window.addEventListener("scroll", rePlace, true);
 		window.addEventListener("resize", rePlace);
+		window.visualViewport?.addEventListener("resize", rePlace);
+		window.visualViewport?.addEventListener("scroll", rePlace);
 		return () => {
 			if (raf) cancelAnimationFrame(raf);
 			observer?.disconnect();
 			mutations?.disconnect();
 			window.removeEventListener("scroll", rePlace, true);
 			window.removeEventListener("resize", rePlace);
+			window.visualViewport?.removeEventListener("resize", rePlace);
+			window.visualViewport?.removeEventListener("scroll", rePlace);
 		};
 	}, [anchorRef, anchorTestid, preferredSide, align]);
 

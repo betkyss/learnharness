@@ -74,7 +74,7 @@ import { GraphOutline } from "./graph-outline";
 import { FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, WaypointsIcon } from "lucide-react";
 import { graphFolderIds, graphFolderVisibleIds, incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
 import { planCostLabel } from "@/components/usage-format";
-import { CLUSTER_LIGHTNESS, GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
+import { CLUSTER_LIGHTNESS, GraphCanvasRenderer, shouldRestoreCamera, type GraphRenderSettings } from "./graph-canvas.ts";
 import { useAppearance } from "@/components/settings/appearance";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
@@ -370,6 +370,11 @@ export function GraphCostControl({ costs }: { costs: GraphCostSummary }) {
 	// wraps button + panel, so the toggle itself keeps working.
 	const rootRef = useRef<HTMLDivElement>(null);
 	usePopoverDismiss(rootRef, open, () => setOpen(false), { panelTestid: "graph-cost-menu" });
+	useEffect(() => {
+		const close = () => setOpen(false);
+		window.addEventListener("lh:sidebar-overlay-open", close);
+		return () => window.removeEventListener("lh:sidebar-overlay-open", close);
+	}, []);
 	return (
 		<div ref={rootRef} className="relative">
 			<Hint
@@ -482,6 +487,11 @@ function GraphSettingsControl({
 	// the root wraps button + panel, so the toggle itself keeps working.
 	const rootRef = useRef<HTMLDivElement>(null);
 	usePopoverDismiss(rootRef, open, () => setOpen(false), { panelTestid: "graph-display-menu" });
+	useEffect(() => {
+		const close = () => setOpen(false);
+		window.addEventListener("lh:sidebar-overlay-open", close);
+		return () => window.removeEventListener("lh:sidebar-overlay-open", close);
+	}, []);
 	const regionTuning = settings.regions;
 	const physicsTuning = settings.physics;
 	return (
@@ -646,7 +656,7 @@ function GraphSettingsControl({
 								<span>Bitmap resolution</span>
 								<select
 									disabled={!regionTuning.enabled}
-									className="rounded-md border bg-background px-1.5 py-0.5 text-xs tabular-nums text-foreground"
+									className="rounded-md border bg-background px-1.5 py-0.5 text-base md:text-xs tabular-nums text-foreground"
 									value={regionTuning.bitmap}
 									onChange={(e) =>
 										changeSettings((cur) => ({
@@ -790,7 +800,7 @@ function GraphSettingsControl({
 							<label className="flex items-center justify-between gap-2 text-xs">
 								Depth anchor
 								<select
-									className="rounded border bg-background px-1 py-0.5 text-xs"
+									className="rounded border bg-background px-1 py-0.5 text-base md:text-xs"
 									value={physicsTuning.depthMode}
 									onChange={(e) =>
 										changeSettings((cur) => ({
@@ -911,7 +921,7 @@ export function GraphChromeRow({
 							placeholder="Search knowledge…"
 							aria-label="Search knowledge"
 							spellCheck={false}
-							className="h-7 w-full rounded-lg border bg-background pl-8 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
+							className="h-8 md:h-7 w-full rounded-lg border bg-background pl-8 text-base md:text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
 						/>
 					</div>
 					</Hint>
@@ -1031,7 +1041,18 @@ export function GraphView({
 	const { resolvedMode, colors } = useAppearance();
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
 	const [selected, setSelected] = useState<Selection | null>(null);
-	useEffect(() => { const close = () => setSelected(null); window.addEventListener("lh:graph-display-open", close); return () => window.removeEventListener("lh:graph-display-open", close); }, []);
+	useEffect(() => {
+		const close = () => {
+			setSelected(null);
+			setCtxNode(null);
+		};
+		window.addEventListener("lh:graph-display-open", close);
+		window.addEventListener("lh:sidebar-overlay-open", close);
+		return () => {
+			window.removeEventListener("lh:graph-display-open", close);
+			window.removeEventListener("lh:sidebar-overlay-open", close);
+		};
+	}, []);
 	// The latest snapshot for the renderer's click callbacks (they are
 	// constructed once, so they read through this ref, never a closure).
 	const snapshotRef = useRef<GraphSnapshot | null>(null);
@@ -1381,13 +1402,8 @@ export function GraphView({
 		try {
 			const stored = localStorage.getItem(CAMERA_STORAGE_KEY);
 			if (stored) {
-				const parsed = JSON.parse(stored) as { k?: unknown; x?: unknown; y?: unknown };
-				if (
-					typeof parsed.k === "number" && Number.isFinite(parsed.k) && parsed.k > 0 &&
-					typeof parsed.x === "number" && Number.isFinite(parsed.x) &&
-					typeof parsed.y === "number" && Number.isFinite(parsed.y)
-				)
-					initialCamera = { k: parsed.k, x: parsed.x, y: parsed.y };
+				const parsed = JSON.parse(stored) as { k?: unknown; x?: unknown; y?: unknown; vw?: unknown; vh?: unknown };
+				initialCamera = shouldRestoreCamera(parsed, canvas.clientWidth, canvas.clientHeight);
 			}
 		} catch {
 			// Corrupt entry → treat as absent; the renderer fits.
@@ -1395,14 +1411,15 @@ export function GraphView({
 		// Debounced camera writes: a pan emits hundreds of transforms per
 		// second; one trailing write per quiet spell is plenty.
 		let cameraTimer: ReturnType<typeof setTimeout> | null = null;
-		let lastCamera: { k: number; x: number; y: number } | null = null;
+		let lastCamera: { k: number; x: number; y: number; vw: number; vh: number } | null = null;
 		const persistCamera = (t: { k: number; x: number; y: number }) => {
-			lastCamera = t;
+			lastCamera = { k: t.k, x: t.x, y: t.y, vw: canvas.clientWidth, vh: canvas.clientHeight };
 			if (cameraTimer) clearTimeout(cameraTimer);
 			cameraTimer = setTimeout(() => {
 				cameraTimer = null;
+				if (!lastCamera) return;
 				try {
-					localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify(t));
+					localStorage.setItem(CAMERA_STORAGE_KEY, JSON.stringify(lastCamera));
 				} catch {
 					// Storage full/blocked: camera persistence is best-effort.
 				}
@@ -1456,6 +1473,20 @@ export function GraphView({
 			},
 			initialCamera,
 		);
+		renderer.setFitPadding(() => {
+			const rect = canvas.getBoundingClientRect();
+			const isNarrow = rect.width < 768;
+			const toolbar = containerRef.current?.parentElement?.querySelector(".graph-toolbar");
+			const dock = document.querySelector("[data-home-dock]");
+			const top = isNarrow && toolbar
+				? Math.max(40, Math.round(toolbar.getBoundingClientRect().bottom - rect.top) + 12)
+				: 40;
+			const bottom = dock
+				? Math.max(40, Math.round(rect.bottom - dock.getBoundingClientRect().top) + 12)
+				: 40;
+			const side = isNarrow ? 28 : 40;
+			return { top, right: side, bottom, left: side };
+		});
 		rendererRef.current = renderer;
 		return () => {
 			rendererRef.current = null;
@@ -1687,8 +1718,10 @@ export function GraphView({
 			    row so narrow windows can never push it over the composer
 			    the way the old bottom-left stack did; the whole top-right
 			    cluster is one column, right-aligned. */}
-{snapshot && snapshot.propositions.length > 30 && <GraphOutline snapshot={snapshot} query={query} visibleIds={visibleIds} onFocus={(ids, selectNode) => { setQuery(""); setSelected(null); requestAnimationFrame(() => rendererRef.current?.focusNodes(ids, selectNode)); }} />}
-			{costs && costs.runs.length > 0 && <GraphCostControl costs={costs} />}
+			<div className="flex max-w-full flex-wrap items-center justify-end gap-1.5">
+				{snapshot && snapshot.propositions.length > 30 && <GraphOutline snapshot={snapshot} query={query} visibleIds={visibleIds} onFocus={(ids, selectNode) => { setQuery(""); setSelected(null); requestAnimationFrame(() => rendererRef.current?.focusNodes(ids, selectNode)); }} />}
+				{costs && costs.runs.length > 0 && <GraphCostControl costs={costs} />}
+			</div>
 			{pipelineRuns.map((run) => (
 				<div
 					key={run.id}

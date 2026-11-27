@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { Chat } from "@/components/chat";
-import { sanitizeMessagesForClient, slotsConfigured } from "@/src/core";
+import { CLIENT_DEFAULT_TAIL_GROUPS, sanitizeMessagesForClient, sliceChatTailForClient, slotsConfigured } from "@/src/core";
 import { compactionInFlight, getChat, isTurnRunning, readSettingsRecord, turnFailure } from "@/src/server";
 
 export const dynamic = "force-dynamic";
@@ -19,16 +19,21 @@ export default async function ChatPage({
 	// over the settings record, server-read — the same gate home/new read. The
 	// server's 503 stays the truth; this only decides whether the pill rides.
 	const record = readSettingsRecord();
+	const tail = sliceChatTailForClient(chat.messages, CLIENT_DEFAULT_TAIL_GROUPS);
 	return (
 		<Chat
 			key={chat.id}
 			chatId={chat.id}
 			title={chat.title}
 			kind={chat.kind ?? "teach"}
-			// Wave D: the record IS native agent history — the client view is
-				// derived app-side (core/view.ts projectView; GET serves the same
-				// native messages).
-				initialMessages={sanitizeMessagesForClient(chat.messages)}
+			// Wave D: the record IS native agent history — ship only the active
+			// tail window on SSR so long sessions hydrate fast on mobile; earlier
+			// messages load on demand via ?tail=N or full GET.
+			initialMessages={sanitizeMessagesForClient(tail.messages)}
+			initialTotalMessages={tail.totalMessages}
+			initialTruncated={tail.truncated}
+			initialPhase={tail.startPhase}
+			initialPlanTree={chat.tree ?? null}
 			initialError={turnFailure(chat.id)}
 			initialConfigured={slotsConfigured(record?.models)}
 			initialPrompt={prompt}

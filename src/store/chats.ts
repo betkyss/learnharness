@@ -52,12 +52,115 @@ function createChat(title: string, kind?: "practice"): ChatRecord {
 	return { ...record, version: CURRENT_CHAT_VERSION }; // the in-memory twin of what landed on disk
 }
 
+interface ChatCacheEntry {
+	mtimeMs: number;
+	size: number;
+	ino: number;
+	summary: ChatSummary | null;
+	title: string;
+	extractions: ExtractionRunUsage[];
+}
+
+const chatSummaryCache = new Map<string, ChatCacheEntry>();
+let cacheHits = 0;
+let cacheMisses = 0;
+
+export function chatStoreCacheStats(): { hits: number; misses: number; size: number } {
+	return { hits: cacheHits, misses: cacheMisses, size: chatSummaryCache.size };
+}
+
+function buildCacheEntry(record: ChatRecord, stat: { mtimeMs: number; size: number; ino: number }): ChatCacheEntry {
+	const { messages, tree: _tree, turns: _turns, extractions, imageSnapshots: _imageSnapshots, sideChats: _sideChats, ...rest } = record;
+	let summary: ChatSummary | null = null;
+	try {
+		summary = {
+			...rest,
+			...(rest.settings ? { settings: { ...rest.settings } } : {}),
+			kind: rest.kind ?? "teach",
+			messageCount: messages.length,
+			phase: phaseAt3Lh(messages),
+			pendingQuestion: danglingQuestionOf(messages) !== null,
+			pendingProblem: activeProblemOf(messages) !== null,
+		};
+	} catch (err) {
+		console.error(`[chat ${rest.id}] summary projection failed:`, err);
+		summary = null;
+	}
+	return {
+		mtimeMs: stat.mtimeMs,
+		size: stat.size,
+		ino: stat.ino,
+		summary,
+		title: record.title ?? record.id,
+		extractions: extractions?.length ? [...extractions] : [],
+	};
+}
+
+function cloneSummary(summary: ChatSummary): ChatSummary {
+	return summary.settings
+		? { ...summary, settings: { ...summary.settings } }
+		: { ...summary };
+}
+
+function readCachedEntries(): ChatCacheEntry[] {
+	try {
+		fs.mkdirSync(PATHS.chats, { recursive: true });
+		const dir = PATHS.chats;
+		const prefix = dir.endsWith(path.sep) ? dir : `${dir}${path.sep}`;
+		const files = fs.readdirSync(/* turbopackIgnore: true */ dir).filter((f) => f.endsWith(".json"));
+		const seen = new Set<string>();
+		const entries: ChatCacheEntry[] = [];
+		for (const f of files) {
+			const fullPath = path.join(dir, f);
+			seen.add(fullPath);
+			let stat: fs.Stats;
+			try {
+				stat = fs.statSync(/* turbopackIgnore: true */ fullPath);
+			} catch {
+				chatSummaryCache.delete(fullPath);
+				continue;
+			}
+			const cached = chatSummaryCache.get(fullPath);
+			if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size && cached.ino === stat.ino) {
+				cacheHits++;
+				entries.push(cached);
+				continue;
+			}
+			cacheMisses++;
+			const record = getChat(f.slice(0, -5));
+			if (!record) {
+				chatSummaryCache.delete(fullPath);
+				continue;
+			}
+			const entry = buildCacheEntry(record, stat);
+			chatSummaryCache.set(fullPath, entry);
+			entries.push(entry);
+		}
+		for (const key of chatSummaryCache.keys()) {
+			if (key.startsWith(prefix) && !seen.has(key)) {
+				chatSummaryCache.delete(key);
+			}
+		}
+		return entries;
+	} catch {
+		return [];
+	}
+}
+
 /** THE WRITE CHOKE POINT (schema-versioning wave, owner 2026-10-10): every
  *  record persist goes through here and carries the CURRENT version stamp —
  *  lazy migration means existing files only get stamped on their next write.
  *  A future-version guard lives on the read side (getChat). */
 function writeChat(record: ChatRecord): void {
-	writeFileAtomicSync(chatFile(record.id), JSON.stringify({ ...record, version: CURRENT_CHAT_VERSION }, null, "\t"), { allowInPlaceFallback: true });
+	const file = chatFile(record.id);
+	const stamped: ChatRecord = { ...record, version: CURRENT_CHAT_VERSION };
+	writeFileAtomicSync(file, JSON.stringify(stamped, null, "\t"), { allowInPlaceFallback: true });
+	try {
+		const stat = fs.statSync(/* turbopackIgnore: true */ file);
+		chatSummaryCache.set(file, buildCacheEntry(stamped, stat));
+	} catch {
+		chatSummaryCache.delete(file);
+	}
 }
 
 function getChat(id: string): ChatRecord | null {
@@ -79,51 +182,21 @@ function getChat(id: string): ChatRecord | null {
 }
 
 function listChats(): ChatSummary[] {
-	try {
-		fs.mkdirSync(PATHS.chats, { recursive: true });
-		return fs
-			.readdirSync(/* turbopackIgnore: true */ PATHS.chats)
-			.filter((f) => f.endsWith(".json"))
-			.map((f) => getChat(f.slice(0, -5)))
-			.filter((r): r is ChatRecord => r !== null)
-			.map(({ messages, tree, turns, extractions, imageSnapshots: _imageSnapshots, sideChats: _sideChats, ...summary }) => {
-				// Per-record isolation (Wave B): a record whose messages fail the
-				// projection (e.g. pre-Wave-B UIMessage-format scratch — the
-				// zero-back-compat wipe makes these "corrupt") must not blank the
-				// whole sidebar — same isolation getChat's per-file catch gives.
-				try {
-					return {
-						// turns and extractions stay out of the list payload (list =
-						// summaries; usage aggregates ride the full record, the picker
-						// never needs them).
-						...summary,
-						// Normalized kind: absent record field reads as teach.
-						kind: summary.kind ?? "teach",
-						messageCount: messages.length,
-						// Record-derived status for the session picker: phase from the
-						// transcript's explicit events (probe_done concluded / verdict
-						// accepted — docs/archive/probe-teach-split.md §4), pending question
-						// from the native dangling-call scan. Wave D: both folds read
-						// the NATIVE record (core/phases.ts phaseAt3Lh +
-						// native-messages.ts danglingQuestionOf). Liveness (busy) is
-						// NOT record-derived — the API route merges it (ChatListItem).
-						phase: phaseAt3Lh(messages),
-						pendingQuestion: danglingQuestionOf(messages) !== null,
-						// Practice: a posed problem with no conclude (the sidebar's
-						// "Problem waiting"); false on teaching sessions, which
-						// have no problem tool.
-						pendingProblem: activeProblemOf(messages) !== null,
-					};
-				} catch (err) {
-					console.error(`[chat ${summary.id}] summary projection failed:`, err);
-					return null;
-				}
-			})
-			.filter((s) => s !== null)
-			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-	} catch {
-		return [];
-	}
+	return readCachedEntries()
+		.map((entry) => entry.summary)
+		.filter((s): s is ChatSummary => s !== null)
+		.map(cloneSummary)
+		.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+function listChatExtractions(): Array<{ id: string; title: string; extractions: ExtractionRunUsage[] }> {
+	return readCachedEntries()
+		.filter((entry) => entry.summary !== null && entry.extractions.length > 0)
+		.map((entry) => ({
+			id: entry.summary!.id,
+			title: entry.title,
+			extractions: entry.extractions,
+		}));
 }
 
 /** Persist the full native message list (the record IS the agent state —
@@ -208,9 +281,11 @@ function renameChat(id: string, title: string): ChatRecord {
  *  into a 404. The record's graph traces and jobs are the route's
  *  choreography (core/graph-deletion.ts), not the store's. */
 function deleteChat(id: string): boolean {
+	const file = chatFile(id);
+	chatSummaryCache.delete(file);
 	try {
-		fs.unlinkSync(chatFile(id));
-		removeLeftoverTemps(chatFile(id));
+		fs.unlinkSync(file);
+		removeLeftoverTemps(file);
 		emit("chats-changed", {}); // only a real removal — the present-entry law
 		return true;
 	} catch {
@@ -247,6 +322,7 @@ export const chatStore: ChatStore = {
 	createChat,
 	getChat,
 	listChats,
+	listChatExtractions,
 	saveMessages,
 	saveImageSnapshot,
 	saveTree,

@@ -391,7 +391,7 @@ export function SettingsDialogBody({
 			aria-modal="true"
 			aria-label="Settings"
 			data-testid="settings-dialog"
-			className="settings-dialog-pop flex h-[620px] max-h-[85vh] w-[920px] max-w-[90vw] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
+			className="settings-dialog-pop flex h-[620px] max-h-[min(90dvh,calc(var(--vvh,100dvh)-16px))] w-[920px] max-w-[90vw] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
 			onClick={(e) => e.stopPropagation()}
 		>
 			{/* Header — the app's quiet CMU title language. */}
@@ -426,9 +426,24 @@ export function SettingsDialogBody({
 			<div className="flex min-h-0 flex-1 flex-col md:flex-row">
 				{/* Left nav — text-only, the session-list mono language,
 					    active = bg-accent. */}
-				<select aria-label="Settings section" data-testid="settings-section-select" value={active} onChange={(event) => setActive(event.target.value as SectionId)} className="m-2 h-8 rounded-sm border bg-card px-2 text-sm md:hidden">
-{SECTIONS.map((section) => <option key={section.id} value={section.id}>{section.label}</option>)}
-</select>
+				<select
+					aria-label="Settings section"
+					data-testid="settings-section-select"
+					value={selected}
+					onChange={(event) => setActive(event.target.value as SectionId)}
+					className="m-2 min-h-10 rounded-sm border bg-card px-2 text-base md:hidden"
+				>
+					<optgroup label="Settings">
+						{SECTIONS.map((section) => (
+							<option key={section.id} value={section.id}>{section.label}</option>
+						))}
+					</optgroup>
+					<optgroup label="Plugins">
+						{navSections.slice(SECTIONS.length).map((section) => (
+							<option key={section.id} value={section.id}>{section.label}</option>
+						))}
+					</optgroup>
+				</select>
 <nav
 					aria-label="Settings sections"
 					data-testid="settings-nav"

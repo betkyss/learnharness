@@ -27,7 +27,8 @@
 import { subscribe, type ServerEvent } from "../core/events.ts";
 
 /** One window's subscription as an SSE Response. */
-export function eventsResponse(options?: { flushOnOpen?: boolean }): Response {
+export function eventsResponse(options?: { flushOnOpen?: boolean; heartbeatMs?: number }): Response {
+	const heartbeatMs = options?.heartbeatMs ?? 25_000;
 	const encoder = new TextEncoder();
 	let teardown: (() => void) | undefined;
 	const stream = new ReadableStream<Uint8Array>({
@@ -40,7 +41,10 @@ export function eventsResponse(options?: { flushOnOpen?: boolean }): Response {
 				if (closed) return;
 				closed = true;
 				unsubscribe?.();
-				if (heartbeat) clearInterval(heartbeat);
+				if (heartbeat) {
+					clearInterval(heartbeat);
+					heartbeat = undefined;
+				}
 			};
 			// Enqueue is the ONLY place the socket can reject us (the reader
 			// died) — any failure routes through stop() so the listener and
@@ -65,7 +69,12 @@ export function eventsResponse(options?: { flushOnOpen?: boolean }): Response {
 			// Node/Next/proxies deliver response headers immediately and browser
 			// EventSource.onopen fires right away instead of waiting 25s for ping.
 			if (options?.flushOnOpen) frame(": open\n\n");
-			heartbeat = setInterval(() => frame(": ping\n\n"), 25_000);
+			// Emit named `event: ping` frames (not silent comments) so browser
+			// EventSource listeners can track liveness and detect half-open sockets.
+			if (heartbeatMs > 0) {
+				heartbeat = setInterval(() => frame("event: ping\ndata: {}\n\n"), heartbeatMs);
+				(heartbeat as { unref?: () => void }).unref?.();
+			}
 
 			teardown = stop;
 		},

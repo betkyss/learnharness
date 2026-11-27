@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useChatSession } from "@/components/session";
 import { usePlugins } from "./plugins";
@@ -12,7 +12,7 @@ import { findSurfaceBoundary } from "./plugin-surface-targets";
 import { scheduleOpeningSubmission } from "./plugin-submission-opening";
 import { activeProblemOccurrenceOf, buildAnswer, toClientQuestion, type PluginSubmission, type PluginSubmissionTarget, type QuestionData } from "@/src/core";
 import { validatePluginBuiltinSubmissionAnswer } from "@/src/core";
-import { visibleQueuedSteers } from "@/components/session-core";
+import { visibleQueuedSteers, type SessionRecordSnapshot } from "@/components/session-core";
 import { SetupDialog } from "@/components/setup-dialog";
 import { Hint } from "@/components/ui/hint";
 import { cn } from "@/lib/utils";
@@ -102,7 +102,7 @@ import { PluginSessionTopBarActions } from "@/components/plugin-chrome";
 import { usePluginShortcutPage } from "@/components/plugin-shortcuts";
 import { createPluginSessionActionContext, type PluginSessionViewInput } from "@/src/core";
 import type { SessionInputViewReader, SessionViewTargets, NativeQuestionViewState, ViewReaderRef } from "./session-view-readers";
-import type { JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, TurnUsage, SessionPricing } from "@/src/core";
+import type { JobRecord, LhViewMessage, Phase3, PlanTree, QuestionAnswerData, QuestionFormDraft, TurnUsage, SessionPricing } from "@/src/core";
 import { isSubagentSteer, newestLearnerTurnFrom } from "./transcript-rows";
 import { PhaseChip, PhaseDivider } from "@/components/phase-divider";
 import {
@@ -245,6 +245,182 @@ export function PendingTurnIndicator({ evaluating }: { evaluating: boolean }) {
 	);
 }
 
+/** Memoized transcript row so streaming tokens on the last assistant message
+ *  never re-render settled historical messages and their syntax-highlighted blocks. */
+interface TranscriptRowProps {
+	m: LhViewMessage;
+	mi: number;
+	chatId: string;
+	isOlderRow: boolean;
+	phase: Phase3 | undefined;
+	prevPhase: Phase3 | undefined;
+	activeMessageId: string | null;
+	sourceTextParts: ReadonlyMap<string, string>;
+	sideEntryMap: ReadonlyMap<number, string> | undefined;
+	renderSideEntry: (sourceMessageId?: string) => React.ReactNode;
+	problemSnapshot: ReturnType<typeof pluginProblemById>;
+	busy: boolean;
+	compacting: boolean;
+	hasPending: boolean;
+	malformedQuestions: ReturnType<typeof malformedQuestionsOf>;
+	onOpenPlan: () => void;
+	onRetryMalformed: (call: { messageId: string; contentIndex: number; toolCallId: string }) => void;
+}
+
+const TranscriptRow = memo(function TranscriptRow({
+	m,
+	mi,
+	chatId,
+	isOlderRow,
+	phase,
+	prevPhase,
+	activeMessageId,
+	sourceTextParts,
+	sideEntryMap,
+	renderSideEntry,
+	problemSnapshot,
+	busy,
+	compacting,
+	hasPending,
+	malformedQuestions,
+	onOpenPlan,
+	onRetryMalformed,
+}: TranscriptRowProps) {
+	if (m.role === "user" && isSubagentSteer(m)) {
+		return <SubagentSteerCard message={m} />;
+	}
+	if (m.role === "user" && m.parts.some((p) => p.type === "data-probe-handoff")) {
+		return <PhaseDivider phase="plan" />;
+	}
+	if (m.role === "user" && m.parts.length > 0 && m.parts.every((p) => p.type.startsWith("data-"))) {
+		return (
+			<>
+				{m.parts.map((part, pi) => {
+					switch (part.type) {
+						case "data-graph-context":
+							return <GraphContextCard key={pi} data={part.data as GraphContextData} />;
+						case "data-compaction":
+							return <CompactionMomentDivider key={pi} data={part.data as CompactionDividerData} />;
+						case "data-compaction-cut":
+							return <CompactionCutDivider key={pi} data={part.data as CompactionDividerData} />;
+						case "data-plugin-problem-submission":
+							return <PluginProblemSubmitted key={pi} data={part.data} snapshot={problemSnapshot} chatId={chatId} />;
+						case "data-practice-thinking":
+							return <ThinkingCard key={pi} data={part.data as PracticeThinkingData} />;
+						case "data-practice-next":
+							return (
+								<div
+									key={pi}
+									data-testid="practice-next-line"
+									className="my-4 flex items-center justify-center gap-1.5 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground"
+								>
+									<ArrowRightIcon className="size-3" />
+									Next problem
+								</div>
+							);
+						default:
+							return null;
+					}
+				})}
+			</>
+		);
+	}
+	const flippedToTeach = m.role === "assistant" && phase === "teach" && prevPhase !== "teach";
+	const teachIdx = flippedToTeach ? teachStepIndex(m.parts) : -1;
+	return (
+		<>
+			{flippedToTeach && teachIdx === -1 ? (
+				<PhaseDivider key={`teach-${m.id || `m-${mi}`}`} phase="teach" />
+			) : null}
+			{m.role === "user" ? (
+				<div
+					data-testid="user-message"
+					data-older-transcript-row={isOlderRow ? "" : undefined}
+					className="my-2 w-full border-l-[calc(3ch-14px)] border-muted-foreground/30 bg-card py-1 pl-[14px] pr-4 font-ui text-xs"
+				>
+					<div className="font-medium uppercase tracking-wide text-muted-foreground">You</div>
+					<div className="lh-prose whitespace-pre-wrap text-foreground">
+						<PathText text={m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")} />
+					</div>
+					<SubmittedImages images={m.parts.filter((part) => part.type === "image").map(part => ({ type: "image" as const, data: part.data as string, mimeType: part.mimeType as string }))} />
+				</div>
+			) : (
+				<Message from="assistant" className="max-w-full" data-older-transcript-row={isOlderRow ? "" : undefined}>
+					<MessageContent className="w-full min-w-0">
+						{groupWorkParts(m.parts, teachIdx, activeMessageId).map((entry) => {
+							if (entry.type === "work") return <WorkGroup key={entry.key} entry={entry} />;
+							const { part, index: pi } = entry;
+							if (part.pluginProblem) return <ProblemCard key={pi} part={{ ...part, state: part.state ?? "input-available", toolCallId: part.toolCallId ?? "" }} />;
+							if (part.pluginQuestion) return <PluginQuestionPart key={pi} part={part} chatId={chatId} />;
+							const teachBoundary = flippedToTeach && teachIdx === pi;
+							if (part.state === "output-error" && part.type.startsWith("tool-")) {
+								return (
+									<div key={entry.key} data-testid="tool-error" role="alert" className="my-2 whitespace-pre-wrap break-words border-l-2 border-destructive/50 pl-3 text-sm text-destructive">
+										<p>{part.type === "tool-probe_done" ? "The assessment could not be completed." : "The tool could not complete this action."}</p>
+										<details className="mt-1 text-xs text-muted-foreground"><summary className="cursor-pointer">Details</summary>{part.type.slice(5)}: {part.errorText || "The tool call failed."}</details>
+									</div>
+								);
+							}
+							switch (part.type) {
+								case "text": {
+									const sourceId = textPartMessageId(part.id);
+									const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
+									return (
+										<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage min-w-0 max-w-full">
+											<MessageResponse>{part.text}</MessageResponse>
+										</div>
+									);
+								}
+								case "step-start":
+									return (
+										<Fragment key={`step-${pi}`}>
+											{renderSideEntry(sideEntryMap?.get(pi))}
+											{teachBoundary ? <PhaseDivider phase="teach" /> : pi > 0 ? <Separator className="my-3" /> : null}
+										</Fragment>
+									);
+								case "data-plan-block":
+									return (
+										<PlanBlock
+											key={pi}
+											data={part.data as PlanBlockData}
+											onOpen={onOpenPlan}
+										/>
+									);
+								case "tool-quiz":
+								case "tool-probe":
+								case "tool-ask_user_question":
+								case "tool-explain":
+								case "tool-recall": {
+									const malformed = !busy && malformedQuestions.find(call => call.messageId === part.sourceMessageId && call.contentIndex === part.sourceContentIndex && call.toolCallId === part.toolCallId);
+									if (malformed) return (
+										<MalformedQuestion
+											key={pi}
+											disabled={hasPending || compacting}
+											reason={hasPending ? "Answer or discard the remaining question first." : undefined}
+											onRetry={() => onRetryMalformed(malformed)}
+										/>
+									);
+									if (part.state === "output-available") {
+										return (
+											<AnsweredCard key={pi} answer={part.output as QuestionAnswerData} input={part.input} toolCallId={part.toolCallId} />
+										);
+									}
+									return null;
+								}
+								default: {
+									if (part.type.startsWith("tool-")) return <ToolPartRenderer key={pi} part={part} />;
+									return null;
+								}
+							}
+						})}
+					</MessageContent>
+					{m.role === "assistant" && renderSideEntry(sideEntryMap?.get(m.parts.length))}
+				</Message>
+			)}
+		</>
+	);
+});
+
 /**
  * The teaching session. All chat state lives in useChat; the server persists
  * the canonical transcript after every turn.
@@ -258,6 +434,10 @@ export function Chat({
 	chatId,
 	title,
 	initialMessages,
+	initialTotalMessages,
+	initialTruncated = false,
+	initialPhase = "probe",
+	initialPlanTree = null,
 	initialError,
 	initialPrompt,
 	initiallyInFlight,
@@ -268,6 +448,14 @@ export function Chat({
 	chatId: string;
 	title: string;
 	initialMessages: LhMessage[];
+	/** Total native messages stored server-side when SSR delivered a tail slice. */
+	initialTotalMessages?: number;
+	/** True when SSR sliced earlier messages out of the initial payload. */
+	initialTruncated?: boolean;
+	/** Starting phase right before the initial tail slice. */
+	initialPhase?: Phase3;
+	/** Persisted plan tree from the server record (available even before earlier messages load). */
+	initialPlanTree?: PlanTree | null;
 	/** Memory-only settlement notice supplied on reopening. */
 	initialError?: string;
 	/** The session kind (practice sessions, owner 2026-10-04): practice
@@ -291,16 +479,58 @@ export function Chat({
 	// Reattach plumbing (background-turn runner wave): the hook holds the
 	// settled terminal's callback — a stable ref assigned below, once
 	// syncFromServer exists (refs, not closures: no stale capture).
-	const reattachSettledRef = useRef<() => void>(() => {});
+	const reattachSettledRef = useRef<(reconciled?: SessionRecordSnapshot) => void>(() => {});
+	const [sessionStartPhase, setSessionStartPhase] = useState<Phase3>(initialPhase);
+	const [serverPlanTree, setServerPlanTree] = useState<PlanTree | null>(initialPlanTree);
 
-	// THE SESSION HOOK (Wave D, owner-approved 2026-09-26): the app-owned
-	// replacement for useChat + the AI-SDK transport. The record is native
-	// history; the VIEW (grouped, golden-master) is derived client-side
-	// (core/view.ts projectView); sends are ONE explicit input event each
-	// ({chatId, input} — the stash indirection died with the SDK), and the
-	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { draftsReady, activeMessageId, canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, error, stop, clearError, resumeStream, setReattachSettled } =
-		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
+	const {
+		draftsReady,
+		activeMessageId,
+		canonicalMessages,
+		totalMessageCount,
+		hasEarlierMessages,
+		loadingEarlier,
+		reconciliation,
+		reconcile,
+		pluginQuestionAvailability,
+		pluginQuestionDraft,
+		pluginProblemAvailability,
+		pluginProblemDraft,
+		dismissPluginQuestion,
+		readRecord,
+		readStats,
+		messages,
+		nativeMessages,
+		hasConfirmedConversation,
+		contextTokens,
+		send,
+		continueIfOwed,
+		steer,
+		steerQueue,
+		submitAnswer,
+		dismissQuestion,
+		dismissProblem,
+		questionDraft,
+		saveQuestionDraft,
+		status,
+		evaluating,
+		error,
+		stop,
+		clearError,
+		resumeStream,
+		loadEarlierMessages: loadEarlierFromServer,
+		loadAllMessages,
+		recoverFromForeground,
+		setReattachSettled,
+		setRecordAdopted,
+	} = useChatSession({
+		chatId,
+		initialMessages,
+		initialTotalMessages,
+		initialTailLimit: initialTruncated ? INITIAL_VISIBLE_MESSAGES : null,
+		initialError,
+		initiallyInFlight,
+	});
 
 	const controller = useOptionalInteractionLayers();
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
@@ -344,12 +574,19 @@ export function Chat({
 	const textTarget = (): Extract<PluginSubmissionTarget, { type: "text" }> | undefined => surfaceTarget ? { type: "text", sessionId: chatId, sessionKind: kind === "practice" ? "practice" : "teaching", surfaceTarget, channels: ["content"] } : undefined;
 	const scrollContextRef = useRef<StickToBottomContext | null>(null);
 	const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_MESSAGES);
-	const showAllMessages = useCallback(() => setVisibleCount(Infinity), []);
+	const hasEarlierMessagesRef = useRef(hasEarlierMessages);
+	hasEarlierMessagesRef.current = hasEarlierMessages;
+	const showAllMessages = useCallback(() => {
+		setVisibleCount(Infinity);
+		if (hasEarlierMessagesRef.current) void loadAllMessages();
+	}, [loadAllMessages]);
 	const pendingScrollRestoreRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
 	useIsoLayoutEffect(() => {
-		setVisibleCount(typeof window !== "undefined" && Boolean(window.location.hash) ? Infinity : INITIAL_VISIBLE_MESSAGES);
+		const hasHash = typeof window !== "undefined" && Boolean(window.location.hash);
+		setVisibleCount(hasHash ? Infinity : INITIAL_VISIBLE_MESSAGES);
+		if (hasHash && hasEarlierMessagesRef.current) void loadAllMessages();
 		pendingScrollRestoreRef.current = null;
-	}, [chatId]);
+	}, [chatId, loadAllMessages]);
 	useEffect(() => {
 		const onLocationChange = () => {
 			if (window.location.hash) showAllMessages();
@@ -373,23 +610,32 @@ export function Chat({
 				scrollTop: scroller.scrollTop,
 			};
 		}
-		setVisibleCount((prev) => prev + LOAD_OLDER_STEP);
-	}, []);
+		if (visibleStartRef.current > 0) {
+			setVisibleCount((prev) => prev + LOAD_OLDER_STEP);
+		} else if (hasEarlierMessagesRef.current) {
+			setVisibleCount((prev) => prev + LOAD_OLDER_STEP);
+			void loadEarlierFromServer(LOAD_OLDER_STEP);
+		}
+	}, [loadEarlierFromServer]);
 	useIsoLayoutEffect(() => {
 		const saved = pendingScrollRestoreRef.current;
 		if (!saved) return;
-		pendingScrollRestoreRef.current = null;
 		const scroller = scrollContextRef.current?.scrollRef.current;
 		if (!scroller) return;
 		const delta = scroller.scrollHeight - saved.scrollHeight;
-		if (delta !== 0) scroller.scrollTop = saved.scrollTop + delta;
-	}, [visibleStart]);
+		if (delta !== 0) {
+			pendingScrollRestoreRef.current = null;
+			scroller.scrollTop = saved.scrollTop + delta;
+		} else if (!loadingEarlier) {
+			pendingScrollRestoreRef.current = null;
+		}
+	}, [visibleStart, messages.length, loadingEarlier]);
 	const sourceTextParts = useMemo(() => firstSourceTextParts(messages), [messages]);
 	const newestTurnFrom = newestLearnerTurnFrom(messages);
 	const sideEntries = useMemo(() => sideEntryPoints(nativeMessages, messages), [nativeMessages, messages]);
 
 	// The reattach settled terminal → the sync-and-continue seam (below).
-	setReattachSettled(() => reattachSettledRef.current());
+	setReattachSettled((reconciled) => reattachSettledRef.current(reconciled));
 
 	// A turn running server-side, attached to no live view of ours (navigate
 	// away mid-turn, or a wake turn discovered mid-session): the reattach
@@ -669,7 +915,7 @@ export function Chat({
 	// A pending question can never precede its phase's seam in the transcript (the teacher's turn
 	// ends at the question call), so the session's current phase IS the
 	// question's phase.
-	const requiresReveal = pendingPlugin ? pendingPlugin.variant === "teach" && pendingPlugin.input.type === "check" : pending !== null && questionNeedsReveal(pending.tool, pending.input, phaseAt3(messages));
+	const requiresReveal = pendingPlugin ? pendingPlugin.variant === "teach" && pendingPlugin.input.type === "check" : pending !== null && questionNeedsReveal(pending.tool, pending.input, phaseAt3(messages, undefined, sessionStartPhase));
 
 	/* The READING-THINKING channel (owner 2026-10-03): a draft field for
 	 * thinking while reading the teaching prose, mounted while a check waits
@@ -712,7 +958,7 @@ export function Chat({
 	// The phase at every message (one linear fold): the transcript draws a
 	// color-coded dotted divider at each boundary; the header chip reads the
 	// session's current phase.
-	const phases = useMemo(() => phaseTimeline(messages), [messages]);
+	const phases = useMemo(() => phaseTimeline(messages, sessionStartPhase), [messages, sessionStartPhase]);
 
 	const [composerDraftRevision, setComposerDraftRevision] = useState(0);
 	/* The composer draft ref is synchronous, so sends and dictation flushes
@@ -1072,7 +1318,7 @@ export function Chat({
 			<Button type="button" variant="ghost" size="icon-xs" data-testid="side-conversation-button" data-side-segment-id={sourceMessageId}
 				data-has-history={hasHistory} aria-label={hasHistory ? "Open side conversation" : "Ask a side question"}
 				title={hasHistory ? "Open side conversation" : "Ask a side question"}
-				className={hasHistory ? "border border-border/60 text-muted-foreground" : "text-muted-foreground/40 hover:text-muted-foreground"}
+				className={cn("max-md:size-9", hasHistory ? "border border-border/60 text-muted-foreground" : "text-muted-foreground/40 hover:text-muted-foreground")}
 				onClick={(event) => openSideThread({ sourceMessageId, anchor: { kind: "element", element: event.currentTarget } })}>
 				<MessageCircleQuestionIcon aria-hidden className="size-3.5" fill="currentColor" fillOpacity={hasHistory ? 0.12 : 0} />
 			</Button>
@@ -1110,14 +1356,18 @@ export function Chat({
 					navigate: (href) => router.push(href),
 				});
 			};
-			if (citation.chatId === chatId && visibleStartRef.current > 0) {
-				showAllMessages();
-				requestAnimationFrame(run);
+			if (citation.chatId === chatId && (visibleStartRef.current > 0 || hasEarlierMessagesRef.current)) {
+				setVisibleCount(Infinity);
+				if (hasEarlierMessagesRef.current) {
+					void loadAllMessages().then(() => requestAnimationFrame(run));
+				} else {
+					requestAnimationFrame(run);
+				}
 				return;
 			}
 			run();
 		},
-	}), [chatId, router, showAllMessages]);
+	}), [chatId, router, loadAllMessages]);
 	useEffect(() => {
 		if (dictation.active) {
 			dictationWasActiveRef.current = true;
@@ -1192,41 +1442,39 @@ export function Chat({
 	 * when nothing is active; the two never overlap). */
 	useEnterSubmits(sendNext, sessionFindScopeRef);
 
+	const skipNextSettleTurnsRef = useRef(false);
+	const applyAdoptedRecord = useCallback((record: SessionRecordSnapshot) => {
+		if (Array.isArray(record.turns)) setTurns(record.turns);
+		if (record.pricing !== undefined) setPricing(record.pricing);
+		if (record.initialPhase !== undefined) setSessionStartPhase(record.initialPhase);
+		else if (record.truncated === false) setSessionStartPhase("probe");
+		if (record.tree !== undefined) setServerPlanTree(record.tree ?? null);
+	}, []);
+	setRecordAdopted(applyAdoptedRecord);
+
 	const syncFromServer = useCallback(async () => {
 		const record = await readRecord().catch(() => undefined);
 		if (!record) return;
-		if (Array.isArray(record.turns)) setTurns(record.turns);
-		setPricing(record.pricing);
-		// The continuation seam (contracts.ts protocol §4): a job result
-		// landing in the record leaves the agent owing a continuation — the
-		// record ENDS on un-consumed results, the dock owns no question, and
-		// nothing runs. The native fold (needsContinuation) is the old SDK
-		// lastAssistantMessageIsCompleteWithToolCalls check.
-		// Current model truth also guards retained/live failures: canonical
-		// sync must never automatically replace a reply that failed to save.
+		applyAdoptedRecord(record);
 		continueIfOwed(record.messages);
-	}, [readRecord, continueIfOwed]);
+	}, [readRecord, applyAdoptedRecord, continueIfOwed]);
 
-	// The settled terminal's other half (stream-reattach wave): the
-	// transport resolved turn-settled — no turn running, the record is
-	// current. Drop the fallback busy state and adopt the record (its
-	// continuation check fires the owed next turn, exactly as the poll's
-	// settle branch always did).
-	reattachSettledRef.current = () => {
+	// The settled terminal's other half (stream-reattach wave): consumeStream
+	// just ran reconcile() which already fetched & adopted the canonical tail
+	// (including turns, pricing, phase, planTree). Avoid issuing a redundant
+	// second full GET /api/chats/[id] or ?view=stats on normal turn completion.
+	reattachSettledRef.current = (reconciled?: SessionRecordSnapshot) => {
 		setTurnInFlight(false);
-		void syncFromServer();
+		settleAnnouncedRef.current = false;
+		if (reconciled) {
+			skipNextSettleTurnsRef.current = true;
+			applyAdoptedRecord(reconciled);
+			continueIfOwed(reconciled.messages);
+		} else {
+			void syncFromServer();
+		}
 	};
 
-	// ── Append-only record adoption (owner ground rules, 2026-09-15) ──
-	// Content delivered into the record server-side — sub-agent
-	// artifacts, abort notes — must become visible the
-	// moment it persists, mid-turn included: it sits between messages, and
-	// nothing about a running turn should hide it. The full snapshot sync
-	// mid-stream is forbidden (it breaks the SDK's in-place continuation
-	// merge — the stale-snapshot lesson), so adoption here is APPEND-ONLY
-	// (the session hook's adoptRecord): insert the record's new ids in their canonical
-	// order, never rewrite a local one, keep the in-flight tail last. The
-	// full syncFromServer stays the net at idle (reorder, plan blocks, turns).
 	const adoptAppendOnly = useCallback(async () => {
 		try {
 			await readRecord({ adoption: "append" });
@@ -1235,56 +1483,10 @@ export function Chat({
 		}
 	}, [readRecord]);
 
-	// Turn-start window: the server inserts claimed steers right after our
-	// outgoing message, BEFORE the stream produces anything — so a bounded,
-	// self-terminating window of three record fetches (400ms/1s/2s) catches
-	// the insert and shows the marker during the turn, then stops. No
-	// standing poll — the window exists only for these seconds. (The dock
-	// nudges that lived here died at S5: dispatch writes announce jobs-changed
-	// from the store, extraction announces activity-changed at setPhase.)
-	const turnStartStatusRef = useRef(status);
-	// The window must survive the submitted→streaming flip (the stream starts
-	// in well under 400ms), so the timers are guarded by this ref — dropped at
-	// unmount, left alone otherwise: the window self-terminates after 2s.
-	const adoptionWindowOpenRef = useRef(false);
-	const turnStartTimerRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
-	useEffect(() => {
-		const was = turnStartStatusRef.current;
-		turnStartStatusRef.current = status;
-		if (was === "submitted" || status !== "submitted") return;
-		// A turn just started (status flipped ready → submitted): open the
-		// bounded adoption window.
-		adoptionWindowOpenRef.current = true;
-		const timers = [400, 1000, 2000].map((ms) =>
-			setTimeout(() => {
-				if (adoptionWindowOpenRef.current) {
-					void adoptAppendOnly();
-				}
-			}, ms),
-		);
-		// Deliberately no cleanup here: this effect re-runs on every status
-		// flip, which would cancel the window at submitted→streaming.
-		timers.forEach((t) => {
-			turnStartTimerRefs.current.push(t);
-		});
-	}, [status, adoptAppendOnly]);
-	useEffect(() => {
-		const timers = turnStartTimerRefs;
-		return () => {
-			adoptionWindowOpenRef.current = false;
-			timers.current.forEach(clearTimeout);
-			timers.current = [];
-		};
-	}, []);
-
 	// The live plan popup (wave 4): opened by any transcript plan block, the
 	// top-bar plan chip, and the dock band's marginalia.
 	const [planOpen, setPlanOpen] = useState(false);
-	// Real plan presence — gates the marginalia's clickable flank. A JSX
-	// element is always truthy; gating on the node alone mounted a phantom
-	// (invisible, clickable) button in the bottom-right whenever a question
-	// was pending with no plan yet (owner report, UI round 2026-10-01).
-	const hasPlan = useMemo(() => planExists(messages), [messages]);
+	const hasPlan = useMemo(() => Boolean(serverPlanTree) || planExists(messages), [messages, serverPlanTree]);
 	// The coverage ring's refresh chain (extraction-UX redesign): bumped at
 	// turn settle — the moment this session's uncovered mass changes.
 	const [coverageTick, setCoverageTick] = useState(0);
@@ -1314,7 +1516,7 @@ export function Chat({
 	setupOpenRef.current = setupOpen;
 	// The session's live plan (drives the top-bar chip; the marginalia
 	// derives its own from the same transcript).
-	const planTree = useMemo(() => latestTree(messages), [messages]);
+	const planTree = useMemo(() => latestTree(messages) ?? serverPlanTree, [messages, serverPlanTree]);
 
 	// ── Session usage (wave-4 stats bar) ──
 	// The money channel: the record's turns log and read-time server Pi
@@ -1371,31 +1573,20 @@ export function Chat({
 		// branch — the re-fire-on-dep-churn wart, fixed S3).
 		prevStatusRef.current = status;
 		if (!transitioned) return;
-		// immediate: turns-only refetch — the stats bar updates even while
-		// the server's persist/endTurn lags the client by milliseconds
-		void syncTurns();
+		// Skip redundant ?view=stats when consumeStream's reconcile() already
+		// updated turns + pricing from the same turn settle.
+		if (skipNextSettleTurnsRef.current) {
+			skipNextSettleTurnsRef.current = false;
+		} else {
+			void syncTurns();
+		}
 		// The coverage ring re-reads at turn settle too (extraction-UX
 		// redesign, 2026-09-24); the ring's own running-poll handles runs.
 		setCoverageTick((t) => t + 1);
-		// CANONIZATION (fix B, the duplicate-previous-message bug, 2026-10-02):
-		// turn-settled for OUR OWN turn arrives while the stream is still open
-		// (endTurn emits from onFinish before the response terminates, so the
-		// SSE frame reliably beats [DONE]) — the handler below cannot sync
-		// there, it flags instead, and THIS flip consumes the flag: the record
-		// reflects durable truth (a failed settlement retains its notice,
-		// not its unsaved reply), so replacing the view absorbs the tail's
-		// streamed c_-id copies into base under their server ids. Without
-		// this the tail kept those copies forever and the next send's
-		// steer-adoption window rendered them a second time. The wake handoff
-		// cannot be missed by this sync: the wake fires only after the idle
-		// gates + grace (≥750ms past this flip), so its turn-started event
-		// lands at an idle, already-canonical view and attaches normally.
 		if (settleAnnouncedRef.current) {
 			settleAnnouncedRef.current = false;
 			void syncFromServer();
 		}
-		// (The extraction-discovery nudges that lived here died at S5: the
-		// pipeline announces every phase on the events channel.)
 	}, [status, syncTurns, syncFromServer]);
 
 	// A stream that died MID-FLIGHT (network): the runner decoupled the turn
@@ -1603,6 +1794,8 @@ export function Chat({
 	});
 	const canonicalMessagesRef = useRef(canonicalMessages);
 	canonicalMessagesRef.current = canonicalMessages;
+	const totalMessageCountRef = useRef(totalMessageCount);
+	totalMessageCountRef.current = totalMessageCount;
 	const errorRef = useRef(error);
 	errorRef.current = error;
 	useServerResync(() => {
@@ -1626,23 +1819,50 @@ export function Chat({
 				};
 				if (!submissionMounted.current) return;
 				setCompacting(Boolean(meta.compacting));
-				if (meta.turnInFlight) {
-					if (!localStreamRef.current && !turnInFlightRef.current) attachToRunningTurn();
+				// P0-2 foreground resume recovery: never deadlock behind a frozen
+				// mobile fetch() socket when the tab returns from background.
+				if (localStreamRef.current) {
+					await recoverFromForeground(meta);
 					return;
 				}
-				if (!localStreamRef.current && !turnInFlightRef.current) {
-					const canonical = canonicalMessagesRef.current;
-					const diverged =
-						meta.messageCount !== canonical.length ||
-						meta.lastMessageId !== (canonical.at(-1)?.id ?? null) ||
-						Boolean(meta.turnError) !== Boolean(errorRef.current);
-					if (diverged) void syncFromServer();
+				if (meta.turnInFlight) {
+					if (!turnInFlightRef.current) attachToRunningTurn();
+					return;
 				}
+				if (turnInFlightRef.current) {
+					setTurnInFlight(false);
+					void syncFromServer();
+					return;
+				}
+				const canonical = canonicalMessagesRef.current;
+				const diverged =
+					meta.messageCount !== totalMessageCountRef.current ||
+					meta.lastMessageId !== (canonical.at(-1)?.id ?? null) ||
+					Boolean(meta.turnError) !== Boolean(errorRef.current);
+				if (diverged) void syncFromServer();
 			} catch {
 				/* transient network error — next reconnect heals */
 			}
 		})();
 	});
+
+	const handleOpenPlan = useCallback(() => setPlanOpen(true), []);
+	const handleRetryMalformed = useCallback((malformed: { messageId: string; contentIndex: number; toolCallId: string }) => {
+		draftRef.current = null;
+		void send({ type: "retry-question", messageId: malformed.messageId, contentIndex: malformed.contentIndex, toolCallId: malformed.toolCallId });
+	}, [send]);
+	const renderSideEntryStable = useCallback(
+		(sourceMessageId?: string) => renderSideEntryRef.current(sourceMessageId),
+		[],
+	);
+	const renderSideEntryRef = useRef(renderSideEntry);
+	renderSideEntryRef.current = renderSideEntry;
+	const emptyMalformedRef = useRef<ReturnType<typeof malformedQuestionsOf>>([]);
+	const serverHiddenNativeCount = Math.max(0, totalMessageCount - canonicalMessages.length);
+	const showEarlierControl = visibleStart > 0 || hasEarlierMessages;
+	const hiddenMessagesLabel = visibleStart > 0
+		? `${visibleStart + (hasEarlierMessages ? serverHiddenNativeCount : 0)} older`
+		: `${serverHiddenNativeCount} older`;
 
 	const onSend = () => {
 		if (!isInteractionScopeEligible(sessionFindScopeRef.current, controller) || submissionRunner.occupied) return;
@@ -1807,7 +2027,7 @@ export function Chat({
 								blurAfterPointerClick(e);
 								setPlanOpen(true);
 							}}
-							className="lh-no-drag flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+							className="lh-no-drag flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 max-md:min-h-9 max-md:px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:border-border hover:text-foreground"
 						>
 							<WaypointsIcon className="size-3.5 text-primary" aria-hidden />
 							Plan
@@ -1854,230 +2074,53 @@ export function Chat({
 								/>
 							)}
 
-							{visibleStart > 0 && (
+							{showEarlierControl && (
 								<div className="flex justify-center py-1">
 									<button
 										type="button"
 										data-testid="load-earlier-messages"
+										disabled={loadingEarlier}
 										onClick={loadEarlierMessages}
-										className="cursor-pointer rounded-full border border-border/70 bg-card/60 px-3 py-1 font-ui text-xs text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-foreground"
+										className="cursor-pointer rounded-full border border-border/70 bg-card/60 px-3 py-1 max-md:min-h-10 max-md:px-4 font-ui text-xs text-muted-foreground transition-colors hover:border-border hover:bg-accent hover:text-foreground disabled:opacity-60"
 									>
-										Show earlier messages ({visibleStart} older)
+										{loadingEarlier ? "Loading earlier messages…" : `Show earlier messages (${hiddenMessagesLabel})`}
 									</button>
 								</div>
 							)}
 
 							{messages.slice(visibleStart).map((m, offset) => {
 								const mi = visibleStart + offset;
-								return m.role === "user" && isSubagentSteer(m) ? (
-									// Sub-agent delivery (wake-pipeline steer): NO message bubble — the
-									// artifact card sits in the transcript column directly, full width
-									// and centered like the teacher's artifacts (contracts.ts "THE ASYNC
-									// PROTOCOL" §4). Key fallback: legacy transcripts (pre id-hygiene)
-									// can still hold empty ids — the index keeps keys unique for them.
-									<SubagentSteerCard key={m.id || `m-${mi}`} message={m} />
-								) : m.role === "user" && m.parts.some((p) => p.type === "data-probe-handoff") ? (
-								// The probe→teach handoff wake (custom-message scheme): the
-								// PLANNING DIVIDER IS the seam (owner ruling 2026-09-26 — it
-								// replaced the "Preparing your plan…" system line; the marker
-								// renders in the right spot by record construction, so the old
-								// fold-based divider — which floated to the transcript top once
-								// Wave D grouping merged the whole probe into one giant
-								// assistant group — is gone). Never a user bubble: the wake is
-								// scaffolding; the model-facing instruction lives in the adapter.
-								<PhaseDivider key={m.id || `m-${mi}`} phase="plan" />
-							) : m.role === "user" && m.parts.length > 0 && m.parts.every((p) => p.type.startsWith("data-")) ? (
-								// Marker cards (custom messages, 2026-10-04): user-side
-								// scaffolding — the graph-context pick, the practice
-								// thinking trace — render as cards in the transcript
-								// column directly, NO chat bubble (the subagent-steer
-								// precedent). The user branch below renders text only;
-								// without this hoist a data-only message read as an
-								// EMPTY bubble (owner report, 2026-10-04).
-								<Fragment key={m.id || `m-${mi}`}>
-									{m.parts.map((part, pi) => {
-										switch (part.type) {
-											case "data-graph-context":
-												return <GraphContextCard key={pi} data={part.data as GraphContextData} />;
-											case "data-compaction":
-												return <CompactionMomentDivider key={pi} data={part.data as CompactionDividerData} />;
-											case "data-compaction-cut":
-												return <CompactionCutDivider key={pi} data={part.data as CompactionDividerData} />;
-											case "data-plugin-problem-submission": {
-												const submitted = readPluginProblemSubmission(part.data);
-												return <PluginProblemSubmitted key={pi} data={part.data} snapshot={submitted ? pluginProblemById(nativeMessages, submitted.problemId) : null} chatId={chatId} />;
-											}
-											case "data-practice-thinking":
-												return <ThinkingCard key={pi} data={part.data as PracticeThinkingData} />;
-											case "data-practice-next":
-												// The learner's move-on signal (owner round 16): a compact
-												// centered mono-caps line — chrome, the dismissal register.
-												return (
-													<div
-														key={pi}
-														data-testid="practice-next-line"
-														className="my-4 flex items-center justify-center gap-1.5 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground"
-													>
-														<ArrowRightIcon className="size-3" />
-														Next problem
-													</div>
-												);
-											default:
-												return null;
-										}
-									})}
-								</Fragment>
-							) : (
-									// Persisting a streamed run replaces its temporary native IDs.
-									// Keep this run mounted so disclosures retain their state.
-									<Fragment key={m.role === "assistant" ? `assistant-${mi}` : m.id || `m-${mi}`}>
-									{/* THE INFERRED TEACH SEAM (owner ruling 2026-09-26, the verdict
-									death): teaching begins where the FIRST nodeId-tagged quiz is
-									posed — the fold (phaseTimeline, the same derivation the phase chip
-									reads) flips to teach exactly AT this assistant group. STEP-LEVEL
-									since owner round 8 (2026-10-05 — the stacked-dividers bug): the
-									plan presentation often lives in the SAME message, an earlier
-									provider step than the quiz call, and the old message-level seam
-									drew this divider before the plan too (Planning and Teaching
-									stacked back-to-back, nothing between). teachStepIndex finds the
-									step boundary governing the flip call: -1 = the message's first
-									step → prepend before the whole block (this branch); a later
-									index → the divider renders AT that part boundary in the loop
-									below (replacing the plain step hairline — a labeled phase rule
-									supersedes it). The boundary check (this index flips, the
-									previous didn't) still guarantees exactly ONE divider per session.
-									PREPENDED, never a replacement branch: the teach group is a real
-									message with content — a replacement ternary swallowed the entire
-									first lesson block (the Lacan session, 2026-09-27). */}
-									{m.role === "assistant" &&
-									mi > 0 &&
-									phases[mi] === "teach" &&
-									phases[mi - 1] !== "teach" &&
-									teachStepIndex(m.parts) === -1 ? (
-										<PhaseDivider key={`teach-${m.id || `m-${mi}`}`} phase="teach" />
-									) : null}
-									{m.role === "user" ? (
-										/* THE DOCUMENT ROW (owner round, 2026-10-05): no right-aligned
-										    bubble — the transcript reads as a document. User text is a
-										    full-width quote block: muted "You" label, muted rail,
-										    FULL-opacity text (learner words are content, not whisper).
-										    Distinguished from user thinking at a glance: thinking is
-										    collapsed + 50% italic; this is upright and present.
-										    User text renders plain — the model's LaTeX pipeline is not
-										    applied to learner-authored text ($ stays $, no surprises).
-										    Rendered WITHOUT the Message wrapper — that is the bubble. */
-											<div
-										data-testid="user-message"
-										data-older-transcript-row={mi < newestTurnFrom ? "" : undefined}
-										/* THE DOCUMENT, ALL-IN (owner rounds two+three, 2026-10-07):
-										    no chat side — the user message is a full-width card-color
-										    BAND, the IDENTICAL geometry as the thinking rows: 5px band
-										    padding, the left gap matches it, the rail fills the 3ch
-										    inset (the band is the authorship mark against the agent's
-										    transparent prose). The "You" label stays — one register
-										    with the thinking labels. */
-										className="my-2 w-full border-l-[calc(3ch-14px)] border-muted-foreground/30 bg-card py-1 pl-[14px] pr-4 font-ui text-xs"
-									>
-												{/* The rail GROUPS (owner round 4, 2026-10-05): the YOU heading
-												    sits INSIDE the rail, same mono-xs register and same 1ch
-												    rail as the thinking rows — one quote geometry. */}
-												<div className="font-medium uppercase tracking-wide text-muted-foreground">You</div>
-												<div className="lh-prose whitespace-pre-wrap text-foreground">
-													<PathText text={m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")} />
-												</div>
-												<SubmittedImages images={m.parts.filter((part) => part.type === "image").map(part => ({ type: "image" as const, data: part.data as string, mimeType: part.mimeType as string }))} />
-											</div>
-									) : (
-									<Message from="assistant" className="max-w-full" data-older-transcript-row={mi < newestTurnFrom ? "" : undefined}>
-									<MessageContent className="w-full">
-											{groupWorkParts(m.parts, mi > 0 && phases[mi] === "teach" && phases[mi - 1] !== "teach" ? teachStepIndex(m.parts) : -1, activeMessageId).map((entry) => {
-												if (entry.type === "work") return <WorkGroup key={entry.key} entry={entry} />;
-												const { part, index: pi } = entry;
-												if (part.pluginProblem) return <ProblemCard key={pi} part={{ ...part, state: part.state ?? "input-available", toolCallId: part.toolCallId ?? "" }} />;
-												if (part.pluginQuestion) return <PluginQuestionPart key={pi} part={part} chatId={chatId} />;
-												const isLastPart = mi === messages.length - 1 && pi === m.parts.length - 1;
-												// The step boundary where teaching begins (round 8): when
-												// the teach flip happens in a LATER step, its PhaseDivider
-												// replaces this boundary's plain hairline.
-												const teachBoundary =
-													m.role === "assistant" &&
-													mi > 0 &&
-													phases[mi] === "teach" &&
-													phases[mi - 1] !== "teach" &&
-													teachStepIndex(m.parts) === pi;
-												// A failed tool is a visible boundary. Show its reason;
-												// failure alone is not evidence that a retry is running.
-												if (
-													part.state === "output-error" &&
-													part.type.startsWith("tool-")
-												) {
-													return (
-														<div key={entry.key} data-testid="tool-error" role="alert" className="my-2 whitespace-pre-wrap break-words border-l-2 border-destructive/50 pl-3 text-sm text-destructive">
-															<p>{part.type === "tool-probe_done" ? "The assessment could not be completed." : "The tool could not complete this action."}</p>
-<details className="mt-1 text-xs text-muted-foreground"><summary className="cursor-pointer">Details</summary>{part.type.slice(5)}: {part.errorText || "The tool call failed."}</details>
-														</div>
-													);
-												}
-												switch (part.type) {
-													case "text": {
-														const sourceId = textPartMessageId(part.id);
-														const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
-														return (
-															<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
-																<MessageResponse>{part.text}</MessageResponse>
-															</div>
-														);
-													}
-													case "step-start":
-														return <Fragment key={`step-${pi}`}>
-															{renderSideEntry(sideEntries.get(m.id)?.get(pi))}
-															{teachBoundary ? <PhaseDivider phase="teach" /> : pi > 0 ? <Separator className="my-3" /> : null}
-														</Fragment>;
-													case "data-plan-block":
-														// The plan in the chat (wave 4): a frozen snapshot
-														// block — rendered as carried, never re-derived.
-														return (
-															<PlanBlock
-																key={pi}
-																data={part.data as PlanBlockData}
-																onOpen={() => setPlanOpen(true)}
-															/>
-														);
-													case "tool-quiz":
-													case "tool-probe":
-													case "tool-ask_user_question":
-													case "tool-explain":
-													case "tool-recall": {
-														const malformed = !busy && malformedQuestions.find(call => call.messageId === part.sourceMessageId && call.contentIndex === part.sourceContentIndex && call.toolCallId === part.toolCallId);
-														if (malformed) return <MalformedQuestion key={pi} disabled={!!pending || compacting}
-															reason={pending ? "Answer or discard the remaining question first." : undefined}
-															onRetry={() => {
-																draftRef.current = null;
-																void send({ type: "retry-question", messageId: malformed.messageId, contentIndex: malformed.contentIndex, toolCallId: malformed.toolCallId });
-															}} />;
-														// Pending/streaming questions live in the dock, not the
-														// transcript; answered ones render as graded records.
-														if (part.state === "output-available") {
-															return (
-																<AnsweredCard key={pi} answer={part.output as QuestionAnswerData} input={part.input} toolCallId={part.toolCallId} />
-															);
-														}
-														return null;
-													}
-													default: {
-														// Built-in presentation stays authoritative; plugin renderers
-														// extend only the generic native-tool fallback slot.
-														if (part.type.startsWith("tool-")) return <ToolPartRenderer key={pi} part={part} />;
-														return null;
-													}
-												}
-											})}
-										</MessageContent>
-										{m.role === "assistant" && renderSideEntry(sideEntries.get(m.id)?.get(m.parts.length))}
-									</Message>
-									)}
-								</Fragment>
-							);
+								const isLastRow = mi === messages.length - 1;
+								const rowKey = m.role === "user" && (isSubagentSteer(m) || m.parts.some((p) => p.type === "data-probe-handoff") || (m.parts.length > 0 && m.parts.every((p) => p.type.startsWith("data-"))))
+									? (m.id || `m-${mi}`)
+									: m.role === "assistant" ? `assistant-${mi}` : m.id || `m-${mi}`;
+								const subPart = m.role === "user" ? m.parts.find((p) => p.type === "data-plugin-problem-submission") : undefined;
+								const submitted = subPart ? readPluginProblemSubmission(subPart.data) : null;
+								const problemSnapshot = submitted ? pluginProblemById(nativeMessages, submitted.problemId) : null;
+								const rowActiveId = isLastRow && m.role === "assistant" ? activeMessageId : null;
+								const rowMalformed = !busy && malformedQuestions.length > 0 ? malformedQuestions : emptyMalformedRef.current;
+								return (
+									<TranscriptRow
+										key={rowKey}
+										m={m}
+										mi={mi}
+										chatId={chatId}
+										isOlderRow={mi < newestTurnFrom}
+										phase={phases[mi]}
+										prevPhase={mi > 0 ? phases[mi - 1] : sessionStartPhase}
+										activeMessageId={rowActiveId}
+										sourceTextParts={sourceTextParts}
+										sideEntryMap={sideEntries.get(m.id)}
+										renderSideEntry={renderSideEntryStable}
+										problemSnapshot={problemSnapshot}
+										busy={busy}
+										compacting={compacting}
+										hasPending={!!pending}
+										malformedQuestions={rowMalformed}
+										onOpenPlan={handleOpenPlan}
+										onRetryMalformed={handleRetryMalformed}
+									/>
+								);
 							})}
 
 							{/* THE placeholder, ACTION-gated (owner, optimistic round

@@ -77,7 +77,7 @@ const OTHER_PLACEHOLDER = "Type your own answer…";
 // list ends in 8px) and whatever follows — 8+6 above, 14 below (owner).
 const QC_CONFIDENCE_ROW = "flex items-center gap-3";
 const QC_CONFIDENCE_LABEL = "shrink-0 text-xs font-medium uppercase tracking-wide";
-const QC_CONFIDENCE_TRACK = "relative h-4 min-w-0 flex-1";
+const QC_CONFIDENCE_TRACK = "relative h-9 md:h-4 min-w-0 flex-1";
 // Balanced gaps (owner): the rail is inset 8px in its track on both ends,
 // so label→rail is the 12px flex gap + 8px. The slot fits "100%" exactly,
 // so rail→"100%" is that same 12px + 8px; shorter values sit CENTERED in
@@ -882,11 +882,11 @@ function QuestionDockForm({
 							}}
 							style={{ color: CONFIDENCE_COLORS[confIdx] }}
 							className={cn(
-								"absolute inset-0 h-4 w-full cursor-pointer appearance-none bg-transparent outline-none",
-								"[&::-webkit-slider-runnable-track]:h-4 [&::-webkit-slider-runnable-track]:bg-transparent",
-								"[&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-current",
-								"[&::-moz-range-track]:h-4 [&::-moz-range-track]:bg-transparent",
-								"[&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-current",
+								"absolute inset-0 h-9 md:h-4 w-full cursor-pointer appearance-none bg-transparent outline-none",
+								"[&::-webkit-slider-runnable-track]:h-9 md:[&::-webkit-slider-runnable-track]:h-4 [&::-webkit-slider-runnable-track]:bg-transparent",
+								"[&::-webkit-slider-thumb]:size-6 [&::-webkit-slider-thumb]:mt-1.5 md:[&::-webkit-slider-thumb]:mt-0 md:[&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-current",
+								"[&::-moz-range-track]:h-9 md:[&::-moz-range-track]:h-4 [&::-moz-range-track]:bg-transparent",
+								"[&::-moz-range-thumb]:size-6 md:[&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-current",
 							)}
 						/>
 					</div>
@@ -1215,9 +1215,15 @@ function QuestionDockForm({
 
  <div className="flex items-center justify-between gap-2 p-1">
 						{(qd.options.length > 6 || qd.question.length > 240) && qd.mode !== "text" && <span role="status" className="pl-1.5 text-xs text-muted-foreground">{sel.selected.size + Number(sel.otherSelected)} selected</span>}
-<span aria-hidden className="question-submit-hint pl-1.5 text-xs text-muted-foreground">
-								{compactionRunning ? "compacting session…" : "↵ submits · ⇧↵ newline"}
-						</span>
+{compactionRunning ? (
+							<span aria-hidden className="question-submit-hint pl-1.5 text-xs text-muted-foreground">
+								compacting session…
+							</span>
+						) : (
+							<span aria-hidden className="question-submit-hint hidden pl-1.5 text-xs text-muted-foreground md:inline [@media(hover:none)_and_(pointer:coarse)]:hidden">
+								↵ submits · ⇧↵ newline
+							</span>
+						)}
 						<Button
 							type="submit"
 							disabled={!canSubmit || compactionRunning || preparing}

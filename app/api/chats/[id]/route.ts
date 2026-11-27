@@ -1,27 +1,28 @@
 import { compactionInFlight, deleteChatSession, getChat, isTurnRunning, sessionCoverage, sessionCost, stores, turnFailure, type ChatDeleteMode, pluginQuestionAvailabilityOf, reconcilePluginQuestionCompatibility, type QuestionTypeResolver, getPluginQuestionTypeResolver, getPluginHost, pluginProblemAvailabilityOf, type ProblemTypeResolver } from "@/src/server";
-import { pendingPluginQuestionOf, activeProblemOf, sanitizeMessagesForClient } from "@/src/core";
+import { pendingPluginQuestionOf, activeProblemOf, sanitizeMessagesForClient, sliceChatTailForClient } from "@/src/core";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
-	const view = new URL(req.url).searchParams.get("view");
+	const searchParams = new URL(req.url).searchParams;
+	const view = searchParams.get("view");
 	if (view === "stats") {
 		// Stats refreshes don't adopt history or need plugin availability.
-		const chat = getChat(id);
+		const chat = stores.chatStore.getChat(id);
 		return chat ? Response.json({ turns: chat.turns, pricing: sessionCost(chat) })
 			: Response.json({ error: "Not found" }, { status: 404 });
 	}
 	if (view === "coverage") {
-		const chat = getChat(id);
-		return chat ? Response.json({ coverage: sessionCoverage(id) })
+		const chat = stores.chatStore.getChat(id);
+		return chat ? Response.json({ coverage: sessionCoverage(id, chat) })
 			: Response.json({ error: "Not found" }, { status: 404 });
 	}
 	if (view === "settings") {
-		const chat = getChat(id);
+		const chat = stores.chatStore.getChat(id);
 		return chat ? Response.json({ settings: chat.settings })
 			: Response.json({ error: "Not found" }, { status: 404 });
 	}
 	if (view === "meta") {
-		const chat = getChat(id);
+		const chat = stores.chatStore.getChat(id);
 		return chat
 			? Response.json({
 					messageCount: chat.messages.length,
@@ -32,37 +33,41 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 				})
 			: Response.json({ error: "Not found" }, { status: 404 });
 	}
-	await reconcilePluginQuestionCompatibility(stores.chatStore, id);
-	let chat = getChat(id);
+	let chat = stores.chatStore.getChat(id);
+	if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
+	chat = (await reconcilePluginQuestionCompatibility(stores.chatStore, id, chat)) ?? null;
 	if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
 	let questionResolver: QuestionTypeResolver | undefined;
 	if (pendingPluginQuestionOf(chat.messages)) {
 		try { questionResolver = await getPluginQuestionTypeResolver(); } catch { /* unavailable fallback */ }
 		// No awaited plugin startup may separate this read from the response projection.
-		chat = getChat(id);
+		chat = stores.chatStore.getChat(id);
 		if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
 	}
 	let problemResolver: ProblemTypeResolver | undefined;
 	if (activeProblemOf(chat.messages)?.pluginProblem) {
 		try { problemResolver = (await getPluginHost()).resolveProblemType; } catch { /* unavailable fallback */ }
-		chat = getChat(id);
+		chat = stores.chatStore.getChat(id);
 		if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
 	}
-	// turnInFlight lets a returning client re-attach to a running turn
-	// (chat-handler write-ahead + registry — see src/server/turn-liveness.ts).
-	// coverage (extraction-UX redesign, 2026-09-24): the chat view's ring
-	// meter + sidebar block — THE coverage surface (the all-sessions GET
-	// route died with the redesign; the Extract POST stays). getChat
-	// already 404'd, so the block exists.
-	// Wave D (owner-approved 2026-09-26): the record's messages are native
-	// agent history, served VERBATIM — the client derives its view
-	// (core/view.ts projectView). turnInFlight lets a returning client
-	// re-attach to a running turn; coverage is the chat view's ring meter.
+	const tailParam = searchParams.get("tail");
+	const tailParsed = tailParam !== null ? Number.parseInt(tailParam, 10) : NaN;
+	const tailSlice = Number.isFinite(tailParsed) && tailParsed > 0
+		? sliceChatTailForClient(chat.messages, Math.min(tailParsed, 2000))
+		: null;
+	const responseMessages = sanitizeMessagesForClient(tailSlice ? tailSlice.messages : chat.messages);
 	// Snapshot bytes have a session-scoped endpoint; do not resend the whole image pool on every poll.
 	const { imageSnapshots: _imageSnapshots, ...record } = chat;
 	return Response.json({
 		...record,
-		messages: sanitizeMessagesForClient(chat.messages),
+		messages: responseMessages,
+		...(tailSlice
+			? {
+					totalMessages: tailSlice.totalMessages,
+					truncated: tailSlice.truncated,
+					initialPhase: tailSlice.startPhase,
+				}
+			: {}),
 		pluginQuestionAvailability: pluginQuestionAvailabilityOf(chat, questionResolver),
 		pluginProblemAvailability: pluginProblemAvailabilityOf(chat, problemResolver),
 		pricing: sessionCost(chat),
@@ -70,7 +75,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 		// Also reaches idle views that missed the failing turn's stream.
 		turnError: turnFailure(id),
 		compacting: compactionInFlight(id),
-		coverage: sessionCoverage(id),
+		coverage: sessionCoverage(id, chat),
 	});
 }
 

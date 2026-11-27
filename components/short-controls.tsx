@@ -1,19 +1,16 @@
 "use client";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MenuShell } from "@/components/menu-shell";
+import { useIsShortViewport } from "@/components/visual-viewport";
 
 /** Keep the reading area useful when a keyboard or short window reduces height. */
 export function ShortControls({ children, extra }: { children: ReactNode; extra?: ReactNode }) {
- const [short, setShort] = useState(false);
+ const short = useIsShortViewport();
  const [open, setOpen] = useState(false);
  const anchor = useRef<HTMLDivElement>(null);
  useEffect(() => {
-  if (!window.matchMedia) return;
-  const media = window.matchMedia("(max-height: 500px)");
-  const update = () => { setShort(media.matches); setOpen(false); };
-  update(); media.addEventListener("change", update);
-  return () => media.removeEventListener("change", update);
- }, []);
+  setOpen(false);
+ }, [short]);
  useEffect(() => {
   if (!open) return;
   const dismiss = (event: PointerEvent) => {

@@ -225,17 +225,23 @@ export function pluginQuestionCompatibilityAppends(record: { messages: LhMessage
 }
 
 /** Re-read after startup awaits; never write over an active native turn. No migration or wake. */
-export async function reconcilePluginQuestionCompatibility(chatStore: ChatStore, chatId: string): Promise<void> {
-	if (isTurnRunning(chatId)) return;
-	const initial = chatStore.getChat(chatId);
-	if (!initial || (!pendingPluginQuestionOf(initial.messages) && !unreadablePending(initial.messages))) return;
+export async function reconcilePluginQuestionCompatibility(
+	chatStore: ChatStore,
+	chatId: string,
+	initialRecord?: import("../core/contracts.ts").ChatRecord | null,
+): Promise<import("../core/contracts.ts").ChatRecord | null> {
+	const initial = initialRecord !== undefined ? initialRecord : chatStore.getChat(chatId);
+	if (isTurnRunning(chatId)) return initial;
+	if (!initial || (!pendingPluginQuestionOf(initial.messages) && !unreadablePending(initial.messages))) return initial;
 	let host: Awaited<ReturnType<typeof getPluginHost>>;
-	try { host = await getPluginHost(); } catch { return; } // unavailable keeps the saved question pending
-	if (isTurnRunning(chatId)) return;
+	try { host = await getPluginHost(); } catch { return initial; } // unavailable keeps the saved question pending
+	if (isTurnRunning(chatId)) return initial;
 	const record = chatStore.getChat(chatId);
-	if (!record) return;
+	if (!record) return null;
 	const appends = pluginQuestionCompatibilityAppends(record, (pluginId, typeId, version) => host.resolveQuestionType(pluginId, typeId, version));
-	if (!appends.length) return;
-	chatStore.saveMessages(chatId, [...record.messages, ...appends]);
+	if (!appends.length) return record;
+	const updated = [...record.messages, ...appends];
+	chatStore.saveMessages(chatId, updated);
 	emit("record-changed", { chatId });
+	return { ...record, messages: updated };
 }

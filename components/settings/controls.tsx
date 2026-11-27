@@ -156,7 +156,7 @@ export function Toggle({
 			data-testid={`toggle-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
 			onClick={() => onChange(!checked)}
 			className={cn(
-				"relative h-4.5 w-8 shrink-0 rounded-full border border-border transition-colors",
+				"relative h-4.5 w-8 shrink-0 rounded-full border border-border transition-colors before:absolute before:-inset-2.5 md:before:inset-0",
 				// Owner (2026-09-20): on is a gray track with a WHITE disc (a full-white
 				// track was too loud); off stays the muted track. Theme wave: the on
 				// track is the theme accent (Default's accent IS that gray).
@@ -213,7 +213,7 @@ export function ThinSelect({
 			disabled={disabled}
 			onChange={(e) => onChange(e.target.value)}
 			className={cn(
-				"h-8 rounded-sm border border-border bg-background px-1.5 font-ui text-xs text-foreground outline-none",
+				"h-10 md:h-8 rounded-sm border border-border bg-background px-1.5 font-ui text-base md:text-xs text-foreground outline-none",
 				disabled && "cursor-not-allowed",
 			)}
 		>
@@ -342,7 +342,7 @@ export function CommitInput({
 					e.currentTarget.blur();
 				}
 			}}
-			className="h-8 w-40 rounded-sm border border-border bg-background px-2 font-ui text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+			className="h-10 md:h-8 w-40 rounded-sm border border-border bg-background px-2 font-ui text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
 		/>
 	);
 }

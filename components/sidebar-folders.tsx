@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from "react";
-import { ChevronRightIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
+import { ChevronRightIcon, FolderIcon, FolderOpenIcon, MoreHorizontalIcon } from "lucide-react";
 import { canMoveFolder, type OrganizationAction, type SourceFolder, type SourceOrganization } from "@/src/core";
 import { EditableSourceName, SOURCE_DRAG_TYPE, SourceDragRow } from "@/components/source-folder-tree";
 import { cn } from "@/lib/utils";
@@ -124,15 +124,29 @@ export function SidebarFolderRow({ folder, depth, open, dropActive, renaming, on
 						onSave={async (name) => { if (name !== folder.name) await onRename(name); onRenameDone(); }} />
 				</div>
 			) : (
-				<button type="button" data-testid={`sidebar-folder-${folder.id}`} aria-expanded={open}
-					aria-label={`${open ? "Collapse" : "Expand"} folder ${folder.name}`}
-					onClick={onToggle} onContextMenu={onContextMenu}
-					className={cn("flex w-full items-center gap-1 pr-3 text-left hover:bg-accent", compact ? SIDEBAR_COMPACT_ROW : "py-1.5")}
-					style={{ paddingLeft: sidebarFolderBox(depth).paddingLeft }}>
-					<ChevronRightIcon aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground/70", open && "rotate-90")} />
-					<Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-					<span className={cn("min-w-0 flex-1 truncate", sidebarNameFont(compact))}>{folder.name}</span>
-				</button>
+				<div className="group/folder relative flex w-full items-center">
+					<button type="button" data-testid={`sidebar-folder-${folder.id}`} aria-expanded={open}
+						aria-label={`${open ? "Collapse" : "Expand"} folder ${folder.name}`}
+						onClick={onToggle} onContextMenu={onContextMenu}
+						className={cn("flex min-w-0 flex-1 items-center gap-1 pr-10 md:pr-3 text-left hover:bg-accent", compact ? SIDEBAR_COMPACT_ROW : "py-1.5")}
+						style={{ paddingLeft: sidebarFolderBox(depth).paddingLeft }}>
+						<ChevronRightIcon aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground/70", open && "rotate-90")} />
+						<Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+						<span className={cn("min-w-0 flex-1 truncate", sidebarNameFont(compact))}>{folder.name}</span>
+					</button>
+					<button
+						type="button"
+						data-testid={`sidebar-folder-actions-${folder.id}`}
+						aria-label={`Folder actions for ${folder.name}`}
+						onClick={(e) => {
+							e.stopPropagation();
+							onContextMenu(e);
+						}}
+						className="absolute right-1 top-1/2 flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:opacity-100 md:size-6 md:opacity-0 md:group-hover/folder:opacity-100 md:group-focus-within/folder:opacity-100"
+					>
+						<MoreHorizontalIcon aria-hidden="true" className="size-4 md:size-3.5" />
+					</button>
+				</div>
 			)}
 		</SourceDragRow>
 	);

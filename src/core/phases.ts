@@ -47,8 +47,8 @@ function isTeachQuestionPart(part: PhaseMessage["parts"][number]): boolean {
 }
 
 /** The phase at `upToIndex` (inclusive; default: the last message). */
-export function phaseAt3(messages: readonly PhaseMessage[], upToIndex?: number): Phase3 {
-	let phase: Phase3 = "probe";
+export function phaseAt3(messages: readonly PhaseMessage[], upToIndex?: number, startPhase: Phase3 = "probe"): Phase3 {
+	let phase: Phase3 = startPhase;
 	const last = Math.min(upToIndex ?? messages.length - 1, messages.length - 1);
 	for (let i = 0; i <= last; i++) {
 		phase = advance(phase, messages[i]?.parts);
@@ -126,9 +126,9 @@ export function teachStepIndex(
  * 0..i each time (quadratic); this is the same derivation, linear.
  * out[i] === phaseAt3(messages, i) for every i.
  */
-export function phaseTimeline(messages: readonly PhaseMessage[]): Phase3[] {
+export function phaseTimeline(messages: readonly PhaseMessage[], startPhase: Phase3 = "probe"): Phase3[] {
 	const out: Phase3[] = [];
-	let phase: Phase3 = "probe";
+	let phase: Phase3 = startPhase;
 	for (let i = 0; i < messages.length; i++) {
 		phase = advance(phase, messages[i]?.parts);
 		out.push(phase);
@@ -138,7 +138,8 @@ export function phaseTimeline(messages: readonly PhaseMessage[]): Phase3[] {
 
 // ─── the native fold (Wave D: record-side phase over LhMessage[]) ───────────
 
-import { probeDoneResultIds, type LhMessage } from "./native-messages.ts";
+import { activeProblemOccurrenceOf, pendingQuestionOf, probeDoneResultIds, type LhMessage } from "./native-messages.ts";
+import { pendingPluginQuestionOf } from "./native-messages.ts";
 
 /** The phase at `upToIndex` (inclusive; default: the last message) of a
  *  NATIVE record. probe→plan advances at the probe_done call's clean
@@ -176,4 +177,86 @@ export function phaseAt3Lh(messages: readonly LhMessage[], upToIndex?: number): 
 		}
 	}
 	return phase;
+}
+
+/** Default number of projected view groups shipped on initial SSR and tail GETs. */
+export const CLIENT_DEFAULT_TAIL_GROUPS = 30;
+
+export interface ChatTailSlice {
+	messages: LhMessage[];
+	totalMessages: number;
+	omittedMessages: number;
+	omittedViewGroups: number;
+	startPhase: Phase3;
+	truncated: boolean;
+}
+
+/**
+ * Slice a native message history to the last `maxViewGroups` projected view
+ * groups at a clean group boundary (never splitting an assistant group from
+ * its toolResults, plan-blocks, or side-question markers, and always keeping
+ * any active problem or pending question posing message inside the tail).
+ */
+export function sliceChatTailForClient(messages: readonly LhMessage[], maxViewGroups: number): ChatTailSlice {
+	const total = messages.length;
+	if (total === 0 || !Number.isFinite(maxViewGroups) || maxViewGroups <= 0) {
+		return { messages: [...messages], totalMessages: total, omittedMessages: 0, omittedViewGroups: 0, startPhase: "probe", truncated: false };
+	}
+	const groupStarts: number[] = [];
+	let inAssistantGroup = false;
+	for (let i = 0; i < total; i++) {
+		const m = messages[i]!;
+		if (m.role === "assistant") {
+			if (!inAssistantGroup) {
+				groupStarts.push(i);
+				inAssistantGroup = true;
+			}
+		} else if (m.role === "toolResult") {
+			if (groupStarts.length === 0) groupStarts.push(i);
+		} else if (
+			m.role === "custom" &&
+			(m.customType === "plan-block" || m.customType === "side-question" || m.customType === "side-question-told")
+		) {
+			if (groupStarts.length === 0) groupStarts.push(i);
+		} else {
+			inAssistantGroup = false;
+			groupStarts.push(i);
+		}
+	}
+	if (groupStarts.length <= maxViewGroups) {
+		return { messages: [...messages], totalMessages: total, omittedMessages: 0, omittedViewGroups: 0, startPhase: "probe", truncated: false };
+	}
+	let targetGroup = groupStarts.length - maxViewGroups;
+	let cutIndex = groupStarts[targetGroup]!;
+
+	// Never cut off an active problem or pending question's posing message.
+	const mustIncludeIds: string[] = [];
+	const activeProb = activeProblemOccurrenceOf(messages);
+	if (activeProb?.messageId) mustIncludeIds.push(activeProb.messageId);
+	const pendingQ = pendingQuestionOf(messages);
+	if (pendingQ?.messageId) mustIncludeIds.push(pendingQ.messageId);
+	const pendingPluginQ = pendingPluginQuestionOf(messages);
+	if (pendingPluginQ?.occurrence.messageId) mustIncludeIds.push(pendingPluginQ.occurrence.messageId);
+	for (const reqId of mustIncludeIds) {
+		const idx = messages.findIndex((m) => m.id === reqId);
+		if (idx >= 0 && idx < cutIndex) {
+			// Walk targetGroup back to the group containing idx
+			while (targetGroup > 0 && groupStarts[targetGroup]! > idx) {
+				targetGroup--;
+			}
+			cutIndex = groupStarts[targetGroup]!;
+		}
+	}
+
+	if (cutIndex <= 0) {
+		return { messages: [...messages], totalMessages: total, omittedMessages: 0, omittedViewGroups: 0, startPhase: "probe", truncated: false };
+	}
+	return {
+		messages: messages.slice(cutIndex),
+		totalMessages: total,
+		omittedMessages: cutIndex,
+		omittedViewGroups: targetGroup,
+		startPhase: phaseAt3Lh(messages, cutIndex - 1),
+		truncated: true,
+	};
 }
