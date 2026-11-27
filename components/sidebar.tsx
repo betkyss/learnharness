@@ -1308,7 +1308,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 			<InteractionLayersProvider><SettingsDialogProvider>
 				{overlay && open && <button type="button" tabIndex={-1} aria-label="Close sidebar backdrop" onClick={close} className="fixed inset-0 z-40 bg-background/70" />}
 				<SessionsSidebar />
-				<div inert={overlay && open} className="relative isolate min-w-0 flex-1"><FilePathDropZone className="h-full" onContentRoot={setContentRoot}>{children}</FilePathDropZone></div>
+				<div inert={overlay && open} className="relative isolate h-full min-w-0 flex-1"><FilePathDropZone className="h-full" onContentRoot={setContentRoot}>{children}</FilePathDropZone></div>
 				{/* The single document-level keydown listener (keyboard wave A) —
 				    after the content in the tree, but it's window-level so order only
 				    matters for the events it dispatches, never for DOM priority. */}

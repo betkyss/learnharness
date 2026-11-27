@@ -397,12 +397,24 @@ body {
 	min-width: 0;
 	max-width: 100%;
 }
-/* iOS Standalone PWA (viewport-fit=cover): 100dvh subtracts safe-area-inset-top
-   (~47px on notched iPhones), leaving a dead strip at the bottom. 100vh fills
-   the real WebView height while keyboard-open overrides via --vvh. */
+/* iOS Standalone PWA (viewport-fit=cover): 100dvh under-reports by
+   safe-area-inset-top (~47px) while 100vh over-reports by ~47px on iOS 26
+   (clipping bottom docks and letting window.scrollY slide TopBar under
+   the status bar). Pinning .lh-app-root with position: fixed; inset: 0
+   matches the exact physical WebView bounds (like the overlay sidebar)
+   while keyboard-open overrides top/height via --vv-top and --vvh. */
 @media (display-mode: standalone) {
-	:root {
-		--lh-app-height: 100vh;
+	html:not(.lh-electron),
+	html:not(.lh-electron) body {
+		height: 100%;
+		overflow: hidden;
+	}
+	html:not(.lh-electron) .lh-app-root {
+		position: fixed;
+		inset: 0;
+		height: auto;
+		overflow: hidden;
+		--lh-app-height: 100%;
 	}
 }
 [data-session-surface],
@@ -911,6 +923,7 @@ html[data-keyboard-open="true"] .lh-app-root {
 	position: fixed;
 	inset-inline: 0;
 	top: var(--vv-top, 0px);
+	bottom: auto;
 	height: var(--vvh, var(--lh-app-height, 100dvh));
 	overflow: hidden;
 }
@@ -993,6 +1006,10 @@ html:not(.lh-electron) .lh-floating-header {
 	html:not(.lh-electron) .lh-dock-block,
 	html:not(.lh-electron) [data-home-dock] {
 		padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+	}
+	html[data-keyboard-open="true"]:not(.lh-electron) .lh-dock-block,
+	html[data-keyboard-open="true"]:not(.lh-electron) [data-home-dock] {
+		padding-bottom: 0.5rem;
 	}
 	html:not(.lh-electron) .lh-mobile-fs-header {
 		padding-top: env(safe-area-inset-top, 0px);

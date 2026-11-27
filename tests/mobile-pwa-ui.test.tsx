@@ -107,10 +107,11 @@ describe("P0-5 & R2 P1-1: visualViewport metrics, iOS standalone --vvh policy, a
 		assert.equal(root.dataset.shortViewport, undefined);
 	});
 
-	it("defines standalone --lh-app-height: 100vh and floating-header safe-area rules in globals.css + new-session.tsx", () => {
+	it("pins standalone .lh-app-root to fixed inset-0 with --lh-app-height: 100% and floating-header safe-area rules in globals.css + new-session.tsx", () => {
 		const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 		assert.ok(css.includes("--lh-app-height: 100dvh"), "globals.css must declare default --lh-app-height: 100dvh");
-		assert.match(css, /@media\s*\(display-mode:\s*standalone\)[\s\S]*--lh-app-height:\s*100vh/, "standalone PWA must override --lh-app-height to 100vh");
+		assert.match(css, /@media\s*\(display-mode:\s*standalone\)[\s\S]*\.lh-app-root\s*\{[\s\S]*position:\s*fixed;[\s\S]*inset:\s*0;[\s\S]*--lh-app-height:\s*100%/, "standalone PWA must pin .lh-app-root to fixed inset-0 with --lh-app-height: 100%");
+		assert.match(css, /html\[data-keyboard-open="true"\]\s*\.lh-app-root\s*\{[\s\S]*bottom:\s*auto;/, "keyboard-open .lh-app-root must clear bottom: auto so --vvh controls height");
 		assert.ok(css.includes("var(--vvh, var(--lh-app-height, 100dvh))"), "surfaces must fall back through --lh-app-height");
 		assert.ok(css.includes("html:not(.lh-electron) .lh-floating-header"), "floating header safe-area rule must exist for /chat/new");
 
