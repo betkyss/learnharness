@@ -61,12 +61,23 @@ interface ChatCacheEntry {
 	extractions: ExtractionRunUsage[];
 }
 
-const chatSummaryCache = new Map<string, ChatCacheEntry>();
-let cacheHits = 0;
-let cacheMisses = 0;
+const CHAT_CACHE_SYMBOL = Symbol.for("learnharness.chatSummaryCache");
+interface ChatSummaryCacheState {
+	entries: Map<string, ChatCacheEntry>;
+	hits: number;
+	misses: number;
+}
+function getChatSummaryCacheState(): ChatSummaryCacheState {
+	const g = globalThis as typeof globalThis & { [CHAT_CACHE_SYMBOL]?: ChatSummaryCacheState };
+	if (!g[CHAT_CACHE_SYMBOL]) {
+		g[CHAT_CACHE_SYMBOL] = { entries: new Map<string, ChatCacheEntry>(), hits: 0, misses: 0 };
+	}
+	return g[CHAT_CACHE_SYMBOL];
+}
 
 export function chatStoreCacheStats(): { hits: number; misses: number; size: number } {
-	return { hits: cacheHits, misses: cacheMisses, size: chatSummaryCache.size };
+	const state = getChatSummaryCacheState();
+	return { hits: state.hits, misses: state.misses, size: state.entries.size };
 }
 
 function buildCacheEntry(record: ChatRecord, stat: { mtimeMs: number; size: number; ino: number }): ChatCacheEntry {
@@ -103,6 +114,8 @@ function cloneSummary(summary: ChatSummary): ChatSummary {
 }
 
 function readCachedEntries(): ChatCacheEntry[] {
+	const cacheState = getChatSummaryCacheState();
+	const chatSummaryCache = cacheState.entries;
 	try {
 		fs.mkdirSync(PATHS.chats, { recursive: true });
 		const dir = PATHS.chats;
@@ -122,11 +135,11 @@ function readCachedEntries(): ChatCacheEntry[] {
 			}
 			const cached = chatSummaryCache.get(fullPath);
 			if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size && cached.ino === stat.ino) {
-				cacheHits++;
+				cacheState.hits++;
 				entries.push(cached);
 				continue;
 			}
-			cacheMisses++;
+			cacheState.misses++;
 			const record = getChat(f.slice(0, -5));
 			if (!record) {
 				chatSummaryCache.delete(fullPath);
@@ -153,6 +166,7 @@ function readCachedEntries(): ChatCacheEntry[] {
  *  A future-version guard lives on the read side (getChat). */
 function writeChat(record: ChatRecord): void {
 	const file = chatFile(record.id);
+	const chatSummaryCache = getChatSummaryCacheState().entries;
 	const stamped: ChatRecord = { ...record, version: CURRENT_CHAT_VERSION };
 	writeFileAtomicSync(file, JSON.stringify(stamped, null, "\t"), { allowInPlaceFallback: true });
 	try {
@@ -282,7 +296,7 @@ function renameChat(id: string, title: string): ChatRecord {
  *  choreography (core/graph-deletion.ts), not the store's. */
 function deleteChat(id: string): boolean {
 	const file = chatFile(id);
-	chatSummaryCache.delete(file);
+	getChatSummaryCacheState().entries.delete(file);
 	try {
 		fs.unlinkSync(file);
 		removeLeftoverTemps(file);

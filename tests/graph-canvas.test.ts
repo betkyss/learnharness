@@ -495,10 +495,15 @@ describe("mobile graph helpers (P1-3)", () => {
 			shouldRestoreCamera({ k: 1.2, x: 180, y: 400, vw: 390, vh: 844 }, 844, 390),
 			null,
 		);
-		// Minor keyboard/address-bar jitter (<=120px) → keep camera
+		// Minor keyboard/address-bar jitter (<=120px) on mobile → keep camera
 		assert.deepEqual(
 			shouldRestoreCamera({ k: 1.2, x: 180, y: 400, vw: 390, vh: 844 }, 390, 760),
 			{ k: 1.2, x: 180, y: 400 },
+		);
+		// Desktop sidebar toggle (~260px width shift, same landscape desktop) → keep camera
+		assert.deepEqual(
+			shouldRestoreCamera({ k: 1.1, x: 420, y: 310, vw: 1440, vh: 900 }, 1180, 900),
+			{ k: 1.1, x: 420, y: 310 },
 		);
 	});
 
@@ -603,7 +608,7 @@ describe("GraphCanvasRenderer touch pinch, pointercancel, and touch slop", () =>
 		return { canvas, restore };
 	}
 
-	it("second touch pointer cancels active node drag and zooms camera without committing positions", () => {
+	it("second touch pointer cancels active node drag without selecting, committing, or double-zooming over d3-zoom", () => {
 		const { canvas, restore } = makeFakeCanvasEnv();
 		const selects: string[] = [];
 		const commits: unknown[] = [];
@@ -629,11 +634,11 @@ describe("GraphCanvasRenderer touch pinch, pointercancel, and touch slop", () =>
 				colors: { node: "#ffffff", edge: "#888888", label: "#888888", hoverText: "#ffffff", clusterLightness: { ring: 60, label: 78 } },
 				fontFamily: "sans-serif",
 			});
+			const camerasBeforePinch = cameras.length;
 			// Finger 1 presses directly on nodeA
 			canvas.dispatch("pointerdown", { button: 0, isPrimary: true, pointerId: 1, pointerType: "touch", clientX: 100, clientY: 100 });
-			// Finger 2 lands to start a pinch
+			// Finger 2 lands to start a pinch (d3-zoom owns touchstart/touchmove zoom natively)
 			canvas.dispatch("pointerdown", { button: 0, isPrimary: false, pointerId: 2, pointerType: "touch", clientX: 200, clientY: 100 });
-			// Spread fingers apart (distance 100 → 200 = 2x zoom)
 			canvas.dispatch("pointermove", { button: 0, isPrimary: false, pointerId: 2, pointerType: "touch", clientX: 300, clientY: 100 });
 			// Lift both fingers
 			canvas.dispatch("pointerup", { button: 0, isPrimary: false, pointerId: 2, pointerType: "touch", clientX: 300, clientY: 100 });
@@ -643,8 +648,7 @@ describe("GraphCanvasRenderer touch pinch, pointercancel, and touch slop", () =>
 			assert.equal(commits.length, 0, "pinch must not commit mutated node positions");
 			assert.equal((nodeA as { fx?: number | null }).fx ?? null, null, "nodeA fx must be unpinned");
 			assert.equal((nodeA as { fy?: number | null }).fy ?? null, null, "nodeA fy must be unpinned");
-			const lastCam = cameras.at(-1);
-			assert.ok(lastCam && lastCam.k > 1.5, `expected pinch zoom k > 1.5, got ${lastCam?.k}`);
+			assert.equal(cameras.length, camerasBeforePinch, "PointerEvent path must not double-apply zoom over d3-zoom");
 			renderer.destroy();
 		} finally {
 			restore();

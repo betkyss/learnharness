@@ -93,20 +93,27 @@ export function StatsBar({
 	const limits = useMemo(() => (catalog ? catalogLimits(catalog) : undefined), [catalog]);
 	const limit = contextLimitForModel(selectedModel, limits, cliContextWindow);
 	const contextLabel = formatContextMeasurement(contextTokens, limit);
-	const turnCount = turns.length > 0 ? turns.length : (pricing?.turnCount ?? 0);
+	const hasFreshTurns = turns.length > 0 && (pricing?.turnCount === undefined || turns.length === pricing.turnCount);
+	const turnCount = hasFreshTurns ? turns.length : (pricing?.turnCount ?? turns.length);
 	const cacheHitRate = useMemo(
-		() => (turns.length > 0 ? sessionCacheHitRate({ turns }) : (pricing?.cacheHitRate ?? null)),
-		[turns, pricing?.cacheHitRate],
+		() => (hasFreshTurns ? sessionCacheHitRate({ turns }) : (pricing?.cacheHitRate ?? null)),
+		[hasFreshTurns, turns, pricing?.cacheHitRate],
 	);
 	const { cost = 0, unpriced = turnCount, subscription = 0 } = pricing ?? {};
 	// Honest cost: show dollars only when at least one turn priced;
 	// otherwise "—" (never a fake $0.0000).
 	const pricedCount = Math.max(0, turnCount - unpriced - subscription);
 	const providers = pricing?.subscriptionProviders ?? subscriptionLabels(turns.map((turn) => turn.model));
-	const cliBilled = turns.length > 0
+	const cliBilled = hasFreshTurns
 		? turns.some((turn) => turn.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`))
 		: Boolean(pricing?.cliBilled);
 	const costLabel = planCostLabel(pricedCount > 0 ? cost : null, cliBilled ? [...providers, "CLI"] : providers);
+
+	useEffect(() => {
+		if (open && onOpenDetail && pricing?.turnCount !== undefined && turns.length !== pricing.turnCount) {
+			onOpenDetail();
+		}
+	}, [open, onOpenDetail, pricing?.turnCount, turns.length]);
 
 	return (
 		<ShortControls extra={shortControls}><div

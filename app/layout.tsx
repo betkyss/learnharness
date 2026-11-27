@@ -18,6 +18,7 @@ const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" }
 const prose = Source_Sans_3({ subsets: ["latin"], variable: "--font-sans3" });
 
 export async function generateViewport(): Promise<Viewport> {
+	await connection();
 	const { appearance, theme } = readThemeBoot();
 	const bg = effectiveColors(theme, appearance).background;
 	return {

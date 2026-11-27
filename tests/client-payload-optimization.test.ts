@@ -329,11 +329,23 @@ describe("GET /api/chats/[id] lightweight views and signature stripping", () => 
 		}
 	});
 
-	it("R2 P2-4: ?tail=N omits extractions and raw turns (sending aggregated pricing) and compacts historical read/grep details while leaving full GET & disk intact", async () => {
+	it("R2 P2-4: ?tail=N omits extractions and raw turns (sending aggregated pricing) and compacts historical read/grep details only when tail-truncated, leaving short chats, full GET, and disk intact", async () => {
 		const record = chatStore.createChat("tail payload diet fixture");
 		const bigReadText = "LINE ".repeat(3000); // ~15 KB
 		const latestReadText = "LATEST ".repeat(1000); // ~7 KB in current turn
 		const msgs: LhMessage[] = [
+			{ id: "m_u_pre", role: "user", content: "Very old turn", timestamp: 50 },
+			{
+				id: "m_a_pre",
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				timestamp: 60,
+				stopReason: "stop",
+				usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 20, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				content: [{ type: "text", text: "Older answer" }],
+			},
 			{ id: "m_u0", role: "user", content: "Old turn", timestamp: 100 },
 			{
 				id: "m_a0",
@@ -397,17 +409,20 @@ describe("GET /api/chats/[id] lightweight views and signature stripping", () => 
 			},
 		});
 
+		// Truncated ?tail=4 compacts oversized historical read details
 		const tailRes = await GET(
-			new Request(`http://localhost/api/chats/${record.id}?tail=12`),
+			new Request(`http://localhost/api/chats/${record.id}?tail=4`),
 			{ params: Promise.resolve({ id: record.id }) },
 		);
 		assert.equal(tailRes.status, 200);
 		const tailBody = (await tailRes.json()) as {
 			messages: LhMessage[];
+			truncated?: boolean;
 			extractions?: unknown;
 			turns?: unknown;
 			pricing?: { subscription?: number; turnCount?: number; cacheHitRate?: number | null; turnCosts?: Record<string, unknown> };
 		};
+		assert.equal(tailBody.truncated, true);
 		assert.equal("extractions" in tailBody, false, "?tail= must omit unused extractions");
 		assert.equal("turns" in tailBody, false, "?tail= must omit verbose turns array");
 		assert.equal(tailBody.pricing?.turnCount, 1);
@@ -417,9 +432,19 @@ describe("GET /api/chats/[id] lightweight views and signature stripping", () => 
 
 		const oldRead = tailBody.messages.find((m) => m.id === "m_tr0") as { details?: { text?: string } };
 		const newRead = tailBody.messages.find((m) => m.id === "m_tr1") as { details?: { text?: string } };
-		assert.ok((oldRead.details?.text?.length ?? 0) < 2500, `historical read details should be compacted in ?tail=, got ${oldRead.details?.text?.length}`);
+		assert.ok((oldRead.details?.text?.length ?? 0) < 2500, `historical read details should be compacted in truncated ?tail=, got ${oldRead.details?.text?.length}`);
 		assert.ok(oldRead.details?.text?.includes("truncated"), "compacted details should include truncation notice");
 		assert.equal(newRead.details?.text, latestReadText, "latest turn read details must stay intact");
+
+		// Non-truncated ?tail=12 preserves full historical read details (no permanent truncation on short/desktop chats)
+		const untruncatedTailRes = await GET(
+			new Request(`http://localhost/api/chats/${record.id}?tail=12`),
+			{ params: Promise.resolve({ id: record.id }) },
+		);
+		const untruncatedTailBody = (await untruncatedTailRes.json()) as { messages: LhMessage[]; truncated?: boolean };
+		assert.equal(untruncatedTailBody.truncated, false);
+		const untruncatedOldRead = untruncatedTailBody.messages.find((m) => m.id === "m_tr0") as { details?: { text?: string } };
+		assert.equal(untruncatedOldRead.details?.text, bigReadText, "non-truncated ?tail= must keep full read details");
 
 		// Full GET without ?tail= keeps full turns & untruncated read details
 		const fullRes = await GET(

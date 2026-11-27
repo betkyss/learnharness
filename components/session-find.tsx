@@ -189,7 +189,7 @@ export function SessionFind({ scopeRef, scrollContextRef, onOpen }: {
 				value={query}
 				onChange={(event) => setQuery(event.target.value)}
 				spellCheck={false}
-				className="lh-input min-w-0 flex-1 bg-transparent text-base md:text-sm outline-none placeholder:text-muted-foreground"
+				className="lh-input min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
 			/>
 			<output aria-live="polite" data-testid="session-find-count" className="shrink-0 text-xs tabular-nums text-muted-foreground">
 				{query ? `${result.index + 1}/${result.count}` : ""}

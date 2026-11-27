@@ -534,7 +534,18 @@ export function shouldRestoreCamera(
 		return null;
 	}
 	if (currentW > 0 && currentH > 0) {
-		if (Math.abs(stored.vw - currentW) > 120 || Math.abs(stored.vh - currentH) > 120) {
+		const storedMobile = stored.vw < 768;
+		const currentMobile = currentW < 768;
+		if (storedMobile !== currentMobile) return null;
+		const storedLandscape = stored.vw > stored.vh;
+		const currentLandscape = currentW > currentH;
+		if (storedLandscape !== currentLandscape) return null;
+		// Desktop sidebar toggle shifts canvas width by ~260–300px without changing
+		// form factor or orientation — preserve the desktop camera across sidebar
+		// toggles while still rejecting large mobile or cross-device resizes.
+		const maxDw = currentMobile ? 120 : 360;
+		const maxDh = currentMobile ? 120 : 160;
+		if (Math.abs(stored.vw - currentW) > maxDw || Math.abs(stored.vh - currentH) > maxDh) {
 			return null;
 		}
 	}
@@ -730,8 +741,6 @@ export class GraphCanvasRenderer {
 	private dragStartNodePos: Pt | null = null;
 	private activePointers = new Map<number, Pt>();
 	private pinchActive = false;
-	private manualPinch = false;
-	private pinchPrev: { dist: number; mid: Pt } | null = null;
 	private fitPaddingProvider: (() => FitPadding) | null = null;
 	private regionDraftBlur = false;
 	private simMoved = false; // any real movement since the last commit
@@ -1131,8 +1140,6 @@ export class GraphCanvasRenderer {
 		this.dragStartNodePos = null;
 		this.activePointers.clear();
 		this.pinchActive = false;
-		this.manualPinch = false;
-		this.pinchPrev = null;
 		this.resizeObserver.disconnect();
 		select(this.canvas).on(".zoom", null);
 		this.canvas.removeEventListener("wheel", this.onWheel);
@@ -1161,17 +1168,6 @@ export class GraphCanvasRenderer {
 		this.lastTickAt = performance.now();
 		this.markDirty();
 	};
-
-	private currentPinchMetrics(): { dist: number; mid: Pt } | null {
-		if (this.activePointers.size < 2) return null;
-		const iter = this.activePointers.values();
-		const a = iter.next().value as Pt;
-		const b = iter.next().value as Pt;
-		return {
-			dist: Math.hypot(b.x - a.x, b.y - a.y),
-			mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
-		};
-	}
 
 	private cancelDrag(restoreStartPos: boolean): void {
 		const id = this.dragId;
@@ -1219,23 +1215,6 @@ export class GraphCanvasRenderer {
 			this.activePointers.set(e.pointerId, pos);
 		}
 		if (this.pinchActive) {
-			if (this.manualPinch && this.activePointers.size >= 2) {
-				const next = this.currentPinchMetrics();
-				const prev = this.pinchPrev;
-				if (next && prev) {
-					const t = this.transform;
-					const scale = prev.dist > 1 ? next.dist / prev.dist : 1;
-					const nextK = Math.min(Math.max(t.k * scale, 0.02), 40);
-					const actualScale = nextK / t.k;
-					const nextX = next.mid.x - (prev.mid.x - t.x) * actualScale;
-					const nextY = next.mid.y - (prev.mid.y - t.y) * actualScale;
-					select(this.canvas).call(
-						this.zoomBehavior.transform,
-						zoomIdentity.translate(nextX, nextY).scale(nextK),
-					);
-				}
-				this.pinchPrev = next;
-			}
 			return;
 		}
 		if (this.dragId) {
@@ -1279,16 +1258,15 @@ export class GraphCanvasRenderer {
 		const pos = this.eventPos(e);
 		this.activePointers.set(e.pointerId, pos);
 		// Multi-touch gesture (e.g. pinch-to-zoom): immediately cancel any node
-		// drag so pinching near a node never drags it or commits mutated positions.
+		// drag so pinching near a node never drags it or commits mutated positions;
+		// d3-zoom owns the touchstart/touchmove pinch transform natively (avoiding
+		// duplicate transforms).
 		if (this.activePointers.size >= 2) {
 			this.pinchActive = true;
 			this.downPos = null;
 			this.zoomTarget = null;
 			if (this.dragId !== null) {
-				e.preventDefault();
 				this.cancelDrag(true);
-				this.manualPinch = true;
-				this.pinchPrev = this.currentPinchMetrics();
 			}
 			return;
 		}
@@ -1327,10 +1305,6 @@ export class GraphCanvasRenderer {
 		if (e.button !== 0) return; // right-click is context-menu territory
 		this.activePointers.delete(e.pointerId);
 		if (this.pinchActive) {
-			if (this.activePointers.size < 2) {
-				this.pinchPrev = null;
-				this.manualPinch = false;
-			}
 			if (this.activePointers.size === 0) {
 				this.pinchActive = false;
 			}
@@ -1378,10 +1352,6 @@ export class GraphCanvasRenderer {
 
 	private onPointerCancel = (e: PointerEvent) => {
 		this.activePointers.delete(e.pointerId);
-		if (this.activePointers.size < 2) {
-			this.pinchPrev = null;
-			this.manualPinch = false;
-		}
 		if (this.activePointers.size === 0) {
 			this.pinchActive = false;
 		}

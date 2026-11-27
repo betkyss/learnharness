@@ -1,7 +1,14 @@
 import { notFound } from "next/navigation";
 import { Chat } from "@/components/chat";
-import { CLIENT_DEFAULT_TAIL_GROUPS, sanitizeMessagesForClient, sliceChatTailForClient, slotsConfigured } from "@/src/core";
-import { compactionInFlight, getChat, isTurnRunning, readSettingsRecord, turnFailure } from "@/src/server";
+import {
+	CLAUDE_CODE_PROVIDER,
+	CLIENT_DEFAULT_TAIL_GROUPS,
+	sanitizeMessagesForClient,
+	sessionCacheHitRate,
+	sliceChatTailForClient,
+	slotsConfigured,
+} from "@/src/core";
+import { compactionInFlight, getChat, isTurnRunning, readSettingsRecord, sessionCost, turnFailure } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +27,14 @@ export default async function ChatPage({
 	// server's 503 stays the truth; this only decides whether the pill rides.
 	const record = readSettingsRecord();
 	const tail = sliceChatTailForClient(chat.messages, CLIENT_DEFAULT_TAIL_GROUPS);
+	const rawTurns = chat.turns ?? [];
+	const initialPricing = {
+		...sessionCost(chat),
+		turnCosts: {},
+		turnCount: rawTurns.length,
+		cliBilled: rawTurns.some((t) => t.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`)),
+		cacheHitRate: sessionCacheHitRate({ turns: rawTurns }),
+	};
 	return (
 		<Chat
 			key={chat.id}
@@ -28,13 +43,16 @@ export default async function ChatPage({
 			kind={chat.kind ?? "teach"}
 			// Wave D: the record IS native agent history — ship only the active
 			// tail window on SSR so long sessions hydrate fast on mobile; earlier
-			// messages load on demand via ?tail=N or full GET.
-			initialMessages={sanitizeMessagesForClient(tail.messages, { compactHistoricalToolDetails: true })}
+			// messages load on demand via ?tail=N or full GET. Compact oversized
+			// historical tool details ONLY when the session is actually tail-sliced
+			// so short/desktop sessions always retain full tool output.
+			initialMessages={sanitizeMessagesForClient(tail.messages, { compactHistoricalToolDetails: tail.truncated })}
 			initialTotalMessages={tail.totalMessages}
 			initialOmittedViewGroups={tail.omittedViewGroups}
 			initialTruncated={tail.truncated}
 			initialPhase={tail.startPhase}
 			initialPlanTree={chat.tree ?? null}
+			initialPricing={initialPricing}
 			initialError={turnFailure(chat.id)}
 			initialConfigured={slotsConfigured(record?.models)}
 			initialPrompt={prompt}

@@ -171,7 +171,10 @@ export function useChatSession({
 	const loadEarlierMessages = useCallback((step?: number) => model.loadEarlierMessages(step), [model]);
 	const loadAllMessages = useCallback(() => model.loadAllMessages(), [model]);
 	const recoverFromForeground = useCallback(
-		(meta: Parameters<SessionModel["recoverFromForeground"]>[0]) => model.recoverFromForeground(meta),
+		(
+			meta: Parameters<SessionModel["recoverFromForeground"]>[0],
+			ctx?: Parameters<SessionModel["recoverFromForeground"]>[1],
+		) => model.recoverFromForeground(meta, ctx),
 		[model],
 	);
 

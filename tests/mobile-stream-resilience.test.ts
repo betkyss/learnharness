@@ -209,6 +209,56 @@ describe("P0-2 & P0-1: SessionModel foreground recovery, tail loading, and incre
 		assert.equal(model.getState().messages.at(-1)?.parts.at(-1)?.text, "Completed while backgrounded");
 	});
 
+	it("keeps a healthy active stream alive on focus-stale when lastStreamActivityAt is recent, but reattaches after long background", async () => {
+		let streamCalls = 0;
+		let streamReadStarted!: () => void;
+		const reading = new Promise<void>((r) => { streamReadStarted = r; });
+
+		const model = new SessionModel({
+			chatId: "chat_healthy",
+			initialMessages: [{ id: "msg_u_1", role: "user", content: "Explain", timestamp: 1000 }],
+			fetch: (async (input) => {
+				const url = String(input);
+				if (url === "/api/chats/chat_healthy/stream") {
+					streamCalls++;
+					const stream = new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(new TextEncoder().encode(": open\n\n"));
+						},
+						pull() {
+							streamReadStarted();
+							return new Promise(() => {});
+						},
+					});
+					return new Response(stream, { status: 200 });
+				}
+				return Response.json({
+					messages: [{ id: "msg_u_1", role: "user", content: "Explain", timestamp: 1000 }],
+					turnInFlight: true,
+				});
+			}) as typeof fetch,
+		});
+
+		const firstStream = model.resumeStream(false);
+		await reading;
+		assert.equal(streamCalls, 1);
+
+		const gentle = await model.recoverFromForeground(
+			{ turnInFlight: true, messageCount: 1, lastMessageId: "msg_u_1" },
+			{ reason: "focus-stale", hiddenMs: 0 },
+		);
+		assert.equal(gentle, "noop", "healthy stream with recent bytes must not be aborted on focus-stale");
+		assert.equal(streamCalls, 1);
+
+		const longResume = await model.recoverFromForeground(
+			{ turnInFlight: true, messageCount: 1, lastMessageId: "msg_u_1" },
+			{ reason: "long-resume", hiddenMs: 12_000 },
+		);
+		assert.equal(longResume, "reattached", "long background resume must reattach even if old timestamp was recent");
+		model.stop();
+		await firstStream;
+	});
+
 	it("keeps incremental view projection identical to full projectView during live streaming", () => {
 		const base: LhMessage[] = [];
 		for (let i = 0; i < 10; i++) {

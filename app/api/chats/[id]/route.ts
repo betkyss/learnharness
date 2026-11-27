@@ -57,7 +57,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 		: null;
 	const responseMessages = sanitizeMessagesForClient(
 		tailSlice ? tailSlice.messages : chat.messages,
-		tailSlice ? { compactHistoricalToolDetails: true } : undefined,
+		tailSlice?.truncated ? { compactHistoricalToolDetails: true } : undefined,
 	);
 	// Omit binary snapshot pools and unused extraction logs from chat reads;
 	// on `?tail=N` also replace the verbose `turns` array with aggregated pricing

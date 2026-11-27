@@ -40,21 +40,39 @@ function makeFakeRoot() {
 }
 
 describe("P0-5 & R2 P1-1: visualViewport metrics, iOS standalone --vvh policy, and MenuShell placement", () => {
-	it("computes keyboardInset and isShortViewport when iOS keyboard shrinks visualViewport", () => {
+	it("computes keyboardInset and isShortViewport when iOS keyboard shrinks visualViewport (even when iOS pans offsetTop)", () => {
 		const m = computeVisualViewportMetrics({
 			innerWidth: 390,
 			innerHeight: 844,
-			visualViewport: { width: 390, height: 472, offsetTop: 12, offsetLeft: 0 },
+			visualViewport: { width: 390, height: 472, offsetTop: 12, offsetLeft: 0, scale: 1 },
 		});
 		assert.equal(m.height, 472);
-		assert.equal(m.keyboardInset, 360);
+		assert.equal(m.keyboardInset, 372);
 		assert.equal(m.isShortViewport, true);
 		assert.equal(m.isKeyboardOpen, true);
+
+		// iOS Safari pans visualViewport.offsetTop downward to keep a bottom composer/QuestionDock
+		// in view — keyboardInset must stay >= 100 so --vvh is NOT dropped mid-typing.
+		const panned = computeVisualViewportMetrics({
+			innerWidth: 390,
+			innerHeight: 844,
+			visualViewport: { width: 390, height: 500, offsetTop: 290, offsetLeft: 0, scale: 1 },
+		});
+		assert.equal(panned.isKeyboardOpen, true);
+		assert.equal(panned.keyboardInset, 344);
+
+		// Pinch-zoom shrinks visualViewport.height with scale > 1 — must NOT trigger keyboard mode.
+		const zoomed = computeVisualViewportMetrics({
+			innerWidth: 390,
+			innerHeight: 844,
+			visualViewport: { width: 195, height: 422, offsetTop: 0, offsetLeft: 0, scale: 2 },
+		});
+		assert.equal(zoomed.isKeyboardOpen, false);
 
 		const desktop = computeVisualViewportMetrics({
 			innerWidth: 1440,
 			innerHeight: 900,
-			visualViewport: { width: 1440, height: 900, offsetTop: 0, offsetLeft: 0 },
+			visualViewport: { width: 1440, height: 900, offsetTop: 0, offsetLeft: 0, scale: 1 },
 		});
 		assert.equal(desktop.keyboardInset, 0);
 		assert.equal(desktop.isShortViewport, false);
@@ -71,7 +89,7 @@ describe("P0-5 & R2 P1-1: visualViewport metrics, iOS standalone --vvh policy, a
 		});
 		applyVisualViewportToRoot(root.el, openMetrics);
 		assert.equal(root.props.get("--vvh"), "472px");
-		assert.equal(root.props.get("--keyboard-inset"), "360px");
+		assert.equal(root.props.get("--keyboard-inset"), "372px");
 		assert.equal(root.dataset.keyboardOpen, "true");
 		assert.equal(root.dataset.shortViewport, "true");
 
@@ -360,12 +378,43 @@ describe("R2 P1-4, P2-2, P2-5, P2-6: Settings overflow, >=16px inputs, touch tar
 	it("P2-5: code blocks get horizontal scroll affordance and mobile chat TopBar compacts cleanly", () => {
 		const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 		assert.ok(css.includes("--lh-code-well") && css.includes("scrollbar-width: thin"), "code-block-body must provide scroll-shadow + thin scrollbar affordance");
+		assert.ok(css.includes("font-size: max(16px, var(--lh-prose-size))"), ".lh-input must enforce >=16px on mobile without utility classes");
 
 		const phaseHtml = renderToStaticMarkup(createElement(PhaseChip, { phase: "teach" }));
-		assert.ok(phaseHtml.includes("text-[10px] sm:text-xs"), `PhaseChip should tighten on narrow phones, got: ${phaseHtml}`);
+		assert.ok(phaseHtml.includes("text-xs") && !phaseHtml.includes("text-[10px]"), `PhaseChip must follow typography scale without text-[Npx], got: ${phaseHtml}`);
 
 		const topBarSrc = readFileSync(new URL("../components/top-bar.tsx", import.meta.url), "utf8");
 		assert.ok(topBarSrc.includes("gap-1.5 sm:gap-3"), "TopBar should tighten gap on narrow phones");
+	});
+
+	it("StatsBar prefers fresh pricing summary over stale turns after tail settle", () => {
+		const html = renderToStaticMarkup(
+			createElement(
+				InteractionLayersProvider,
+				null,
+				createElement(StatsBar, {
+					chatId: "chat_1",
+					turns: [{
+						id: "t1",
+						messageId: "m1",
+						at: "2026-11-27T00:00:00.000Z",
+						model: "anthropic:claude-sonnet-4-5",
+						steps: [],
+					}],
+					pricing: {
+						cost: 0.1234,
+						unpriced: 0,
+						subscription: 0,
+						subscriptionProviders: [],
+						turnCosts: {},
+						turnCount: 2,
+						cliBilled: false,
+						cacheHitRate: 0.5,
+					},
+				}),
+			),
+		);
+		assert.ok(html.includes("$0.12"), `StatsBar must display fresh pricing cost when turns array is stale, got: ${html}`);
 	});
 
 	it("P2-6: DeleteSessionBody shows Stop active turn action alongside Try again on 409 turn_in_flight", () => {

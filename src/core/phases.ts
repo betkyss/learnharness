@@ -14,6 +14,7 @@
 
 import { posedPluginQuestionOfPart } from "./tool-parts.ts";
 import { readPluginQuestionMessageAnnotation } from "./plugin-questions.ts";
+import { readPluginProblemSnapshot, readPluginProblemSubmission } from "./plugin-problems.ts";
 
 /** The three phases of a session, as the picker / header / dividers see them. */
 export type Phase3 = "probe" | "plan" | "teach";
@@ -246,6 +247,27 @@ export function sliceChatTailForClient(messages: readonly LhMessage[], maxViewGr
 	if (pendingPluginQ?.occurrence.messageId) mustIncludeIds.push(pendingPluginQ.occurrence.messageId);
 	for (let i = cutIndex; i < total; i++) {
 		const m = messages[i]!;
+		if (m.role === "custom" && m.customType === "plugin-problem-submission") {
+			const submitted = readPluginProblemSubmission(m.details);
+			if (submitted?.problemId) {
+				for (let j = i - 1; j >= 0; j--) {
+					const prev = messages[j]!;
+					if (prev.role !== "toolResult" || prev.isError) continue;
+					const snap = readPluginProblemSnapshot((prev.details as { pluginProblem?: unknown } | null)?.pluginProblem);
+					if (snap?.problemId === submitted.problemId) {
+						for (let k = j - 1; k >= 0; k--) {
+							const poser = messages[k]!;
+							if (poser.role === "assistant") {
+								mustIncludeIds.push(poser.id);
+								break;
+							}
+						}
+						break;
+					}
+				}
+			}
+			continue;
+		}
 		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
 		if (m.content.some((b) => b.type === "toolCall" && b.name === "conclude")) {
 			// Walk back to include the most recent `problem` pose before this conclude.

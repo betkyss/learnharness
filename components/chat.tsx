@@ -477,6 +477,7 @@ export function Chat({
 	initialTruncated = false,
 	initialPhase = "probe",
 	initialPlanTree = null,
+	initialPricing,
 	initialError,
 	initialPrompt,
 	initiallyInFlight,
@@ -497,6 +498,8 @@ export function Chat({
 	initialPhase?: Phase3;
 	/** Persisted plan tree from the server record (available even before earlier messages load). */
 	initialPlanTree?: PlanTree | null;
+	/** Server-computed session pricing summary so SSR avoids an eager `?view=stats` fetch on mount. */
+	initialPricing?: SessionPricing;
 	/** Memory-only settlement notice supplied on reopening. */
 	initialError?: string;
 	/** The session kind (practice sessions, owner 2026-10-04): practice
@@ -624,19 +627,25 @@ export function Chat({
 		if (hasEarlierMessagesRef.current) void loadAllMessages();
 	}, [loadAllMessages]);
 	const pendingScrollRestoreRef = useRef<{
-		anchorRowId: string | null;
-		anchorTopBefore: number;
+		anchors: Array<{ rowId: string; topBefore: number }>;
 		scrollerTopBefore: number;
 		scrollHeight: number;
 		scrollTop: number;
 		prevFirstVisibleId: string | null;
 		serverDone: boolean;
 	} | null>(null);
+	// Preserve React row identity when a live streaming message swaps its
+	// temporary `c_...` id for its canonical server id at settle, so open
+	// WorkGroup disclosures never unmount and collapse.
+	const stableRowKeysRef = useRef(new Map<string, string>());
+	const lastStreamingRowRef = useRef<{ index: number; key: string } | null>(null);
 	useIsoLayoutEffect(() => {
 		const hasHash = typeof window !== "undefined" && Boolean(window.location.hash);
 		setVisibleCount(hasHash ? Infinity : INITIAL_VISIBLE_MESSAGES);
 		if (hasHash && hasEarlierMessagesRef.current) void loadAllMessages();
 		pendingScrollRestoreRef.current = null;
+		stableRowKeysRef.current.clear();
+		lastStreamingRowRef.current = null;
 	}, [chatId, loadAllMessages]);
 	useEffect(() => {
 		const onLocationChange = () => {
@@ -662,17 +671,26 @@ export function Chat({
 			scrollContextRef.current?.stopScroll();
 			const scrollerRect = scroller.getBoundingClientRect();
 			const rows = scroller.querySelectorAll<HTMLElement>("[data-transcript-row-id]");
-			let anchorEl: HTMLElement | null = null;
+			// Capture up to 4 visible rows in order so if row 0 merges into a
+			// prepended quiz-driven assistant group, a surviving lower row still
+			// anchors the exact scroll offset.
+			const anchors: Array<{ rowId: string; topBefore: number }> = [];
 			for (const row of rows) {
-				if (row.getBoundingClientRect().bottom > scrollerRect.top + 1) {
-					anchorEl = row;
-					break;
+				const rect = row.getBoundingClientRect();
+				if (rect.bottom > scrollerRect.top + 1) {
+					const rowId = row.dataset.transcriptRowId;
+					if (rowId) anchors.push({ rowId, topBefore: rect.top });
+					if (anchors.length >= 4) break;
 				}
 			}
-			if (!anchorEl && rows.length > 0) anchorEl = rows[0]!;
+			if (anchors.length === 0 && rows.length > 0) {
+				const first = rows[0]!;
+				if (first.dataset.transcriptRowId) {
+					anchors.push({ rowId: first.dataset.transcriptRowId, topBefore: first.getBoundingClientRect().top });
+				}
+			}
 			pendingScrollRestoreRef.current = {
-				anchorRowId: anchorEl?.dataset.transcriptRowId ?? null,
-				anchorTopBefore: anchorEl ? anchorEl.getBoundingClientRect().top : scrollerRect.top,
+				anchors,
 				scrollerTopBefore: scrollerRect.top,
 				scrollHeight: scroller.scrollHeight,
 				scrollTop: scroller.scrollTop,
@@ -705,13 +723,19 @@ export function Chat({
 			return;
 		}
 		const restoreAnchor = () => {
-			if (saved.anchorRowId) {
+			if (saved.anchors.length > 0) {
+				const byId = new Map<string, HTMLElement>();
 				const rows = scroller.querySelectorAll<HTMLElement>("[data-transcript-row-id]");
 				for (const row of rows) {
-					if (row.dataset.transcriptRowId === saved.anchorRowId) {
+					const id = row.dataset.transcriptRowId;
+					if (id) byId.set(id, row);
+				}
+				for (const anchor of saved.anchors) {
+					const row = byId.get(anchor.rowId);
+					if (row) {
 						const nextTop = computeAnchorScrollTop({
 							currentScrollTop: scroller.scrollTop,
-							anchorTopBefore: saved.anchorTopBefore,
+							anchorTopBefore: anchor.topBefore,
 							scrollerTopBefore: saved.scrollerTopBefore,
 							anchorTopAfter: row.getBoundingClientRect().top,
 							scrollerTopAfter: scroller.getBoundingClientRect().top,
@@ -1550,8 +1574,31 @@ export function Chat({
 
 	const skipNextSettleTurnsRef = useRef(false);
 	const applyAdoptedRecord = useCallback((record: SessionRecordSnapshot) => {
-		if (Array.isArray(record.turns)) setTurns(record.turns);
-		if (record.pricing !== undefined) setPricing(record.pricing);
+		if (Array.isArray(record.turns)) {
+			setTurns(record.turns);
+		} else if (record.pricing?.turnCount !== undefined) {
+			// Clear stale cached `turns` after a `?tail=` turn settle so StatsBar
+			// reads fresh summary figures from `pricing` and lazily pulls `?view=stats`
+			// when the detail popover is open or opened.
+			const nextCount = record.pricing.turnCount;
+			setTurns((prev) => (prev.length > 0 && prev.length !== nextCount ? [] : prev));
+		}
+		if (record.pricing !== undefined) {
+			const incoming = record.pricing;
+			setPricing((prev) => {
+				if (
+					!Array.isArray(record.turns) &&
+					prev &&
+					prev.turnCount !== undefined &&
+					prev.turnCount === incoming.turnCount &&
+					Object.keys(incoming.turnCosts).length === 0 &&
+					Object.keys(prev.turnCosts).length > 0
+				) {
+					return { ...incoming, turnCosts: prev.turnCosts };
+				}
+				return incoming;
+			});
+		}
 		if (record.initialPhase !== undefined) setSessionStartPhase(record.initialPhase);
 		else if (record.truncated === false) setSessionStartPhase("probe");
 		if (record.tree !== undefined) setServerPlanTree(record.tree ?? null);
@@ -1631,7 +1678,8 @@ export function Chat({
 	// server-side), and kept fresh by syncFromServer whenever it already
 	// fetches the record. No turns yet → the bar renders "—" everywhere.
 	const [turns, setTurns] = useState<TurnUsage[]>([]);
-	const [pricing, setPricing] = useState<SessionPricing | undefined>();
+	const [pricing, setPricing] = useState<SessionPricing | undefined>(initialPricing);
+	const hasInitialPricingRef = useRef(initialPricing !== undefined);
 	// The per-chat model control state (model-picker writes via PUT; the
 	// record is the source of truth, lifted here so the stats bar re-renders).
 	// The dock's reserved tail height (DockOverlay reports it; the spacer at
@@ -1658,7 +1706,9 @@ export function Chat({
 		}
 	}, [readStats]);
 	useEffect(() => {
-		void syncTurns();
+		if (!hasInitialPricingRef.current) {
+			void syncTurns();
+		}
 		return () => statsRequest.current?.abort();
 	}, [syncTurns]);
 	// After the learner's own turn ends the log has a fresh entry — and the
@@ -1904,9 +1954,12 @@ export function Chat({
 	totalMessageCountRef.current = totalMessageCount;
 	const errorRef = useRef(error);
 	errorRef.current = error;
-	useServerResync(() => {
+	useServerResync((ctx) => {
 		void (async () => {
 			try {
+				// Never abort or probe a healthy active stream just because the initial
+				// /api/events EventSource opened on page mount.
+				if (localStreamRef.current && ctx.reason === "initial") return;
 				const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}?view=meta`, { cache: "no-store" });
 				if (!submissionMounted.current) return;
 				if (res.status === 401) {
@@ -1928,7 +1981,7 @@ export function Chat({
 				// P0-2 foreground resume recovery: never deadlock behind a frozen
 				// mobile fetch() socket when the tab returns from background.
 				if (localStreamRef.current) {
-					await recoverFromForeground(meta);
+					await recoverFromForeground(meta, ctx);
 					return;
 				}
 				if (meta.turnInFlight) {
@@ -2199,14 +2252,27 @@ export function Chat({
 							{messages.slice(visibleStart).map((m, offset) => {
 								const mi = visibleStart + offset;
 								const isLastRow = mi === messages.length - 1;
-								const rowKey = m.id || (m.role === "assistant" ? `assistant-${mi}` : `m-${mi}`);
+								const rowId = m.id || (m.role === "assistant" ? `assistant-${mi}` : `m-${mi}`);
+								if (m.role === "assistant" && rowId.startsWith("c_")) {
+									lastStreamingRowRef.current = { index: mi, key: rowId };
+								} else if (
+									m.role === "assistant" &&
+									isLastRow &&
+									lastStreamingRowRef.current &&
+									lastStreamingRowRef.current.index === mi &&
+									!stableRowKeysRef.current.has(rowId)
+								) {
+									stableRowKeysRef.current.set(rowId, lastStreamingRowRef.current.key);
+									lastStreamingRowRef.current = null;
+								}
+								const reactKey = stableRowKeysRef.current.get(rowId) ?? rowId;
 								const subPart = m.role === "user" ? m.parts.find((p) => p.type === "data-plugin-problem-submission") : undefined;
 								const submitted = subPart ? readPluginProblemSubmission(subPart.data) : null;
 								const problemSnapshot = submitted ? pluginProblemById(nativeMessages, submitted.problemId) : null;
 								const rowActiveId = isLastRow && m.role === "assistant" ? activeMessageId : null;
 								const rowMalformed = !busy && malformedQuestions.length > 0 ? malformedQuestions : emptyMalformedRef.current;
 								return (
-									<div key={rowKey} data-transcript-row-id={rowKey} className="flex flex-col gap-4">
+									<div key={reactKey} data-transcript-row-id={rowId} className="flex flex-col gap-4">
 										<TranscriptRow
 											m={m}
 											mi={mi}

@@ -28,6 +28,7 @@ export interface ViewportWindowLike {
 		height: number;
 		offsetTop: number;
 		offsetLeft: number;
+		scale?: number;
 		addEventListener?: (type: string, listener: () => void) => void;
 		removeEventListener?: (type: string, listener: () => void) => void;
 	} | null;
@@ -40,15 +41,20 @@ export function computeVisualViewportMetrics(win: ViewportWindowLike): VisualVie
 	const height = vv && vv.height > 0 ? Math.round(vv.height) : win.innerHeight;
 	const offsetTop = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
 	const offsetLeft = vv ? Math.max(0, Math.round(vv.offsetLeft)) : 0;
+	const scale = vv && typeof vv.scale === "number" && Number.isFinite(vv.scale) && vv.scale > 0 ? vv.scale : 1;
 	const layoutHeight = Math.max(win.innerHeight, win.document?.documentElement?.clientHeight ?? 0);
-	const rawInset = Math.max(0, Math.round(layoutHeight - height - offsetTop));
-	const isKeyboardOpen = rawInset >= KEYBOARD_INSET_THRESHOLD;
+	// Measure keyboard shrinkage via (layoutHeight - visualViewport.height) without
+	// subtracting offsetTop: when iOS pans visualViewport downward to keep a bottom
+	// composer/QuestionDock in view, offsetTop grows while height stays shrunk.
+	// Ignore pinch-zoom (scale > 1.05) so zooming the page never triggers keyboard mode.
+	const heightReduction = Math.max(0, Math.round(layoutHeight - height));
+	const isKeyboardOpen = scale <= 1.05 && heightReduction >= KEYBOARD_INSET_THRESHOLD;
 	return {
 		width,
 		height,
 		offsetTop,
 		offsetLeft,
-		keyboardInset: isKeyboardOpen ? rawInset : 0,
+		keyboardInset: isKeyboardOpen ? heightReduction : 0,
 		isShortViewport: height <= SHORT_VIEWPORT_MAX_HEIGHT,
 		isKeyboardOpen,
 	};

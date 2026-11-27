@@ -1097,12 +1097,15 @@ export class SessionModel {
 	 * - `meta.turnInFlight`: abort the stale reader and cleanly reattach via
 	 *   `resumeStream(true)` without duplicating text.
 	 */
-	async recoverFromForeground(meta: {
-		turnInFlight: boolean;
-		messageCount: number;
-		lastMessageId: string | null;
-		turnError?: string;
-	}): Promise<"settled" | "reattached" | "noop"> {
+	async recoverFromForeground(
+		meta: {
+			turnInFlight: boolean;
+			messageCount: number;
+			lastMessageId: string | null;
+			turnError?: string;
+		},
+		ctx?: { reason?: string; hiddenMs?: number },
+	): Promise<"settled" | "reattached" | "noop"> {
 		if (this.statusValue !== "submitted" && this.statusValue !== "streaming") {
 			return "noop";
 		}
@@ -1114,14 +1117,30 @@ export class SessionModel {
 			this.executions = new Map();
 			this.invalidateCanonicalReads();
 			await this.reconcile();
+			// A newer turn may have started and claimed consumeAbort while reconcile() awaited.
+			if (this.consumeAbort !== null) return "noop";
 			const reconciledRecord = this.lastReconciledRecord ?? undefined;
 			if (this.status !== "error") this.setStatus("ready");
 			if (this.reconciliationValue === "ready") this.onReattachSettled?.(reconciledRecord);
 			return "settled";
 		}
-		// Turn is still running server-side, but foreground resume may have left
-		// the previous mobile fetch reader frozen on a dead socket — cleanly
-		// reattach onto the server's compacted replay + live stream.
+		// If this resync was a gentle focus/short-resume check (not a network drop,
+		// watchdog timeout, pageshow, or >= 3s background freeze) and the active
+		// stream received bytes/pings recently, keep the healthy reader alive
+		// instead of aborting and replaying the turn stream unnecessarily.
+		const forceReattach =
+			!ctx ||
+			ctx.reason === "online" ||
+			ctx.reason === "reconnect" ||
+			ctx.reason === "watchdog" ||
+			ctx.reason === "pageshow" ||
+			(ctx.hiddenMs ?? 0) >= 3_000;
+		if (!forceReattach && this.lastStreamActivityAtValue > 0 && Date.now() - this.lastStreamActivityAtValue < 10_000) {
+			return "noop";
+		}
+		// Turn is still running server-side, and the previous mobile fetch reader
+		// may be frozen on a dead socket — cleanly reattach onto the server's
+		// compacted replay + live stream.
 		void this.resumeStream(true);
 		return "reattached";
 	}
