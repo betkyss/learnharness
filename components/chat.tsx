@@ -3095,7 +3095,7 @@ export function DockOverlay({
 	const reserveRef = useRef(0);
 	const offer = useCallback((blockH: number) => {
 		const next = blockH + GRADIENT_H;
-		if (next <= reserveRef.current + 0.5 && pendingRef.current) return;
+		if (next <= reserveRef.current + 0.5 && pendingRef.current && !manualCollapsedRef.current) return;
 		// Stamp growth at the source, including child-only field resizes, so
 		// stick-to-bottom's catch-up is not mistaken for the learner leaving.
 		if (shouldStampGeometryMute(next, reserveRef.current, pendingRef.current)) geometryAtRef.current = Date.now();
@@ -3203,6 +3203,9 @@ export function DockOverlay({
 		if (active instanceof HTMLElement && blockRef.current?.contains(active)) {
 			active.blur();
 		}
+		// Release the tall expanded bottom spacer so the lesson transcript immediately
+		// reappears above the collapsed bar instead of leaving empty black spacer void.
+		reserveRef.current = 0;
 		setExpanded(false);
 	}, []);
 	const expandAndRevealRef = useRef(expandAndReveal);
@@ -3251,16 +3254,26 @@ export function DockOverlay({
 				'[data-testid="thinking-field"], [data-testid="answer-field"], [data-testid="reading-thinking-field"], [data-testid="practice-thinking-field"], [data-testid="other-option"]',
 			) ?? active;
 			requestAnimationFrame(() => {
-				if (vp.scrollHeight > vp.clientHeight + 1) {
-					field.scrollIntoView({ block: "nearest" });
+				if (vp.scrollHeight <= vp.clientHeight + 1) return;
+				const vpRect = vp.getBoundingClientRect();
+				const fRect = field.getBoundingClientRect();
+				if (fRect.bottom > vpRect.bottom) {
+					vp.scrollTop += fRect.bottom - vpRect.bottom + 8;
+				} else if (fRect.top < vpRect.top) {
+					vp.scrollTop -= vpRect.top - fRect.top + 8;
 				}
 			});
 		};
+		const ro = new ResizeObserver(keepFocusedVisible);
+		ro.observe(vp);
 		vp.addEventListener("focusin", keepFocusedVisible);
+		window.addEventListener("resize", keepFocusedVisible);
 		const vv = window.visualViewport;
 		vv?.addEventListener("resize", keepFocusedVisible);
 		return () => {
+			ro.disconnect();
 			vp.removeEventListener("focusin", keepFocusedVisible);
+			window.removeEventListener("resize", keepFocusedVisible);
 			vv?.removeEventListener("resize", keepFocusedVisible);
 		};
 	}, [ownsDock]);

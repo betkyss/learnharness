@@ -922,7 +922,7 @@ function QuestionDockForm({
 	// shared by both arrangements; the refs feed the layout probe.
 	const questionPart = (
 		<div ref={questionPartRef} data-question-part="">
-			<div className={QC_LABEL}>
+			<div className={cn(QC_LABEL, onCollapse && "mb-2.5 pr-20")}>
 				{questionCardLabel(toolName, kind, qd.questionType)}
 				{qd.mode === "multi-select" && " · select all that apply"}
 			</div>
