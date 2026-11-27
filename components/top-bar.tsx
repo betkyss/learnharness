@@ -82,7 +82,7 @@ export function TopBar({
 		<header
 			ref={header}
 			onMouseDown={onMouseDown}
-			className={`${drag ? "lh-drag " : ""}${sidebarToggle ? "" : "lh-native-window-clearance "}lh-top-bar lh-wco-gutter flex h-15 select-none items-center gap-1.5 sm:gap-3 border-b border-border px-2 sm:px-3`}
+			className={`${drag ? "lh-drag " : ""}${sidebarToggle ? "" : "lh-native-window-clearance "}lh-top-bar lh-wco-gutter flex h-12 md:h-15 select-none items-center gap-1.5 sm:gap-3 border-b border-border px-2 sm:px-3`}
 		>
 			{sidebarToggle && <SidebarToggle />}
 			{children}

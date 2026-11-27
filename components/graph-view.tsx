@@ -948,7 +948,7 @@ export function GraphChromeRow({
 			{/* Import notes — its own container (36px, header band); ALWAYS
 			    rendered (the empty-graph ruling above — the entry point). */}
 			<NotesImportControl importing={importing} onImportFiles={onImportFiles} />
- { !isEmpty && <button type="button" onClick={onFit} aria-label="Fit graph" className="h-9 shrink-0 rounded-lg border bg-card px-2 text-xs text-muted-foreground hover:text-foreground">Fit</button> }
+ { !isEmpty && <button type="button" onClick={onFit} aria-label="Fit graph" className="h-9 min-w-9 shrink-0 rounded-lg border bg-card px-2.5 text-xs text-muted-foreground hover:text-foreground">Fit</button> }
 			{!isEmpty && (
 				// Rendering settings — own component; the gear toggles it. The
 				// gear sits at the far right (owner, round 3) so its panel drops

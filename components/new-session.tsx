@@ -6,6 +6,8 @@ import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./
 import { Conversation, ConversationContent, ConversationEmptyState } from "@/components/ai-elements/conversation";
 import { Composer } from "@/components/composer";
 import { DictationBar, joinDictation, useDictation } from "@/components/dictation";
+import { MobileSessionControl } from "@/components/mobile-session-sheet";
+import { preparePendingImages, stashOpeningImages, type PendingImage } from "@/components/mobile-image-attachments";
 import { useFieldCycle } from "@/components/field-cycle";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
@@ -35,7 +37,7 @@ export type DraftPick = { id: string; name: string; statement: string };
  * server-side (per-session models, owner 2026-09-28).
  */
 
-const DOCK = "mx-auto w-full max-w-(--lh-chat-max-width) px-4";
+const DOCK = "mx-auto w-full max-w-(--lh-chat-max-width) px-3 md:px-4";
 
 /**
  * Create, safely hand over the full opening text, then return a short
@@ -83,6 +85,10 @@ export function DraftShell({
 	onOpenPicker,
 	onClearPicks,
 	overlay,
+	pendingImages,
+	onAttachImages,
+	onRemoveImage,
+	imageError,
 }: {
 	busy: boolean;
 	text: string;
@@ -110,6 +116,10 @@ export function DraftShell({
 	 *  the graph view (the overlay fills its column, never the sidebar).
 	 *  Passed as a node so the pick state stays in NewSession. */
 	overlay?: ReactNode;
+	pendingImages?: readonly PendingImage[];
+	onAttachImages?: (files: FileList) => void;
+	onRemoveImage?: (id: string) => void;
+	imageError?: string | null;
 }) {
 	const controller = useOptionalInteractionLayers();
 	const pathname = usePathname();
@@ -132,7 +142,7 @@ export function DraftShell({
 	// round, owner 2026-10-01): the spoken text is deferred in the run's
 	// buffer — Enter must reach the finish-first send, not be gated out by
 	// an empty textarea. Nothing said → the send no-ops.
-	const canSend = text.trim().length > 0 || dictation.active;
+	const canSend = text.trim().length > 0 || dictation.active || (pendingImages?.length ?? 0) > 0;
 	/* FINISH DICTATION FIRST (owner, 2026-10-01): stop the run, let the
 	 * last finals land through onChange, THEN call the parent's send —
 	 * which reads its REF mirror, so the post-await timing of React's
@@ -194,7 +204,7 @@ export function DraftShell({
 									setup={setupCta}
 								/>
 								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
-								<div data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
+								<div data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl max-md:rounded-[24px] border bg-card shadow-lg">
 									<Composer
 										busy={busy}
 										value={text}
@@ -210,12 +220,21 @@ export function DraftShell({
 										// started yet, so the composer must not read like one is in
 										// flight.
 										placeholder={mode === "practice" ? "What do you want to practice?" : "What do you want to learn?"}
+										mobilePlaceholder={mode === "practice" ? "What to practice?" : "What to learn?"}
+										dictation={dictation}
+										mobileSessionControl={<MobileSessionControl />}
+										pendingImages={pendingImages}
+										onAttachImages={onAttachImages}
+										onRemoveImage={onRemoveImage}
+										imageError={imageError}
 									/>
 								</div>
-								<StatsBar
-									dictationSlot={<DictationBar dictation={dictation} />}
-									turns={[]}
-								/>
+								<div className="hidden md:block">
+									<StatsBar
+										dictationSlot={<DictationBar dictation={dictation} />}
+										turns={[]}
+									/>
+								</div>
 							</div>
 						</div>
 					</div>
@@ -286,9 +305,36 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 	// the learner sends the draft themselves.
 	const { catalog, configured, zeroKeys } = useModelSetup(initialConfigured);
 	const [setupOpen, setSetupOpen] = useState(false);
+	const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+	const pendingImagesRef = useRef<PendingImage[]>([]);
+	pendingImagesRef.current = pendingImages;
+	const [imageError, setImageError] = useState<string | null>(null);
+	const handleAttachImages = useCallback((files: FileList) => {
+		setImageError(null);
+		void preparePendingImages(files, pendingImagesRef.current.length).then(({ added, error: attachErr }) => {
+			if (added.length > 0) {
+				setPendingImages((prev) => {
+					const next = [...prev, ...added];
+					pendingImagesRef.current = next;
+					return next;
+				});
+			}
+			if (attachErr) setImageError(attachErr);
+		});
+	}, []);
+	const handleRemoveImage = useCallback((id: string) => {
+		setImageError(null);
+		setPendingImages((prev) => {
+			const next = prev.filter((item) => item.id !== id);
+			pendingImagesRef.current = next;
+			return next;
+		});
+	}, []);
 
 	const send = useCallback(() => {
-		const draft = textRef.current.trim();
+		const rawDraft = textRef.current.trim();
+		const images = pendingImagesRef.current.map((item) => item.image);
+		const draft = rawDraft || (images.length > 0 ? "Image question" : "");
 		if (!draft || startingRef.current) return;
 		if (!configured) {
 			setSetupOpen(true);
@@ -315,8 +361,11 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 		void startDraftSession(draft, fetch, mode === "practice" ? "practice" : undefined, mode === "practice" ? picksRef.current : undefined,
 			starterRef.current, JSON.stringify(catalog?.slots.strong))
 			.then((target) => {
-				if (target) router.push(target);
-				else { startingRef.current = false; setBusy(false); }
+				if (target) {
+					const createdId = target.replace(/^\/chat\//, "");
+					if (images.length > 0 && createdId) stashOpeningImages(createdId, images);
+					router.push(target);
+				} else { startingRef.current = false; setBusy(false); }
 			})
 			.catch(() => {
 				startingRef.current = false;
@@ -337,6 +386,10 @@ export function NewSession({ initialConfigured, mode = "teach" }: { initialConfi
 				picks={picks}
 				onOpenPicker={openPicker}
 				onClearPicks={() => applyPicks([])}
+				pendingImages={pendingImages}
+				onAttachImages={handleAttachImages}
+				onRemoveImage={handleRemoveImage}
+				imageError={imageError}
 				overlay={
 					// THE PICKER (owner round 10b): hosted INSIDE the content
 					// column — absolute inset-0 resolves to the column's relative

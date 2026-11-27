@@ -3,21 +3,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
-import { CornerDownLeftIcon, DumbbellIcon } from "lucide-react";
+import { DumbbellIcon } from "lucide-react";
 import { GraphView } from "@/components/graph-view";
 import { MinimalHome } from "@/components/minimal-home";
 import { SetupDialog } from "@/components/setup-dialog";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
+import { Composer } from "@/components/composer";
 import { useModelSetup, selectedModelUnavailable, openModelPicker, ZeroKeysPill } from "@/components/setup-cta";
 import { DictationBar, joinDictation, useDictation } from "@/components/dictation";
+import { MobileSessionControl } from "@/components/mobile-session-sheet";
+import { preparePendingImages, stashOpeningImages, type PendingImage } from "@/components/mobile-image-attachments";
 import { useFieldCycle } from "@/components/field-cycle";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { SidebarToggle } from "@/components/sidebar";
 import { StatsBar } from "@/components/stats-bar";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
-import { PathInput } from "@/components/path-input";
-import { AttachFilesButton } from "@/components/attach-files-button";
 import { SessionStarter } from "@/components/start-session";
 import type { TurnUsage } from "@/src/core";
 
@@ -104,6 +105,31 @@ export function Home({
 	const [mode, setMode] = useState<"teach" | "practice">("teach");
 	const [practiceProps, setPracticeProps] = useState<{ id: string; name: string; statement: string }[]>([]);
 	const [chainSelectOpen, setChainSelectOpen] = useState(false);
+	const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+	const pendingImagesRef = useRef<PendingImage[]>([]);
+	pendingImagesRef.current = pendingImages;
+	const [imageError, setImageError] = useState<string | null>(null);
+	const handleAttachImages = useCallback((files: FileList) => {
+		setImageError(null);
+		void preparePendingImages(files, pendingImagesRef.current.length).then(({ added, error: attachErr }) => {
+			if (added.length > 0) {
+				setPendingImages((prev) => {
+					const next = [...prev, ...added];
+					pendingImagesRef.current = next;
+					return next;
+				});
+			}
+			if (attachErr) setImageError(attachErr);
+		});
+	}, []);
+	const handleRemoveImage = useCallback((id: string) => {
+		setImageError(null);
+		setPendingImages((prev) => {
+			const next = prev.filter((item) => item.id !== id);
+			pendingImagesRef.current = next;
+			return next;
+		});
+	}, []);
 	// The chain table is CONTROLLED off this id set (the lifted pick).
 	const pickedIds = useMemo(() => new Set(practiceProps.map((p) => p.id)), [practiceProps]);
 
@@ -120,7 +146,9 @@ export function Home({
 		void dictation.finish().then(() => begin());
 	};
 	const begin = async () => {
-		const t = topicRef.current.trim();
+		const rawText = topicRef.current.trim();
+		const images = pendingImagesRef.current.map((item) => item.image);
+		const t = rawText || (images.length > 0 ? "Image question" : "");
 		if (!t || startingRef.current) return;
 		// Unconfigured: the send INTERCEPTS into the setup flow (the draft
 		// stays in the textarea; the learner sends it after Save).
@@ -158,6 +186,8 @@ export function Home({
 				...(mode === "practice" ? { kind: "practice" } : {}),
 				...(practiceProps.length > 0 ? { graphContext: { propositions: practiceProps } } : {}),
 			}, fetch, JSON.stringify(catalog?.slots.strong));
+			const createdId = target.replace(/^\/chat\//, "");
+			if (images.length > 0 && createdId) stashOpeningImages(createdId, images);
 			router.push(target);
 		} catch {
 			startingRef.current = false;
@@ -236,105 +266,106 @@ export function Home({
 			    OVER the graph (no gradient: the graph runs clean under it to the
 			    bottom edge). Matches chat.tsx's DOCK geometry (shared chat width
 			    px-4) so nothing shifts when a session starts (owner). */}
-			<div data-home-dock="" className="pointer-events-none absolute inset-x-0 bottom-0 pb-5">
-				<div className="pointer-events-auto mx-auto w-full max-w-(--lh-chat-max-width) px-4">
-					{/* The pick bar (owner vision, 2026-10-04): the chain
-					    table's selection is PERSISTENT — picked
-					    propositions show here as a count + Clear in EITHER
-					    mode (it survives mode switches; only a practice
-					    send consumes it). Practice mode with nothing picked
-					    shows the pick HINT so the affordance is discoverable;
-					    teaching mode with nothing picked renders nothing. */}
-					<ComposerActions
-						picker={(practiceProps.length > 0 || mode === "practice") && (
+			<div data-home-dock="" className="pointer-events-none absolute inset-x-0 bottom-0 pb-2 md:pb-5">
+				<div className="pointer-events-auto mx-auto w-full max-w-(--lh-chat-max-width) px-3 md:px-4">
+					{/* Mobile-only compact Teach/Practice row directly above the single-row pill */}
+					<div className="mb-1.5 flex flex-wrap items-center gap-2 md:hidden" data-testid="home-mobile-mode-row">
+						<div className="flex items-center gap-0.5 rounded-full border border-border/70 bg-card/90 p-0.5 shadow-sm backdrop-blur" data-testid="home-mobile-mode-switch">
+							{(["teach", "practice"] as const).map((m) => (
+								<button
+									key={m}
+									type="button"
+									data-testid={`home-mobile-mode-${m}`}
+									onClick={() => setMode(m)}
+									className={
+										"flex min-h-8 items-center gap-1 rounded-full px-3 text-xs font-medium transition-colors " +
+										(mode === m
+											? "bg-accent text-foreground"
+											: "text-muted-foreground active:text-foreground")
+									}
+								>
+									{m === "practice" ? <DumbbellIcon aria-hidden="true" className="size-3" /> : null}
+									{m === "teach" ? "Teach" : "Practice"}
+								</button>
+							))}
+						</div>
+						{(practiceProps.length > 0 || mode === "practice") && (
 							<NodePickerControl
 								count={practiceProps.length}
 								onOpen={() => setChainSelectOpen(true)}
 								onClear={() => setPracticeProps([])}
 							/>
 						)}
-						setup={<span className="short-setup-origin">{setupAction}</span>}
-					/>
+						{setupAction && <span className="short-setup-origin">{setupAction}</span>}
+					</div>
+
+					{/* Desktop pick bar + setup CTA — unchanged */}
+					<div className="hidden md:block">
+						<ComposerActions
+							picker={(practiceProps.length > 0 || mode === "practice") && (
+								<NodePickerControl
+									count={practiceProps.length}
+									onOpen={() => setChainSelectOpen(true)}
+									onClear={() => setPracticeProps([])}
+								/>
+							)}
+							setup={<span className="short-setup-origin">{setupAction}</span>}
+						/>
+					</div>
 					{startError && <p role="alert" className="mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
-					<form
-						data-attachment-composer=""
-						className="flex items-end gap-1.5 rounded-2xl border bg-card p-1.5 shadow-lg"
-					onSubmit={(e) => {
-						e.preventDefault();
-						void start();
-					}}
-				>
-					<PathInput
-						ref={topicInputRef}
-						value={topic}
-						onValueChange={(value) => {
-							topicRef.current = value;
-							setTopic(value);
-						}}
-						defaultDropTarget
-						onKeyDown={(e) => {
-							if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
-							// Esc ends dictation (the dictate decisions: click-again or
-							// Esc) — stopPropagation claims it (keyboard wave A) so
-							// the window chain doesn't also abort a turn.
-							if (e.key === "Escape" && dictation.active) {
-								controller?.claimEscape(e);
-								e.preventDefault();
-								e.stopPropagation();
-								dictation.cancel();
-								return;
+					<div data-attachment-composer="" className="overflow-hidden rounded-2xl max-md:rounded-[24px] border bg-card shadow-lg">
+						<Composer
+							busy={busy}
+							value={topic}
+							onChange={(value) => {
+								topicRef.current = value;
+								setTopic(value);
+							}}
+							onSend={start}
+							onStop={() => {}}
+							canSend={(topic.trim().length > 0 || dictation.active || pendingImages.length > 0) && !busy}
+							inputRef={topicInputRef}
+							autoFocus
+							onEscape={dictation.active ? dictation.cancel : undefined}
+							placeholder={mode === "practice" ? "What do you want to practice?" : "What do you want to learn?"}
+							mobilePlaceholder={mode === "practice" ? "What to practice?" : "What to learn?"}
+							dictation={dictation}
+							mobileSessionControl={<MobileSessionControl />}
+							pendingImages={pendingImages}
+							onAttachImages={handleAttachImages}
+							onRemoveImage={handleRemoveImage}
+							imageError={imageError}
+						/>
+					</div>
+					{/* Desktop stats/mode bar — hidden on mobile where controls live in the single-row pill + fullscreen sheet */}
+					<div className="hidden md:block">
+						<StatsBar
+							shortControls={setupAction}
+							dictationSlot={<DictationBar dictation={dictation} />}
+							turns={[] as TurnUsage[]}
+							leadingSlot={
+								<div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-background p-0.5" data-testid="home-mode-switch">
+									{(["teach", "practice"] as const).map((m) => (
+										<button
+											key={m}
+											type="button"
+											data-testid={`home-mode-${m}`}
+											onClick={() => setMode(m)}
+											className={
+												"flex items-center gap-1 rounded-sm px-2 py-0.5 max-md:min-h-9 max-md:px-3 text-xs uppercase tracking-wider transition-colors " +
+												(mode === m
+													? "bg-accent text-foreground"
+													: "text-muted-foreground hover:text-foreground")
+											}
+										>
+											{m === "practice" ? <DumbbellIcon aria-hidden="true" className="size-3" /> : null}
+											{m === "teach" ? "Teach" : "Practice"}
+										</button>
+									))}
+								</div>
 							}
-							if (e.key === "Enter" && !e.shiftKey) {
-								e.preventDefault();
-								void start();
-							}
-						}}
-						placeholder={mode === "practice" ? "What do you want to practice?" : "What do you want to learn?"}
-						autoFocus
-						className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
-					/>
-					<AttachFilesButton editorRef={topicInputRef} />
-					{/* No tooltip on the start square — the ↵ glyph is the
-					    affordance (owner, subtlety round 2026-09-25). */}
-					<button
-						type="submit"
-						aria-label="Start session"
-						disabled={(!topic.trim() && !dictation.active) || busy}
-						className="flex size-10 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-colors hover:opacity-90 disabled:opacity-40"
-					>
-						<CornerDownLeftIcon className="size-5" />
-					</button>
-					</form>
-					{/* Same as the chat view's under-composer stats bar (owner) — no
-					    session yet, so the LEFT side renders nothing (wave 7 sweep)
-					    while the RIGHT keeps the strong-slot control (fix wave: the
-					    pills write /api/settings/models). */}
-					<StatsBar
-						shortControls={setupAction}
-						dictationSlot={<DictationBar dictation={dictation} />}
-						turns={[] as TurnUsage[]}
-						leadingSlot={
-							<div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-background p-0.5" data-testid="home-mode-switch">
-								{(["teach", "practice"] as const).map((m) => (
-									<button
-										key={m}
-										type="button"
-										data-testid={`home-mode-${m}`}
-										onClick={() => setMode(m)}
-										className={
-											"flex items-center gap-1 rounded-sm px-2 py-0.5 max-md:min-h-9 max-md:px-3 text-xs uppercase tracking-wider transition-colors " +
-											(mode === m
-												? "bg-accent text-foreground"
-												: "text-muted-foreground hover:text-foreground")
-										}
-									>
-										{m === "practice" ? <DumbbellIcon aria-hidden="true" className="size-3" /> : null}
-										{m === "teach" ? "Teach" : "Practice"}
-									</button>
-								))}
-							</div>
-						}
-					/>
+						/>
+					</div>
 				</div>
 			</div>
 

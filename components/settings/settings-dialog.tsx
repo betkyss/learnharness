@@ -391,12 +391,12 @@ export function SettingsDialogBody({
 			aria-modal="true"
 			aria-label="Settings"
 			data-testid="settings-dialog"
-			className="settings-dialog-pop flex h-[620px] max-h-[min(90dvh,calc(var(--vvh,var(--lh-app-height,100dvh))-16px))] w-[920px] max-w-[90vw] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
+			className="settings-dialog-pop flex h-[620px] max-h-[min(90dvh,calc(var(--vvh,var(--lh-app-height,100dvh))-16px))] w-[920px] max-w-[90vw] max-md:h-full max-md:max-h-none max-md:w-full max-md:max-w-none max-md:rounded-none max-md:border-0 max-md:shadow-none flex-col overflow-hidden rounded-xl border border-border bg-card max-md:bg-background shadow-xl"
 			onClick={(e) => e.stopPropagation()}
 		>
-			{/* Header — the app's quiet CMU title language. */}
-			<header className="flex h-15 shrink-0 items-center gap-3 border-b border-border px-5">
-				<h2 className="font-title text-2xl tracking-tight">Settings</h2>
+			{/* Header — the app's quiet CMU title language; 100% fullscreen edge-to-edge on mobile. */}
+			<header className="lh-mobile-fs-header flex h-15 max-md:h-auto max-md:min-h-[54px] shrink-0 items-center gap-3 border-b border-border px-5 max-md:px-4 max-md:py-2">
+				<h2 className="font-title text-2xl max-md:text-xl tracking-tight">Settings</h2>
 				<Hint
 						// Esc closes through the shared interaction owner.
 						label="Close"
@@ -407,7 +407,7 @@ export function SettingsDialogBody({
 					type="button"
 					aria-label="Close settings"
 					data-testid="settings-close"
-					className="ml-auto size-7 max-md:size-10 rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					className="ml-auto size-7 max-md:size-10 max-md:rounded-full max-md:border max-md:border-border/70 max-md:bg-card rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 					onClick={onClose}
 				>
 					<svg
@@ -431,7 +431,7 @@ export function SettingsDialogBody({
 					data-testid="settings-section-select"
 					value={selected}
 					onChange={(event) => setActive(event.target.value as SectionId)}
-					className="m-2 h-10 rounded-sm border bg-card px-2 text-base md:hidden"
+					className="mx-4 mt-2.5 mb-1 h-10 rounded-xl border border-border/80 bg-card px-3 text-base md:hidden"
 				>
 					<optgroup label="Settings">
 						{SECTIONS.map((section) => (
@@ -479,7 +479,7 @@ export function SettingsDialogBody({
 				    nothing may shift when the lock engages. */}
 				<div
 					ref={contentRef}
-					className="settings-content min-h-0 min-w-0 flex-1 overflow-y-auto"
+					className="settings-content min-h-0 min-w-0 flex-1 overflow-y-auto max-md:pb-[calc(16px+env(safe-area-inset-bottom,0px))]"
 					data-testid="settings-content"
 				>
 					{error && !activePluginId && selected !== "plugins" && selected !== "core-plugins" && (

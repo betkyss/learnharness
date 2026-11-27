@@ -441,17 +441,17 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 	return <HostDialog open onClose={() => { onClose(); return "closed"; }} aria-label="Set up your models"
 		backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80", "data-testid": "setup-backdrop" }}
 		frame={<div data-testid="setup-dialog"
-			className="settings-dialog-pop flex max-h-[85vh] w-[640px] max-w-[90vw] flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl"
+			className="settings-dialog-pop flex max-h-[85vh] w-[640px] max-w-[90vw] max-md:h-full max-md:max-h-none max-md:w-full max-md:max-w-none max-md:rounded-none max-md:border-0 max-md:shadow-none flex-col overflow-hidden rounded-md border border-border bg-card max-md:bg-background shadow-xl"
 			onClick={(e) => e.stopPropagation()} />}>
-				<header className="flex h-15 shrink-0 items-center gap-3 border-b border-border px-5">
-					<h2 className="font-title text-2xl tracking-tight">Set up your models</h2>
+				<header className="lh-mobile-fs-header flex h-15 max-md:h-auto max-md:min-h-[54px] shrink-0 items-center gap-3 border-b border-border px-5 max-md:px-4 max-md:py-2">
+					<h2 className="font-title text-2xl max-md:text-xl tracking-tight">Set up your models</h2>
 					<Hint label="Close" binding="escape" side="left">
 <button
 						type="button"
 						aria-label="Close setup"
 						data-testid="setup-close"
 						onClick={onClose}
-						className="ml-auto text-muted-foreground transition-colors hover:text-foreground"
+						className="ml-auto max-md:flex max-md:size-10 max-md:items-center max-md:justify-center max-md:rounded-full max-md:border max-md:border-border/70 max-md:bg-card text-muted-foreground transition-colors hover:text-foreground"
 					>
 						✕
 					</button>

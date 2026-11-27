@@ -41,40 +41,52 @@ export function catalogLimits(catalog: Pick<ModelCatalogResponse, "models">): Ma
  * changing the new-session default. Unpicked reads "—" (the
  * no-factory-fallback language: the UI never presents a default model).
  */
-export function ModelControl({ chatId, onModelChange }: { chatId?: string; onModelChange?: (model: string | undefined) => void }) {
+const inFlightSettingsReads = new Map<string, Promise<unknown>>();
+function fetchSettingsRead<T>(url: string, parse: (r: Response) => Promise<T>): Promise<T> {
+	const existing = inFlightSettingsReads.get(url);
+	if (existing) return existing as Promise<T>;
+	const promise = fetch(url)
+		.then(parse)
+		.finally(() => {
+			if (inFlightSettingsReads.get(url) === promise) inFlightSettingsReads.delete(url);
+		});
+	inFlightSettingsReads.set(url, promise);
+	return promise;
+}
+
+const CHAT_SETTINGS_SAVED_EVENT = "lh:chat-settings-saved";
+
+export function useSessionModelState({
+	chatId,
+	onModelChange,
+	onSaved,
+}: {
+	chatId?: string;
+	onModelChange?: (model: string | undefined) => void;
+	onSaved?: () => void;
+}) {
 	const { catalog, refresh } = useModelCatalog();
 	const [models, setModels] = useState<ModelsSettings | undefined>();
 	// A successful read with no settings is a legacy session; undefined
 	// means no session record is known yet, not permission to inherit Strong.
 	const [session, setSession] = useState<{ settings?: ChatSettings }>();
-	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const containerRef = useRef<HTMLDivElement>(null);
-	const interactions = useInteractionLayers();
 
-	// The record read — BOTH mount and the cross-surface signal land
-	// here (fix wave: another surface's models write re-reads into the
-	// pill live; own writes also notify, and the refetch is idempotent).
-	// Dual-bound: chat mode reads BOTH the session record (the source of
-	// truth) and the models section (the display fallback for a legacy
-	// unstamped session — exactly what the engine resolves); draft mode
-	// reads the models section alone.
 	const readRecord = useCallback(() => {
 		if (chatId) {
-			fetch(`/api/chats/${encodeURIComponent(chatId)}?view=settings`)
-				.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
+			fetchSettingsRead(`/api/chats/${encodeURIComponent(chatId)}?view=settings`, (r) => {
+				if (!r.ok) throw new Error(`session read failed: ${r.status}`);
+				return r.json() as Promise<{ settings?: ChatSettings }>;
+			})
 				.then((body) => setSession({ settings: body.settings }))
 				.catch(() => {
 					/* same read-only posture as a models-section failure */
 				});
 		}
-		fetch("/api/settings")
-			.then((r) => r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>)
+		fetchSettingsRead("/api/settings", (r) => r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>)
 			.then((body) => setModels(body.settings?.models ?? undefined))
 			.catch(() => {
-				/* the record fetch failing leaves the control read-only
-				   ("—" triggers, closed menus) — same posture as a
-				   catalog failure */
+				/* the record fetch failing leaves the control read-only */
 			});
 	}, [chatId]);
 
@@ -86,12 +98,16 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		if (section === "models") readRecord();
 	});
 
-	// Dual-bound truth: chat mode displays the session's own record,
-	// falling back to Strong only for a successfully read legacy unstamped
-	// session — EXACTLY what resolveConversationSpec runs. An unresolved or
-	// failed record read must not report a provisional global preference as
-	// this session's identity (including to the Send guard). Draft mode is
-	// the strong slot itself.
+	useEffect(() => {
+		if (!chatId) return;
+		const onChatSaved = (event: Event) => {
+			const detail = (event as CustomEvent<{ chatId?: string; settings?: ChatSettings }>).detail;
+			if (detail?.chatId === chatId) setSession({ settings: detail.settings });
+		};
+		window.addEventListener(CHAT_SETTINGS_SAVED_EVENT, onChatSaved);
+		return () => window.removeEventListener(CHAT_SETTINGS_SAVED_EVENT, onChatSaved);
+	}, [chatId]);
+
 	const strong = models?.strong;
 	const override: ChatSettings | undefined = chatId
 		? session ? {
@@ -110,11 +126,125 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		(m) => m.id === effectiveId && m.provider === effectiveProvider,
 	);
 	const levels = entry?.supportedLevels ?? [];
-	// Legacy display (chunk 2 item 4, owner): a record with a model but no
-	// stored level shows the RESOLVED level — the ordering's first supported
-	// — because that is exactly what the engine build would run. Display-
-	// only: the record stays unset until a fresh pick populates it.
 	const effectiveLevel = storedLevel ?? (entry ? defaultOrderLevel(levels) : undefined);
+
+	const save = useCallback(
+		async (next: ModelsSettings) => {
+			setError(null);
+			try {
+				const res = await fetch("/api/settings/models", {
+					method: "PUT",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(next),
+				});
+				if (!res.ok) {
+					const body = (await res.json().catch(() => ({}))) as { error?: string };
+					setError(body.error ?? `settings rejected (${res.status})`);
+					return;
+				}
+				const stored = (
+					(await res.json().catch(() => null)) as { settings?: UserSettings } | null
+				)?.settings?.models;
+				setModels(stored ?? next);
+				onSaved?.();
+				notifySettingsSaved("models");
+			} catch {
+				setError("Could not reach the server — try again.");
+			}
+		},
+		[onSaved],
+	);
+
+	const saveChat = useCallback(
+		async (next: ChatSettings) => {
+			setError(null);
+			try {
+				const res = await fetch(`/api/chats/${chatId}/settings`, {
+					method: "PUT",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(next),
+				});
+				if (!res.ok) {
+					const body = (await res.json().catch(() => ({}))) as { error?: string };
+					setError(body.error ?? `settings rejected (${res.status})`);
+					return;
+				}
+				const stored = (await res.json().catch(() => null)) as { settings?: ChatSettings } | null;
+				const nextSettings = stored?.settings ?? next;
+				setSession({ settings: nextSettings });
+				if (typeof window !== "undefined" && chatId) {
+					window.dispatchEvent(new CustomEvent(CHAT_SETTINGS_SAVED_EVENT, { detail: { chatId, settings: nextSettings } }));
+				}
+				onSaved?.();
+			} catch {
+				setError("Could not reach the server — try again.");
+			}
+		},
+		[chatId, onSaved],
+	);
+
+	const apply = useCallback(
+		(provider: string, id: string, level: ThinkingLevel | undefined) => {
+			if (chatId) {
+				void saveChat({ model: { provider, id }, thinkingLevel: level, ...(session?.settings?.speed !== undefined ? { speed: resolveModelSpeed(provider, id, session.settings.speed) } : {}) });
+			} else {
+				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));
+			}
+		},
+		[chatId, models, session, save, saveChat],
+	);
+
+	const pickModel = useCallback((m: ModelCatalogEntry) => {
+		const nextLevel = populateLevel(storedLevel, m.supportedLevels);
+		apply(m.provider, m.id, nextLevel);
+	}, [storedLevel, apply]);
+
+	const pickSpeed = useCallback((speed: ChatSettings["speed"]) => {
+		if (chatId) void saveChat({ ...session?.settings, ...(speed !== undefined ? { speed } : { speed: undefined }) });
+		else if (strong?.model) void save({ ...models, strong: { ...strong, speed } });
+	}, [chatId, session, strong, models, save, saveChat]);
+
+	return {
+		catalog,
+		refresh,
+		models,
+		session,
+		strong,
+		effectiveId,
+		effectiveProvider,
+		storedLevel,
+		entry,
+		levels,
+		effectiveLevel,
+		error,
+		setError,
+		apply,
+		pickModel,
+		pickSpeed,
+	};
+}
+
+export function ModelControl({ chatId, onModelChange }: { chatId?: string; onModelChange?: (model: string | undefined) => void }) {
+	const [open, setOpen] = useState<"model" | "thinking" | null>(null);
+	const closeMenu = useCallback(() => setOpen(null), []);
+	const {
+		catalog,
+		refresh,
+		session,
+		strong,
+		effectiveId,
+		effectiveProvider,
+		entry,
+		levels,
+		effectiveLevel,
+		error,
+		setError,
+		apply,
+		pickModel,
+		pickSpeed,
+	} = useSessionModelState({ chatId, onModelChange, onSaved: closeMenu });
+	const containerRef = useRef<HTMLDivElement>(null);
+	const interactions = useInteractionLayers();
 
 	// The intuitive dropdown contract (owner, stats-control round 1): any
 	// click outside the open menu — or an Esc keypress — closes it. The
@@ -141,84 +271,6 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		};
 	}, [open, interactions]);
 
-	// One write seam: composeSlotModel preserves the cheap/vision siblings
-	// (replace-whole-section discipline) and the per-field independence of
-	// model + thinkingLevel within the strong slot.
-	const save = useCallback(
-		async (next: ModelsSettings) => {
-			setError(null);
-			try {
-				const res = await fetch("/api/settings/models", {
-					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(next),
-				});
-				if (!res.ok) {
-					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError(body.error ?? `settings rejected (${res.status})`);
-					return;
-				}
-				// Server truth, never the request body (fix wave): a pick
-				// that rides an unsupported level lands CLAMPED in the record
-				// — the pill must show the stored value in this interaction.
-				const stored = (
-					(await res.json().catch(() => null)) as { settings?: UserSettings } | null
-				)?.settings?.models;
-				setModels(stored ?? next);
-				setOpen(null);
-				notifySettingsSaved("models");
-			} catch {
-				setError("Could not reach the server — try again.");
-			}
-		},
-		[],
-	);
-
-	// The session write seam (chat mode): PUT the per-chat settings route
-	// — validated + level-clamped server-side; the response is the stored
-	// truth (a pick riding an unsupported level lands CLAMPED — the pill
-	// shows the stored value). No notifySettingsSaved: the write touches
-	// one session's record, not the slots — no other surface reads it.
-	const saveChat = useCallback(
-		async (next: ChatSettings) => {
-			setError(null);
-			try {
-				const res = await fetch(`/api/chats/${chatId}/settings`, {
-					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(next),
-				});
-				if (!res.ok) {
-					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError(body.error ?? `settings rejected (${res.status})`);
-					return;
-				}
-				const stored = (await res.json().catch(() => null)) as { settings?: ChatSettings } | null;
-				setSession({ settings: stored?.settings ?? next });
-				setOpen(null);
-			} catch {
-				setError("Could not reach the server — try again.");
-			}
-		},
-		[chatId],
-	);
-
-	// One apply seam over both write paths: a pick names provider + id +
-	// level; chat mode writes the session's own record (any pick pins it),
-	// draft mode composes the strong slot (siblings preserved,
-	// replace-whole-section discipline).
-	const apply = useCallback(
-		(provider: string, id: string, level: ThinkingLevel | undefined) => {
-			if (chatId) {
-				void saveChat({ model: { provider, id }, thinkingLevel: level, ...(session?.settings?.speed !== undefined ? { speed: resolveModelSpeed(provider, id, session.settings.speed) } : {}) });
-			} else {
-				// composeSlotModel's empty-string convention: no level = unset.
-				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));
-			}
-		},
-		[chatId, models, session, save, saveChat],
-	);
-
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the
 	// universal command convention); Shift+Tab cycles the thinking level
 	// up the ladder (wrapping) — the owner's replacement for browser
@@ -232,7 +284,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		};
 		window.addEventListener("lh:kbd-open-model-picker", onOpenPicker);
 		return () => window.removeEventListener("lh:kbd-open-model-picker", onOpenPicker);
-	}, [refresh, interactions]);
+	}, [refresh, interactions, setError]);
 
 	useEffect(() => {
 		const onCycleThinking = () => {
@@ -246,22 +298,6 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		window.addEventListener("lh:kbd-cycle-thinking", onCycleThinking);
 		return () => window.removeEventListener("lh:kbd-cycle-thinking", onCycleThinking);
 	}, [levels, effectiveLevel, effectiveProvider, effectiveId, apply, interactions]);
-
-	// Selecting a model (click and Enter share one path): keep the
-	// thinking level only when the new model supports it — otherwise
-	// drop it (a carry-over would 400 at the server's catalog gate).
-	const pickModel = (m: ModelCatalogEntry) => {
-		// Auto-populate (chunk 2, owner: "populate everywhere"): a fresh pick
-		// ALWAYS writes a level — the STORED one rides as-is (the write clamps
-		// server-side when the new model doesn't support it; the signal
-		// re-reads and the clamped truth displays), and a record with no
-		// stored level populates the ordering's level. The unset state can
-		// never re-enter through this door. (The DERIVED display level never
-		// rides — it belongs to the OLD model; the fresh pick's level comes
-		// from the fresh model's own ladder.)
-		const nextLevel = populateLevel(storedLevel, m.supportedLevels);
-		apply(m.provider, m.id, nextLevel);
-	};
 
 	// Stale-while-revalidate on manual open too (⌘K covers the keyboard
 	// path above): the cached list shows instantly, the fresh federation
@@ -331,10 +367,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 				value={chatId ? session?.settings?.speed : strong?.speed}
 				inherited={strong?.speed} inheritLabel={chatId ? "Strong" : undefined}
 				testid="stats-speed" compact onOpen={() => setOpen(null)}
-				onPick={(speed) => {
-					if (chatId) void saveChat({ ...session?.settings, ...(speed !== undefined ? { speed } : { speed: undefined }) });
-					else if (strong?.model) void save({ ...models, strong: { ...strong, speed } });
-				}}
+				onPick={pickSpeed}
 			/>
 
 			{/* The shared dropdown body (extracted 2026-09-20): the agent

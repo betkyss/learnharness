@@ -46,6 +46,8 @@ import { CHAT_WIDTH_REM, useAppearance } from "@/components/settings/appearance"
 import { dockContainerMax, layoutFontKey, questionCardGeometry, rootRem, type QuestionLayout } from "@/components/question-layout";
 import { QueuedSteersBody, type QueuedSteerLine } from "@/components/queued-steers";
 import { DictationBar, finishDictation, joinDictation, useDictation, type Dictation } from "@/components/dictation";
+import { MobileSessionControl } from "@/components/mobile-session-sheet";
+import { clearOpeningImages, preparePendingImages, readOpeningImages, type PendingImage } from "@/components/mobile-image-attachments";
 import { useFieldCycle } from "@/components/field-cycle";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
@@ -1218,18 +1220,63 @@ export function Chat({
 			}, attempt.accepted, undefined, attempt.refused);
 		});
 	};
-	const prepareText = (supplied?: string, openingAccepted?: () => void, beforePost?: (captured: string) => boolean) => {
+	const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+	const pendingImagesRef = useRef<PendingImage[]>([]);
+	pendingImagesRef.current = pendingImages;
+	const [imageError, setImageError] = useState<string | null>(null);
+	const handleAttachImages = useCallback((files: FileList) => {
+		setImageError(null);
+		void preparePendingImages(files, pendingImagesRef.current.length).then(({ added, error: attachErr }) => {
+			if (added.length > 0) {
+				setPendingImages((prev) => {
+					const next = [...prev, ...added];
+					pendingImagesRef.current = next;
+					return next;
+				});
+			}
+			if (attachErr) setImageError(attachErr);
+		});
+	}, []);
+	const handleRemoveImage = useCallback((id: string) => {
+		setImageError(null);
+		setPendingImages((prev) => {
+			const next = prev.filter((item) => item.id !== id);
+			pendingImagesRef.current = next;
+			return next;
+		});
+	}, []);
+	const prepareText = (
+		supplied?: string,
+		openingAccepted?: () => void,
+		beforePost?: (captured: string) => boolean,
+		suppliedImages?: readonly { type: "image"; data: string; mimeType: string }[],
+	) => {
 		const target = textTarget();
 		if (!target || pendingRef.current || pluginOwnsDock || activeProblemRef.current || compacting) return Promise.resolve(false);
 		if (!busyRef.current && zeroKeys) { setSetupOpen(true); return Promise.resolve(false); }
 		if (!busyRef.current && selectedModelUnavailable(catalog, selectedModel)) { openModelPicker(); return Promise.resolve(false); }
 		let captured = "", capturedRevision = 0;
-		return runSubmission(target, () => { capturedRevision = composerEditRevision.current; return { type: "text", content: { text: captured = supplied ?? textRef.current.trim(), images: [] } }; }, () => submissionLive.current.ready && !pendingQuestionOf(submissionLive.current.nativeMessages) && !pendingPluginQuestionOf(submissionLive.current.nativeMessages) && !activeProblemOf(submissionLive.current.nativeMessages), async (prepared, attempt) => {
+		const capturedLocalImages = suppliedImages ? [...suppliedImages] : pendingImagesRef.current.map((item) => item.image);
+		const capturedLocalImageIds = suppliedImages ? [] : pendingImagesRef.current.map((item) => item.id);
+		return runSubmission(target, () => { capturedRevision = composerEditRevision.current; return { type: "text", content: { text: captured = supplied ?? textRef.current.trim(), images: capturedLocalImages.map((img) => ({ ...img })) } }; }, () => submissionLive.current.ready && !pendingQuestionOf(submissionLive.current.nativeMessages) && !pendingPluginQuestionOf(submissionLive.current.nativeMessages) && !activeProblemOf(submissionLive.current.nativeMessages), async (prepared, attempt) => {
 			if (prepared.type !== "text") return false;
 			if (!prepared.content.text.trim() && !prepared.content.images.length) throw new Error("Message text or images are required. Your input has been kept.");
 			if (beforePost && !beforePost(captured)) { attempt.cancel(); return false; }
 			draftRef.current = captured;
-			const accepted = () => { if (composerEditRevision.current === capturedRevision && textRef.current.trim() === captured) applyText(""); openingAccepted?.(); attempt.accepted(); };
+			const accepted = () => {
+				if (composerEditRevision.current === capturedRevision && textRef.current.trim() === captured) applyText("");
+				if (capturedLocalImageIds.length > 0) {
+					const sent = new Set(capturedLocalImageIds);
+					setPendingImages((prev) => {
+						const next = prev.filter((item) => !sent.has(item.id));
+						pendingImagesRef.current = next;
+						return next;
+					});
+					setImageError(null);
+				}
+				openingAccepted?.();
+				attempt.accepted();
+			};
 			attempt.deliver();
 			if (busyRef.current) return steer(prepared.content.text, prepared.content.images, accepted, attempt.refused);
 			return send({ type: "text", text: prepared.content.text, ...(prepared.content.images.length ? { images: prepared.content.images.map(image => ({ ...image })) } : {}) }, accepted, undefined, attempt.refused);
@@ -1239,6 +1286,7 @@ export function Chat({
 	const deliverOpeningPrompt = (prompt: string, captureNative = false) => {
 		let submitted = prompt;
 		openingDraftRef.current = prompt;
+		const stashedImages = readOpeningImages(chatId);
 		// Persist uncertainty BEFORE the POST: another mount must restore,
 		// not race the still-arriving request. No storage means no auto-send.
 		if (!stashOpeningPrompt(chatId, prompt, true)) {
@@ -1250,6 +1298,7 @@ export function Chat({
 		draftRef.current = prompt; // The existing 503 flow must restore it too.
 		void prepareText(captureNative ? undefined : prompt, () => {
 			clearOpeningPrompt(chatId);
+			clearOpeningImages(chatId);
 			openingDraftRef.current = null;
 			if (draftRef.current === submitted) draftRef.current = null;
 		}, captured => {
@@ -1257,9 +1306,19 @@ export function Chat({
 			const saved = stashOpeningPrompt(chatId, captured, true);
 			if (!saved) setOpeningError(true);
 			return saved;
-		}).then(accepted => {
+		}, stashedImages.length > 0 ? stashedImages : undefined).then(accepted => {
 			if (!accepted && openingMountedRef.current && openingDraftRef.current === prompt && !textRef.current) {
 				applyText(prompt);
+				if (stashedImages.length > 0 && pendingImagesRef.current.length === 0) {
+					clearOpeningImages(chatId);
+					const restored: PendingImage[] = stashedImages.map((image, i) => ({
+						id: `restored_${i}_${Date.now()}`,
+						name: `image-${i + 1}`,
+						image,
+					}));
+					pendingImagesRef.current = restored;
+					setPendingImages(restored);
+				}
 			}
 		});
 	};
@@ -1290,6 +1349,7 @@ export function Chat({
 	useEffect(() => {
 		if (!hasConfirmedConversation) return;
 		clearOpeningPrompt(chatId);
+		clearOpeningImages(chatId);
 		// A later canonical read may confirm a lost acknowledgment. Clear
 		// only the unchanged recovered draft, never the learner's newer work.
 		const opening = openingDraftRef.current;
@@ -2443,6 +2503,8 @@ export function Chat({
 							onStop={abortInFlightTurn}
 							sendAllowed={sendAllowed}
 							dictationActive={dictation.active}
+							dictation={dictation}
+							dictationDisabled={pluginOwnsDock && !pluginMicAvailable}
 							onEscape={dictation.active ? dictation.cancel : undefined}
 							// The pause affordance (owner round 16): the placeholder
 							// IS the hint — empty state, exactly where Enter-on-empty
@@ -2450,6 +2512,22 @@ export function Chat({
 							nextProblem={nextReady}
 							onNext={sendNext}
 							placeholder={nextReady ? "Ask anything, or press Enter for the next one." : undefined}
+							mobilePlaceholder={nextReady ? "Ask or tap Next…" : "Ask anything…"}
+							pendingImages={pendingImages}
+							onAttachImages={handleAttachImages}
+							onRemoveImage={handleRemoveImage}
+							imageError={imageError}
+							mobileSessionControl={
+								<MobileSessionControl
+									chatId={chatId}
+									turns={turns}
+									contextTokens={contextTokens}
+									cliContextWindow={cliContextWindowOf(nativeMessages)}
+									pricing={pricing}
+									onModelChange={recordSelectedModel}
+									onOpenDetail={syncTurns}
+								/>
+							}
 						/>
 					}
 					onSubmitAnswer={(output) => {
@@ -3224,8 +3302,8 @@ export function DockOverlay({
 
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
-			<div className="h-6 bg-gradient-to-t from-background via-background/85 to-transparent" />
-			<div ref={blockRef} className="lh-dock-block pointer-events-auto relative bg-background pb-5">
+			<div className="h-3 md:h-6 bg-gradient-to-t from-background via-background/85 to-transparent" />
+			<div ref={blockRef} className="lh-dock-block pointer-events-auto relative bg-background pb-2 md:pb-5">
 				<div ref={dockRef} data-dock-width={adaptedW ?? undefined} className={DOCK} style={adaptedW ? { maxWidth: adaptedW } : undefined}>
 					<div ref={viewportRef} data-dock-viewport="" className="pointer-events-auto">
 					<div ref={bodyRef}>
@@ -3259,7 +3337,7 @@ export function DockOverlay({
 							claim={revealPending}
 						/>
 					)}
-					<div ref={shellRef} data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
+					<div ref={shellRef} data-attachment-composer="" className={cn("pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg", !ownsDock && "max-md:rounded-[24px]")}>
 						{preparationStatus}
 						{/* Include descendant margins (notably practice thinking's
 						    bottom margin) in the natural content measurement. */}
@@ -3325,20 +3403,22 @@ export function DockOverlay({
 					</div>
 					</div>
 					</div>
-					{/* The stats row: beneath the composer/question shell, not
-					    flush to the screen bottom — static height, outside the
-					    morphing shell so it never joins a height animation. */}
-					<StatsBar
-						shortControls={setupCta}
-						turns={turns}
-						contextTokens={contextTokens}
-						cliContextWindow={cliContextWindow}
-						pricing={pricing}
-						dictationSlot={dictationSlot}
-						chatId={chatId}
-						onModelChange={onModelChange}
-						onOpenDetail={onOpenStatsDetail}
-					/>
+					{/* The stats row: desktop only (>=768px). On mobile (<768px), dictation,
+					    model/thinking/speed and session stats live inside the compact single-row
+					    pill and its fullscreen Session settings sheet; QuestionDock gets full room. */}
+					<div className="hidden md:block">
+						<StatsBar
+							shortControls={setupCta}
+							turns={turns}
+							contextTokens={contextTokens}
+							cliContextWindow={cliContextWindow}
+							pricing={pricing}
+							dictationSlot={dictationSlot}
+							chatId={chatId}
+							onModelChange={onModelChange}
+							onOpenDetail={onOpenStatsDetail}
+						/>
+					</div>
 					{/* The scroll-down disc (moved here from the Conversation,
 					    owner refinement round 2026-09-24): anchored to the BLOCK's
 					    top edge — above the composer shell AND the stats row, in

@@ -863,3 +863,142 @@ export function DictationBar({ dictation, disabled = false }: { dictation: Dicta
 		</div>
 	);
 }
+
+const INLINE_METER_CELLS = 10;
+
+/** Minimalist inline recording indicator that replaces the text input INSIDE the
+ *  mobile composer pill without adding any extra panel or height. */
+export function InlineDictationIndicator({ dictation }: { dictation: Dictation }) {
+	const { phase, levelRef, active } = dictation;
+	const [levels, setLevels] = useState<number[]>(() => new Array(INLINE_METER_CELLS).fill(0));
+
+	useEffect(() => {
+		if (!active) return;
+		setLevels(new Array(INLINE_METER_CELLS).fill(0));
+		const id = setInterval(() => {
+			setLevels((ring) => {
+				const next = ring.slice(1);
+				next.push(rmsToMeter(levelRef.current));
+				return next;
+			});
+		}, METER_TICK_MS);
+		return () => clearInterval(id);
+	}, [active, levelRef]);
+
+	const statusText = phase === "connecting" ? "Connecting…" : phase === "stopping" ? "Finishing…" : "Recording…";
+	return (
+		<div
+			data-testid="mobile-dictation-indicator"
+			className="flex h-11 min-w-0 flex-1 items-center gap-2.5 pl-2.5 pr-1 text-sm font-medium text-foreground"
+		>
+			<span className="size-2 shrink-0 animate-pulse rounded-full bg-destructive" aria-hidden />
+			<span className="shrink-0 truncate">{statusText}</span>
+			<div className="flex h-4 min-w-0 flex-1 items-center gap-[3px] max-w-24" aria-hidden>
+				{levels.map((v, i) => (
+					<span
+						key={i}
+						className="w-[2.5px] shrink-0 rounded-full bg-muted-foreground/70"
+						style={{ height: `${3 + Math.round(v * 12)}px` }}
+					/>
+				))}
+			</div>
+		</div>
+	);
+}
+
+/** Compact mobile-only error banner shown only when dictation fails (zero height otherwise). */
+export function MobileDictationError({ dictation }: { dictation: Dictation }) {
+	const { error, active, clearError } = dictation;
+	const { open: openSettings } = useSettingsDialog();
+	if (!error || active) return null;
+	const keyless = error === DICTATION_KEYLESS;
+	return (
+		<div
+			role="alert"
+			data-testid="mobile-dictation-error"
+			className="flex items-center justify-between gap-2 px-3 pt-1.5 text-xs text-destructive md:hidden"
+		>
+			{keyless ? (
+				<button
+					type="button"
+					onClick={() => {
+						clearError();
+						openSettings("keys", DEEPGRAM_KEY_ID);
+					}}
+					className="min-w-0 truncate text-left underline underline-offset-2"
+				>
+					{error}
+				</button>
+			) : (
+				<span className="min-w-0 truncate">{error}</span>
+			)}
+			<button
+				type="button"
+				aria-label="Dismiss dictation error"
+				onClick={clearError}
+				className="shrink-0 px-1 text-muted-foreground hover:text-foreground"
+			>
+				✕
+			</button>
+		</div>
+	);
+}
+
+/** Compact icon-only microphone button for the mobile composer pill (44×44 touch target). */
+export function MobileDictationButton({
+	dictation,
+	disabled = false,
+	className,
+}: {
+	dictation: Dictation;
+	disabled?: boolean;
+	className?: string;
+}) {
+	const { phase, error, toggle, active, clearError, blocked } = dictation;
+	const { open: openSettings } = useSettingsDialog();
+	const keyless = error === DICTATION_KEYLESS;
+
+	if (active) {
+		return (
+			<button
+				type="button"
+				onClick={toggle}
+				disabled={phase === "stopping"}
+				aria-label="Stop dictation"
+				data-testid="mobile-dictation-toggle"
+				className={`flex size-11 shrink-0 items-center justify-center rounded-full text-destructive transition-colors ${className ?? ""}`}
+			>
+				<span className="flex size-8 items-center justify-center rounded-full bg-destructive/15">
+					{phase === "stopping" ? (
+						<Loader2Icon className="size-4 animate-spin" />
+					) : (
+						<span className="size-2.5 rounded-[2px] bg-destructive" />
+					)}
+				</span>
+			</button>
+		);
+	}
+
+	return (
+		<button
+			type="button"
+			onClick={() => {
+				if (keyless) {
+					clearError();
+					openSettings("keys", DEEPGRAM_KEY_ID);
+				} else {
+					toggle();
+				}
+			}}
+			disabled={disabled || blocked}
+			title={error ?? "Dictate"}
+			aria-label={error ? `Dictation failed: ${error}` : "Start dictation"}
+			data-testid="mobile-dictation-toggle"
+			className={`flex size-11 shrink-0 items-center justify-center rounded-full transition-colors ${
+				error ? "text-destructive" : "text-muted-foreground hover:text-foreground"
+			} disabled:opacity-40 ${className ?? ""}`}
+		>
+			<MicIcon className="size-[18px]" />
+		</button>
+	);
+}

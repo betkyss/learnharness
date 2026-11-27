@@ -970,8 +970,52 @@ html:not(.lh-electron) .lh-floating-header {
 	padding-top: calc(0.5rem + env(safe-area-inset-top, 0px));
 }
 @media (max-width: 767px) {
+	/* Compact T3-Code-like mobile proportions: 48px TopBar + 8px bottom dock breathing room + 12px/14px side gutters. */
+	html:not(.lh-electron) .lh-top-bar {
+		height: calc(3rem + env(safe-area-inset-top, 0px));
+	}
+	.lh-transcript-column {
+		padding-inline: 0.875rem;
+	}
+	.lh-dock-block > div {
+		padding-inline: 0.75rem;
+	}
+	html:not(.lh-electron) .lh-dock-block,
+	html:not(.lh-electron) [data-home-dock] {
+		padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+	}
+	html:not(.lh-electron) .lh-mobile-fs-header {
+		padding-top: env(safe-area-inset-top, 0px);
+	}
 	html:not(.lh-electron) .graph-toolbar {
 		top: calc(52px + env(safe-area-inset-top, 0px));
+	}
+	/* Keep empty mobile composer pill strictly single-line (48px tall, no 2-line placeholder wrap). */
+	[data-mobile-placeholder][data-empty="true"]::before {
+		content: attr(data-mobile-placeholder);
+		display: block;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	/* Keep Settings & Setup strictly 100% fullscreen on mobile even when virtual keyboard shrinks visualViewport. */
+	[data-testid="settings-dialog"],
+	[data-testid="setup-dialog"],
+	html[data-short-viewport="true"] [data-testid="settings-dialog"],
+	html[data-short-viewport="true"] [data-testid="setup-dialog"] {
+		max-height: none;
+		max-width: none;
+		width: 100%;
+		height: 100%;
+	}
+	html:not(.lh-electron) [data-testid="settings-dialog"] > header,
+	html:not(.lh-electron) [data-testid="setup-dialog"] > header,
+	html[data-short-viewport="true"]:not(.lh-electron) [data-testid="settings-dialog"] > header,
+	html[data-short-viewport="true"]:not(.lh-electron) [data-testid="setup-dialog"] > header {
+		height: auto;
+		min-height: calc(3.375rem + env(safe-area-inset-top, 0px));
+		padding-top: env(safe-area-inset-top, 0px);
+		padding-bottom: 0;
 	}
 }
 @media (max-height: 500px) {

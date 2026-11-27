@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteFolderDialog, DeleteSessionDialog, folderDeleteCopy, type DeleteDialogCopy } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode, ThemeMode } from "@/src/core";
-import { DumbbellIcon, FolderPlusIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { DumbbellIcon, FolderPlusIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon, XIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -343,7 +343,7 @@ export function SessionRow({
 			className={cn(
 				"relative flex w-full items-center gap-2 text-left hover:bg-accent",
 				onContextMenu ? "pr-10 md:pr-3" : "pr-3",
-				compact ? SIDEBAR_COMPACT_ROW : "py-2",
+				compact ? SIDEBAR_COMPACT_ROW : "py-2 max-md:min-h-11 max-md:py-2.5",
 				active && "bg-accent",
 				kbdSelected && !active && "bg-accent/60 ring-1 ring-inset ring-border",
 			)}
@@ -900,7 +900,7 @@ function SessionsSidebar() {
 				"sidebar-motion shrink-0 overflow-hidden duration-200",
 				overlay
 					? cn(
-						"fixed inset-y-0 left-0 z-40 w-72",
+						"fixed inset-0 z-40 w-full",
 						open ? "translate-x-0 visible pointer-events-auto" : "-translate-x-full invisible pointer-events-none",
 					)
 					: open
@@ -909,12 +909,12 @@ function SessionsSidebar() {
 			)}
 			aria-hidden={!open}
 		>
-			<div className="flex h-full w-72 flex-col border-r bg-sidebar">
+			<div className={cn("flex h-full flex-col bg-sidebar", overlay ? "w-full" : "w-72 border-r")}>
 				{/* LH wordmark — the owner's header; close toggle sits at the edge.
 				    Merged chrome (2026-09-17): in Electron this band is the
 				    window's drag surface and starts after the traffic lights
 				    (.lh-lights-gutter); in the browser those classes are inert. */}
-				<div className="lh-drag lh-lights-gutter flex items-center justify-between px-4 py-3">
+				<div className="lh-drag lh-lights-gutter flex items-center justify-between px-4 py-3 max-md:min-h-[54px] max-md:py-2">
 					{/* The owner's mark (2026-09-17) replaces the "LH" text — still the
 					    home link, still vertically centered by the band's items-center.
 					    The 92px .lh-lights-gutter keeps it clear of the traffic lights
@@ -933,7 +933,7 @@ function SessionsSidebar() {
 						<Link
 							href="/"
 							aria-label="Home"
-							className="lh-no-drag flex size-9 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50"
+							className="lh-no-drag flex size-9 max-md:size-10 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50"
 						>
 							<LhMark className="size-6" />
 						</Link>
@@ -944,9 +944,9 @@ function SessionsSidebar() {
 							size="icon"
 							aria-label="Close sidebar"
 							onClick={toggle}
-							className="lh-no-drag"
+							className={cn("lh-no-drag", overlay && "size-10 rounded-full border border-border/70 bg-card/80")}
 						>
-							<PanelLeftCloseIcon className="size-4" />
+							{overlay ? <XIcon className="size-4" /> : <PanelLeftCloseIcon className="size-4" />}
 						</Button>
 					</Hint>
 				</div>
@@ -958,9 +958,9 @@ function SessionsSidebar() {
 						data-testid="new-session"
 						title="Teaching"
 						onClick={() => void newSession()}
-						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 max-md:min-h-11 max-md:justify-center max-md:rounded-xl max-md:border max-md:border-border/70 max-md:bg-card max-md:px-3 max-md:text-sm max-md:normal-case max-md:tracking-normal max-md:text-foreground text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 					>
-						<PlusIcon className="size-3 shrink-0" />
+						<PlusIcon className="size-3 max-md:size-4 shrink-0" />
 						<span className="min-w-0 truncate">Teaching</span>
 						<span className="sr-only">create a new teaching session</span>
 					</button>
@@ -969,9 +969,9 @@ function SessionsSidebar() {
 						data-testid="new-session-practice"
 						title="Practice"
 						onClick={() => router.push("/chat/new?mode=practice")}
-						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						className="flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 max-md:min-h-11 max-md:justify-center max-md:rounded-xl max-md:border max-md:border-border/70 max-md:bg-card max-md:px-3 max-md:text-sm max-md:normal-case max-md:tracking-normal max-md:text-foreground text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 					>
-						<DumbbellIcon className="size-3 shrink-0" />
+						<DumbbellIcon className="size-3 max-md:size-4 shrink-0" />
 						<span className="min-w-0 truncate">Practice</span>
 						<span className="sr-only">create a new practice session</span>
 					</button>
@@ -1123,7 +1123,7 @@ function SessionsSidebar() {
 					{/* Settings entry (settings-app wave): same row language as
 					    New session — quiet, bottom-pinned, opens the centered
 					    dialog (also mod+, in the keyboard registry). */}
-					<div className="lh-sidebar-footer px-3 pb-3 pt-1">
+					<div className="lh-sidebar-footer px-3 pb-3 pt-1 max-md:border-t max-md:border-border/50 max-md:pt-2">
 						<Hint label="Settings" action="open-settings" side="right">
 							<button
 								type="button"
@@ -1132,7 +1132,7 @@ function SessionsSidebar() {
 									openSettings();
 								}}
 								data-testid="settings-entry"
-								className="flex max-md:min-h-10 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="flex max-md:min-h-11 max-md:w-full max-md:rounded-xl max-md:px-3 max-md:text-sm max-md:normal-case max-md:tracking-normal max-md:text-foreground items-center gap-2 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 							>
 								<SettingsIcon className="size-3" />
 								Settings
