@@ -6,9 +6,10 @@ import { pluginQuestionOccurrenceKey, type PluginQuestionSnapshot } from "@/src/
 import type { PluginQuestionDraft } from "./session-core";
 import type { QuestionRendererRegistration } from "./plugin-manager";
 import { usePlugins } from "./plugins";
+import { ChevronDownIcon } from "lucide-react";
 import { QuestionDockBar } from "./question-dock";
 import { PathInput } from "./path-input";
-import { finishDictation, joinDictation, usePluginQuestionDictationTarget } from "./dictation";
+import { finishDictation, joinDictation, MobileDictationError, MobileFieldDictation, usePluginQuestionDictationTarget, type Dictation } from "./dictation";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { useEnterSubmits } from "./enter-submits";
@@ -23,6 +24,9 @@ const keyOf = (snapshot: PluginQuestionSnapshot) => pluginQuestionOccurrenceKey(
 interface PluginQuestionDockProps {
 	viewReader?: import("./session-view-readers").ViewReaderRef<{ available: boolean }>;
 	snapshot: PluginQuestionSnapshot; chatId: string; draft: PluginQuestionDraft; expanded: boolean; reveal: boolean; onExpand(): void;
+	onCollapse?: () => void;
+	dictation?: Dictation;
+	dictationDisabled?: boolean;
 	prepareSubmission?: PreparePluginQuestionSubmission;
 	ready: boolean; reconciliation: "ready" | "syncing" | "failed"; available: boolean; readingRef: RefObject<HTMLDivElement | null>;
 	onMicAvailable(available: boolean): void; send(input: ChatInput): Promise<boolean>; dismiss(): Promise<void>;
@@ -34,7 +38,7 @@ export function PluginQuestionDock(props: PluginQuestionDockProps) {
 }
 
 /** Host-only component seam for deterministic DOM/capture fixtures, not SDK. */
-export function PluginQuestionDockContent({ viewReader, snapshot, chatId, draft, expanded, reveal, onExpand, ready, reconciliation, available, readingRef, onMicAvailable, send, dismiss, registration, prepareSubmission }: PluginQuestionDockProps & { registration?: QuestionRendererRegistration }) {
+export function PluginQuestionDockContent({ viewReader, snapshot, chatId, draft, expanded, reveal, onExpand, onCollapse, dictation, dictationDisabled = false, ready, reconciliation, available, readingRef, onMicAvailable, send, dismiss, registration, prepareSubmission }: PluginQuestionDockProps & { registration?: QuestionRendererRegistration }) {
 	const controller = useOptionalInteractionLayers();
 	const root = useRef<HTMLDivElement>(null);
 	const editor = useRef<HTMLDivElement>(null);
@@ -146,7 +150,20 @@ export function PluginQuestionDockContent({ viewReader, snapshot, chatId, draft,
 	const canSubmit = canonicalReady && ready && available && !!registration && leaseRegistration.current === registration && leaseKey.current === key && !failed && !!lease.current?.ready && draft.answer.status === "ready" && !submitting;
 	return <div ref={root} data-testid="plugin-question-dock">
 		{!expanded && <QuestionDockBar toolName="explain" question={snapshot.input.question} toolLabel={snapshot.label} variant={reveal ? "reveal" : "collapsed"} onExpand={() => { void finishDictation().then(onExpand); }} />}
-		<div className={expanded ? "dock-variant" : "invisible h-0 overflow-hidden"}>
+		<div className={expanded ? "dock-variant relative" : "invisible h-0 overflow-hidden"}>
+			{onCollapse && (
+				<button
+					type="button"
+					data-testid="plugin-question-dock-collapse"
+					aria-label="Collapse question"
+					title="Hide question"
+					onClick={onCollapse}
+					className="absolute right-2.5 top-2 z-10 flex items-center gap-1 rounded-full border border-border/70 bg-card/90 px-2.5 py-1 max-md:min-h-8 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-accent hover:text-foreground active:bg-accent"
+				>
+					<ChevronDownIcon className="size-3.5" aria-hidden />
+					<span>Hide</span>
+				</button>
+			)}
 			<div className="space-y-3 px-4 py-3">
 				<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{snapshot.input.type === "predict" ? "Prediction" : snapshot.label}</div>
 				<PluginQuestionPresentation snapshot={snapshot} chatId={chatId} registration={mountRegistration} failed={() => { setFailed(true); lease.current?.dispose(); }} />
@@ -166,10 +183,18 @@ export function PluginQuestionDockContent({ viewReader, snapshot, chatId, draft,
 							if (event.key === "Enter" && !event.altKey && (!event.shiftKey || event.metaKey || event.ctrlKey)) { event.preventDefault(); void submit(); }
 						}} className="field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground/70" placeholder="Your thinking" />
 					</>}
+					{dictation && <MobileDictationError dictation={dictation} />}
 					<div className="flex items-center justify-between gap-2 p-1">
-						<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">↵ submits · ⇧↵ newline</span>
+						{dictation && (
+							<MobileFieldDictation
+								dictation={dictation}
+								disabled={dictationDisabled || !micAvailable || submitting}
+								testIdPrefix="plugin-question"
+							/>
+						)}
+						<span aria-hidden className="hidden pl-1.5 text-xs text-muted-foreground md:inline [@media(hover:none)_and_(pointer:coarse)]:hidden">↵ submits · ⇧↵ newline</span>
 						{unavailable && <Button type="button" variant="ghost" disabled={!ready || submitting} onClick={() => { if (latch.current) return; latch.current = true; void finishDictation().then(dismiss).catch(() => {}).finally(() => { latch.current = false; }); }}>Dismiss question</Button>}
-						<Button type="submit" disabled={!canSubmit} className="ml-auto h-9 rounded-[6px] px-3.5 text-sm font-medium">Submit answer</Button>
+						<Button type="submit" disabled={!canSubmit} className="ml-auto h-9 shrink-0 rounded-[6px] px-3.5 text-sm font-medium">Submit answer</Button>
 					</div>
 				</div>
 			</form>

@@ -20,6 +20,10 @@ import {
 } from "../components/mobile-session-sheet.tsx";
 import { SettingsDialogBody } from "../components/settings/settings-dialog.tsx";
 import { PluginsContext } from "../components/plugins.tsx";
+import { QuestionDock } from "../components/question-dock.tsx";
+import { PracticeDock } from "../components/practice-dock.tsx";
+import { ReadingThinkingField } from "../components/reading-thinking.tsx";
+import { applyVisualViewportToRoot, computeVisualViewportMetrics } from "../components/visual-viewport.tsx";
 import type { ModelCatalogEntry } from "../src/core/index.ts";
 
 function makeDictation(overrides: Partial<Dictation> = {}): Dictation {
@@ -301,5 +305,127 @@ describe("Single-row mobile composer pill + inline dictation + fullscreen overla
 		const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 		assert.ok(css.includes("height: calc(3rem + env(safe-area-inset-top, 0px))"), "globals.css must set 48px + safe-area-top on mobile TopBar");
 		assert.ok(css.includes("[data-mobile-placeholder][data-empty=\"true\"]::before"), "globals.css must keep mobile placeholder single-line");
+		assert.ok(css.includes('html[data-keyboard-open="true"] .lh-app-root'), "globals.css must pin .lh-app-root to --vv-top when iOS keyboard opens");
+		assert.ok(css.includes('html[data-short-viewport="true"] [data-testid="question-dock"] [contenteditable]'), "globals.css must keep QuestionDock editable compact when iOS keyboard shrinks visualViewport");
+	});
+
+	it("tracks --vv-top on iOS keyboard pan and clears it on close to prevent black screen void", () => {
+		const props = new Map<string, string>();
+		const dataset: Record<string, string | undefined> = {};
+		const fakeRoot = {
+			style: {
+				setProperty: (k: string, v: string) => { props.set(k, v); },
+				removeProperty: (k: string) => { props.delete(k); },
+			},
+			dataset,
+		} as unknown as HTMLElement;
+
+		// iOS pans visualViewport.offsetTop downward when focusing bottom "Your thinking"
+		const panned = computeVisualViewportMetrics({
+			innerWidth: 390,
+			innerHeight: 844,
+			visualViewport: { width: 390, height: 450, offsetTop: 350, offsetLeft: 0, scale: 1 },
+		});
+		applyVisualViewportToRoot(fakeRoot, panned);
+		assert.equal(props.get("--vvh"), "450px");
+		assert.equal(props.get("--vv-top"), "350px");
+		assert.equal(dataset.keyboardOpen, "true");
+
+		// Overscroll beyond keyboardInset is clamped cleanly
+		const overscrolled = computeVisualViewportMetrics({
+			innerWidth: 390,
+			innerHeight: 844,
+			visualViewport: { width: 390, height: 450, offsetTop: 440, offsetLeft: 0, scale: 1 },
+		});
+		applyVisualViewportToRoot(fakeRoot, overscrolled);
+		assert.equal(props.get("--vv-top"), "394px");
+
+		// Keyboard closes → --vvh and --vv-top both removed
+		const closed = computeVisualViewportMetrics({
+			innerWidth: 390,
+			innerHeight: 844,
+			visualViewport: { width: 390, height: 797, offsetTop: 0, offsetLeft: 0, scale: 1 },
+		});
+		applyVisualViewportToRoot(fakeRoot, closed);
+		assert.equal(props.has("--vvh"), false);
+		assert.equal(props.has("--vv-top"), false);
+		assert.equal(dataset.keyboardOpen, undefined);
+	});
+
+	it("renders explicit Hide collapse and built-in mobile dictation on QuestionDock, ReadingThinkingField, and PracticeDock", () => {
+		const qIdleHtml = renderToStaticMarkup(
+			createElement(QuestionDock, {
+				toolName: "quiz",
+				toolCallId: "call_q1",
+				input: {
+					question: "Which invariant holds?",
+					options: [{ label: "A" }, { label: "B" }],
+					correctAnswer: "A",
+					explanation: "Because A.",
+				},
+				expanded: true,
+				onExpand: () => {},
+				onCollapse: () => {},
+				dictation: makeDictation(),
+				onSubmit: () => {},
+			}),
+		);
+		assert.ok(qIdleHtml.includes('data-testid="question-dock-collapse"'), "expanded QuestionDock must expose Hide collapse button");
+		assert.ok(qIdleHtml.includes('data-testid="question-dictation-toggle"'), "QuestionDock must expose built-in mobile mic button");
+
+		const qRecHtml = renderToStaticMarkup(
+			createElement(QuestionDock, {
+				toolName: "quiz",
+				toolCallId: "call_q1",
+				input: {
+					question: "Which invariant holds?",
+					options: [{ label: "A" }, { label: "B" }],
+					correctAnswer: "A",
+					explanation: "Because A.",
+				},
+				expanded: true,
+				onExpand: () => {},
+				onCollapse: () => {},
+				dictation: makeDictation({ phase: "recording", active: true }),
+				onSubmit: () => {},
+			}),
+		);
+		assert.ok(qRecHtml.includes('data-testid="question-dictation-indicator"'), "QuestionDock must show inline recording indicator when active");
+
+		const readingIdleHtml = renderToStaticMarkup(
+			createElement(ReadingThinkingField, {
+				value: "",
+				revision: 0,
+				onChange: () => {},
+				claim: true,
+				dictation: makeDictation(),
+			}),
+		);
+		assert.ok(readingIdleHtml.includes('data-testid="reading-dictation-toggle"'), "ReadingThinkingField must expose built-in mobile mic button");
+
+		const readingRecHtml = renderToStaticMarkup(
+			createElement(ReadingThinkingField, {
+				value: "",
+				revision: 0,
+				onChange: () => {},
+				claim: true,
+				dictation: makeDictation({ phase: "recording", active: true }),
+			}),
+		);
+		assert.ok(readingRecHtml.includes('data-testid="reading-dictation-indicator"'), "ReadingThinkingField must show inline recording indicator when active");
+
+		const practiceHtml = renderToStaticMarkup(
+			createElement(PracticeDock, {
+				problemCallId: "p_1",
+				input: { statement: "Solve x + 1 = 2" },
+				expanded: true,
+				onExpand: () => {},
+				onCollapse: () => {},
+				dictation: makeDictation(),
+				onSubmit: () => {},
+			}),
+		);
+		assert.ok(practiceHtml.includes('data-testid="practice-dock-collapse"'), "PracticeDock must expose Hide collapse button");
+		assert.ok(practiceHtml.includes('data-testid="practice-dictation-toggle"'), "PracticeDock must expose built-in mobile mic button");
 	});
 });

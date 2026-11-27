@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ViewReaderRef, NativeQuestionViewState } from "./session-view-readers";
-import { ArrowDownIcon, ChevronRightIcon, PlayIcon } from "lucide-react";
+import { ArrowDownIcon, ChevronDownIcon, ChevronRightIcon, PlayIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { finishDictation, isDictationActive, joinDictation, useDictationTarget } from "@/components/dictation";
+import { finishDictation, isDictationActive, joinDictation, MobileDictationError, MobileFieldDictation, useDictationTarget, type Dictation } from "@/components/dictation";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
@@ -188,6 +188,10 @@ export interface QuestionDockProps {
 	 */
 	reveal?: boolean;
 	onExpand: () => void;
+	/** Explicit collapse back to the compact strip (essential on mobile where the expanded card fills the viewport). */
+	onCollapse?: () => void;
+	/** Built-in dictation controller for mobile (<768px) where desktop StatsBar is hidden. */
+	dictation?: Dictation;
 	onSubmit: (output: QuestionAnswerData) => void;
 	onPrepareSubmission?: PrepareBuiltinSubmission;
 	hasPendingInput?: (question: QuestionData) => boolean;
@@ -231,6 +235,8 @@ export function QuestionDock({
 	expanded,
 	reveal = false,
 	onExpand,
+	onCollapse,
+	dictation,
 	onSubmit,
 	onPrepareSubmission,
 	hasPendingInput,
@@ -291,6 +297,8 @@ export function QuestionDock({
 					input={parsed}
 					phase={phase}
 					active={expanded}
+					onCollapse={onCollapse}
+					dictation={dictation}
 					onSubmit={onSubmit}
 					onPrepareSubmission={onPrepareSubmission}
 					hasPendingInput={hasPendingInput}
@@ -401,6 +409,8 @@ function QuestionDockForm({
 	input,
 	phase = "probe",
 	active,
+	onCollapse,
+	dictation,
 	onSubmit,
 	onPrepareSubmission,
 	hasPendingInput,
@@ -1089,6 +1099,19 @@ function QuestionDockForm({
 
 	return (
 		<div ref={rootRef} data-testid="question-dock" data-question-layout={columns ? "columns" : "stacked"} className={cn("relative", (qd.options.length > 6 || qd.question.length > 240) && "question-long")}>
+			{onCollapse && (
+				<button
+					type="button"
+					data-testid="question-dock-collapse"
+					aria-label="Collapse question"
+					title="Hide question"
+					onClick={onCollapse}
+					className="absolute right-2.5 top-2 z-10 flex items-center gap-1 rounded-full border border-border/70 bg-card/90 px-2.5 py-1 max-md:min-h-8 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-accent hover:text-foreground active:bg-accent"
+				>
+					<ChevronDownIcon className="size-3.5" aria-hidden />
+					<span>Hide</span>
+				</button>
+			)}
 			{/* ONE subtree for both arrangements (identity is what keeps focus,
 			    the Other caret, scroll positions and an active drag across a
 			    layout switch): only classes and attributes change.
@@ -1213,9 +1236,17 @@ function QuestionDockForm({
 						/>
 					)}
 
- <div className="flex items-center justify-between gap-2 p-1">
+					{dictation && <MobileDictationError dictation={dictation} />}
+					<div className="flex items-center justify-between gap-2 p-1">
+						{dictation && (
+							<MobileFieldDictation
+								dictation={dictation}
+								disabled={compactionRunning || preparing}
+								testIdPrefix="question"
+							/>
+						)}
 						{(qd.options.length > 6 || qd.question.length > 240) && qd.mode !== "text" && <span role="status" className="pl-1.5 text-xs text-muted-foreground">{sel.selected.size + Number(sel.otherSelected)} selected</span>}
-{compactionRunning ? (
+						{compactionRunning ? (
 							<span aria-hidden className="question-submit-hint pl-1.5 text-xs text-muted-foreground">
 								compacting session…
 							</span>
@@ -1227,7 +1258,7 @@ function QuestionDockForm({
 						<Button
 							type="submit"
 							disabled={!canSubmit || compactionRunning || preparing}
-							className="ml-auto h-9 rounded-sm px-3.5 text-sm font-medium"
+							className="ml-auto h-9 shrink-0 rounded-sm px-3.5 text-sm font-medium"
 						>
 							Submit answer
 						</Button>

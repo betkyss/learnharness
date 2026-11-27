@@ -2,10 +2,10 @@
 
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ViewReaderRef } from "./session-view-readers";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
-import { joinDictation, useDictationTarget } from "@/components/dictation";
+import { joinDictation, MobileDictationError, MobileFieldDictation, useDictationTarget, type Dictation } from "@/components/dictation";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
@@ -44,6 +44,10 @@ export interface PracticeDockProps {
 	/** Collapse state, owned by the DockOverlay. */
 	expanded: boolean;
 	onExpand: () => void;
+	/** Explicit collapse back to the compact strip. */
+	onCollapse?: () => void;
+	/** Built-in dictation controller for mobile (<768px) where desktop StatsBar is hidden. */
+	dictation?: Dictation;
 	/** text — POST {type:"thinking"} (one lane; the register is read from the text). */
 	onSubmit: (text: string) => void;
 	onPrepareSubmission?: PrepareThinkingSubmission;
@@ -66,7 +70,7 @@ export interface PracticeDockProps {
 	compactionRunning?: boolean;
 }
 
-export function PracticeDock({ viewReader, problemCallId, input, expanded, onExpand, onSubmit, onPrepareSubmission, customInput, hasPendingInput = false, preparing = false, onEscape, compactionRunning = false }: PracticeDockProps) {
+export function PracticeDock({ viewReader, problemCallId, input, expanded, onExpand, onCollapse, dictation, onSubmit, onPrepareSubmission, customInput, hasPendingInput = false, preparing = false, onEscape, compactionRunning = false }: PracticeDockProps) {
 	const controller = useOptionalInteractionLayers();
 	const rootRef = useRef<HTMLElement>(null);
 	const [nativeThinking, setNativeThinking] = useState("");
@@ -140,9 +144,22 @@ export function PracticeDock({ viewReader, problemCallId, input, expanded, onExp
 
 	/* ── the expanded form ── */
 	return (
-		<div ref={element => { rootRef.current = element; }} data-testid="practice-dock" data-problem={problemCallId}>
+		<div ref={element => { rootRef.current = element; }} data-testid="practice-dock" data-problem={problemCallId} className="relative">
 			{!expanded && bar}
 			<div hidden={!expanded}>
+			{onCollapse && (
+				<button
+					type="button"
+					data-testid="practice-dock-collapse"
+					aria-label="Collapse problem"
+					title="Hide problem"
+					onClick={onCollapse}
+					className="absolute right-2.5 top-2 z-10 flex items-center gap-1 rounded-full border border-border/70 bg-card/90 px-2.5 py-1 max-md:min-h-8 text-xs font-medium text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-accent hover:text-foreground active:bg-accent"
+				>
+					<ChevronDownIcon className="size-3.5" aria-hidden />
+					<span>Hide</span>
+				</button>
+			)}
 			{/* The agent's half: the 'Problem' eyebrow (mirroring the quiz
 			    cards' label row — owner round, 2026-10-05) + the statement,
 			    markdown + LaTeX rendered, capped by the measured column
@@ -198,16 +215,29 @@ export function PracticeDock({ viewReader, problemCallId, input, expanded, onExp
 				    question dock's — hint left, the SAME Button (h-9, px-3.5),
 				    one p-1 row. Corner radii concentric: shell 16 − m-1.5 (6) =
 				    field 10 − p-1 (4) = button 6. */}
+				{dictation && <MobileDictationError dictation={dictation} />}
 				<div className="flex items-center justify-between gap-2 p-1">
-					<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">
+					{dictation && (
+						<MobileFieldDictation
+							dictation={dictation}
+							disabled={compactionRunning || preparing}
+							testIdPrefix="practice"
+						/>
+					)}
+					<span aria-hidden className="hidden pl-1.5 text-xs text-muted-foreground md:inline [@media(hover:none)_and_(pointer:coarse)]:hidden">
 						{compactionRunning ? "compacting session…" : "↵ submits · ⇧↵ newline"}
 					</span>
+					{compactionRunning && (
+						<span aria-hidden className="pl-1.5 text-xs text-muted-foreground md:hidden">
+							compacting session…
+						</span>
+					)}
 					<Button
 						type="button"
 						data-testid="practice-send"
 						disabled={(customInput ? !customInput.ready : (!thinking.trim() && !hasPendingInput)) || compactionRunning || preparing}
 						onClick={() => submit()}
-						className="ml-auto h-9 rounded-sm px-3.5 text-sm font-medium"
+						className="ml-auto h-9 shrink-0 rounded-sm px-3.5 text-sm font-medium"
 					>
 						{customInput ? "Submit" : "Submit thinking"}
 					</Button>

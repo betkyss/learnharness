@@ -67,11 +67,14 @@ export function computeVisualViewportMetrics(win: ViewportWindowLike): VisualVie
  *  removing `--vvh` when closed lets CSS `--lh-app-height` fill the screen. */
 export function applyVisualViewportToRoot(root: HTMLElement, metrics: VisualViewportMetrics): void {
 	if (metrics.isKeyboardOpen) {
+		const clampedTop = Math.min(metrics.offsetTop, Math.max(0, metrics.keyboardInset));
 		root.style.setProperty("--vvh", `${metrics.height}px`);
+		root.style.setProperty("--vv-top", `${clampedTop}px`);
 		root.style.setProperty("--keyboard-inset", `${metrics.keyboardInset}px`);
 		root.dataset.keyboardOpen = "true";
 	} else {
 		root.style.removeProperty("--vvh");
+		root.style.removeProperty("--vv-top");
 		root.style.setProperty("--keyboard-inset", "0px");
 		delete root.dataset.keyboardOpen;
 	}
@@ -80,15 +83,23 @@ export function applyVisualViewportToRoot(root: HTMLElement, metrics: VisualView
 	else delete root.dataset.shortViewport;
 }
 
-/** Mounted once in the root layout to keep `--vvh` / `--keyboard-inset` /
+/** Mounted once in the root layout to keep `--vvh` / `--vv-top` / `--keyboard-inset` /
  *  `data-short-viewport` synced with iOS virtual keyboard resize/scroll events. */
 export function VisualViewportSync() {
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 		const root = document.documentElement;
 		let raf = 0;
+		let wasKeyboardOpen = false;
 		const sync = () => {
-			applyVisualViewportToRoot(root, computeVisualViewportMetrics(window));
+			const metrics = computeVisualViewportMetrics(window);
+			applyVisualViewportToRoot(root, metrics);
+			// Keep document layout scroll at 0 when iOS pans on focus or after keyboard closes,
+			// while --vv-top tracks visualViewport.offsetTop for fixed-positioned app chrome.
+			if ((metrics.isKeyboardOpen || wasKeyboardOpen) && window.scrollY !== 0) {
+				window.scrollTo(0, 0);
+			}
+			wasKeyboardOpen = metrics.isKeyboardOpen;
 		};
 		const schedule = () => {
 			if (raf) cancelAnimationFrame(raf);

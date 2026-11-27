@@ -208,10 +208,13 @@ export function useDockHeight({
 		const question = expanded ? contentRef.current?.querySelector(DOCK_HEIGHT_REGION) : null;
 		if (question) observer.observe(question);
 		window.addEventListener("resize", observedMeasure);
+		const vv = window.visualViewport;
+		vv?.addEventListener("resize", observedMeasure);
 		return () => {
 			active = false;
 			observer.disconnect();
 			window.removeEventListener("resize", observedMeasure);
+			vv?.removeEventListener("resize", observedMeasure);
 		};
 	}, [measure, mode, expanded, scrollRef, blockRef, viewportRef, bodyRef, contentRef]);
 }

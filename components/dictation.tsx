@@ -944,6 +944,105 @@ export function MobileDictationError({ dictation }: { dictation: Dictation }) {
 	);
 }
 
+/** Compact inline dictation control for mobile question / reading-thinking fields (<768px).
+ *  Shows a single mic button when idle, and a minimalist live dot + waveform + stop button
+ *  while recording — zero desktop impact (`md:hidden`). */
+export function MobileFieldDictation({
+	dictation,
+	disabled = false,
+	onToggle,
+	testIdPrefix,
+	compact = false,
+	className,
+}: {
+	dictation: Dictation;
+	disabled?: boolean;
+	/** Optional override for starting/stopping into a specific field destination. */
+	onToggle?: () => void;
+	testIdPrefix: string;
+	compact?: boolean;
+	className?: string;
+}) {
+	const { phase, error, levelRef, active, clearError, blocked } = dictation;
+	const { open: openSettings } = useSettingsDialog();
+	const keyless = error === DICTATION_KEYLESS;
+	const [levels, setLevels] = useState<number[]>(() => new Array(8).fill(0));
+
+	useEffect(() => {
+		if (!active) return;
+		setLevels(new Array(8).fill(0));
+		const id = setInterval(() => {
+			setLevels((ring) => {
+				const next = ring.slice(1);
+				next.push(rmsToMeter(levelRef.current));
+				return next;
+			});
+		}, METER_TICK_MS);
+		return () => clearInterval(id);
+	}, [active, levelRef]);
+
+	const trigger = onToggle ?? dictation.toggle;
+	const statusText = phase === "connecting" ? "Connecting…" : phase === "stopping" ? "Finishing…" : "Recording…";
+
+	if (active) {
+		return (
+			<div
+				data-testid={`${testIdPrefix}-dictation-indicator`}
+				className={`flex min-w-0 items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 pl-2.5 pr-1 py-0.5 md:hidden ${className ?? ""}`}
+			>
+				<span className="size-2 shrink-0 animate-pulse rounded-full bg-destructive" aria-hidden />
+				<span className="truncate text-xs font-medium text-foreground">{statusText}</span>
+				<div className="flex h-3.5 shrink-0 items-center gap-[2px]" aria-hidden>
+					{levels.map((v, i) => (
+						<span
+							key={i}
+							className="w-[2px] rounded-full bg-destructive/75"
+							style={{ height: `${3 + Math.round(v * 10)}px` }}
+						/>
+					))}
+				</div>
+				<button
+					type="button"
+					onClick={trigger}
+					disabled={phase === "stopping"}
+					aria-label="Stop dictation"
+					data-testid={`${testIdPrefix}-dictation-toggle`}
+					className={`flex ${compact ? "size-7" : "size-8"} shrink-0 items-center justify-center rounded-full bg-destructive/20 text-destructive transition-colors active:bg-destructive/30`}
+				>
+					{phase === "stopping" ? (
+						<Loader2Icon className="size-3.5 animate-spin" />
+					) : (
+						<span className="size-2.5 rounded-[2px] bg-destructive" />
+					)}
+				</button>
+			</div>
+		);
+	}
+
+	return (
+		<button
+			type="button"
+			onClick={() => {
+				if (keyless) {
+					clearError();
+					openSettings("keys", DEEPGRAM_KEY_ID);
+				} else {
+					trigger();
+				}
+			}}
+			disabled={disabled || blocked}
+			title={error ?? "Dictate"}
+			aria-label={error ? `Dictation failed: ${error}` : "Start dictation"}
+			data-testid={`${testIdPrefix}-dictation-toggle`}
+			className={`flex ${compact ? "size-8" : "size-9"} shrink-0 items-center justify-center rounded-full border border-border/70 bg-card/70 transition-colors active:bg-accent md:hidden ${
+				error ? "border-destructive/50 text-destructive" : "text-muted-foreground hover:text-foreground"
+			} disabled:opacity-40 ${className ?? ""}`}
+		>
+			<MicIcon className={compact ? "size-4" : "size-[17px]"} />
+		</button>
+	);
+}
+
 /** Compact icon-only microphone button for the mobile composer pill (44×44 touch target). */
 export function MobileDictationButton({
 	dictation,

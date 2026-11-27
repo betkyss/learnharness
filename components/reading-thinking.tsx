@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { joinDictation, useDictationTarget } from "@/components/dictation";
+import { joinDictation, MobileDictationError, MobileFieldDictation, useDictationTarget, type Dictation } from "@/components/dictation";
 import { composingQuestionKey, pluginQuestionKeySuppressed } from "./plugin-question-keys";
 import { PathInput } from "@/components/path-input";
 import { useOptionalInteractionLayers } from "./interaction-layers";
@@ -30,6 +30,8 @@ export function ReadingThinkingField({
 	onOpen,
 	claim,
 	inputRef,
+	dictation,
+	onDictationStart,
 }: {
 	value: string;
 	revision: number;
@@ -44,6 +46,10 @@ export function ReadingThinkingField({
 	/** Primary dictation claim — true while the check is behind its reveal. */
 	claim: boolean;
 	inputRef?: RefObject<HTMLDivElement | null>;
+	/** Built-in dictation controller for mobile (<768px) where desktop StatsBar is hidden. */
+	dictation?: Dictation;
+	/** Notifies DockOverlay that this field explicitly initiated the active dictation run. */
+	onDictationStart?: () => void;
 }) {
 	const controller = useOptionalInteractionLayers();
 	const [draft, setDraft] = useState(value);
@@ -56,18 +62,38 @@ export function ReadingThinkingField({
 		setDraft(next);
 		onChange(next);
 	}, [onChange]);
-	useDictationTarget(
-		useCallback((text: string) => applyDraft(joinDictation(draftRef.current, text)), [applyDraft]),
-		claim,
-	);
+	const appendDictated = useCallback((text: string) => applyDraft(joinDictation(draftRef.current, text)), [applyDraft]);
+	useDictationTarget(appendDictated, claim);
+	const handleToggleDictation = useCallback(() => {
+		if (!dictation) return;
+		if (dictation.active) {
+			dictation.stop();
+			return;
+		}
+		onDictationStart?.();
+		// Target this field explicitly under id:"main" so dictation works even after
+		// the check is expanded AND finishDictation() flushes before submitting.
+		dictation.toggleFor({ id: "main", append: appendDictated });
+	}, [dictation, onDictationStart, appendDictated]);
 	return (
 		<div
 			data-testid="reading-thinking-field"
 			className="pointer-events-auto mb-2 rounded-2xl border bg-card/60 px-3 py-2 transition-colors focus-within:border-primary/50"
 		>
-			<div className="pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-				Thinking while reading
+			<div className="flex items-center justify-between gap-2 pb-1">
+				<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+					Thinking while reading
+				</div>
+				{dictation && (
+					<MobileFieldDictation
+						dictation={dictation}
+						onToggle={handleToggleDictation}
+						testIdPrefix="reading"
+						compact
+					/>
+				)}
 			</div>
+			{dictation && <MobileDictationError dictation={dictation} />}
 			<PathInput
 				ref={inputRef}
 				value={draft}

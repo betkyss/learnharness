@@ -904,6 +904,16 @@ html[data-short-viewport="true"] .graph-detail > header { min-height: 32px; padd
 html[data-short-viewport="true"] .graph-detail > div { padding: 8px 12px; }
 html[data-short-viewport="true"] .lh-dock-block,
 html[data-short-viewport="true"] [data-home-dock] { padding-bottom: 8px; }
+html[data-short-viewport="true"] [data-testid="question-dock"] [contenteditable] { min-height: 40px; max-height: none; overflow: visible; }
+/* Lock app frame to the live visualViewport when iOS opens the software keyboard and pans offsetTop,
+   preventing the shrunk --vvh container from scrolling above the screen into black body void. */
+html[data-keyboard-open="true"] .lh-app-root {
+	position: fixed;
+	inset-inline: 0;
+	top: var(--vv-top, 0px);
+	height: var(--vvh, var(--lh-app-height, 100dvh));
+	overflow: hidden;
+}
 
 .short-controls-panel [data-testid="model-control"] { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; }
 .short-controls-panel [data-testid="model-control"] > button { width: 100%; justify-content: space-between; }
@@ -1016,6 +1026,15 @@ html:not(.lh-electron) .lh-floating-header {
 		min-height: calc(3.375rem + env(safe-area-inset-top, 0px));
 		padding-top: env(safe-area-inset-top, 0px);
 		padding-bottom: 0;
+	}
+	/* Keep fixed fullscreen sheets aligned to visualViewport when the iOS keyboard is open. */
+	html[data-keyboard-open="true"] [data-testid="mobile-session-sheet-backdrop"],
+	html[data-keyboard-open="true"] [data-testid="settings-backdrop"],
+	html[data-keyboard-open="true"] [data-testid="setup-backdrop"],
+	html[data-keyboard-open="true"] [data-session-sidebar] {
+		top: var(--vv-top, 0px);
+		bottom: auto;
+		height: var(--vvh, var(--lh-app-height, 100dvh));
 	}
 }
 @media (max-height: 500px) {

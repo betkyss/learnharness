@@ -208,7 +208,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	return (
 		<SidebarContext.Provider value={{ open: narrow ? (!IS_ELECTRON && drawerOpen) : open, toggle, overlay: narrow && !IS_ELECTRON, close: () => setDrawerOpen(false) }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
-			<div className={cn("flex h-[var(--vvh,var(--lh-app-height,100dvh))]", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity,transform]")}>{children}</div>
+			<div className={cn("lh-app-root flex h-[var(--vvh,var(--lh-app-height,100dvh))]", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity,transform]")}>{children}</div>
 		</SidebarContext.Provider>
 	);
 }

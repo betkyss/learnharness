@@ -2466,6 +2466,8 @@ export function Chat({
 					pricing={pricing}
 					onOpenStatsDetail={syncTurns}
 					onReserve={setDockReserve}
+					dictation={dictation}
+					dictationDisabled={pluginOwnsDock && !pluginMicAvailable}
 					dictationSlot={<DictationBar dictation={dictation} disabled={pluginOwnsDock && !pluginMicAvailable} />}
 					dictationCancel={dictation.cancel}
 					queuedSteers={visibleQueuedSteers(steerQueue, nativeMessages)}
@@ -2805,6 +2807,8 @@ export function DockOverlay({
 	onReserve,
 	plan,
 	onOpenPlan,
+	dictation,
+	dictationDisabled = false,
 	dictationSlot,
 	dictationCancel,
 	setupCta,
@@ -2876,6 +2880,8 @@ export function DockOverlay({
 	onOpenPlan: () => void;
 	/** The dictation strip (STT wave): rendered in the stats bar's middle
 	 *  slot — the mic button + live meter (components/dictation.tsx). */
+	dictation?: Dictation;
+	dictationDisabled?: boolean;
 	dictationSlot?: React.ReactNode;
 	/** Esc in a pending question's field stops dictation (the strip is the
 	 *  stats bar's; the stop belongs to the page-owned hook, threaded down). */
@@ -2927,9 +2933,11 @@ export function DockOverlay({
 	// measures the bar, the reserve keeps the composer's height, and the
 	// only motion is the teaching text itself.
 	const prevPendingIdRef = useRef(pendingId);
+	const manualCollapsedRef = useRef(false);
 	if (pendingId !== prevPendingIdRef.current) {
 		const wasQuestion = prevPendingIdRef.current !== null;
 		prevPendingIdRef.current = pendingId;
+		manualCollapsedRef.current = false;
 		if (pendingId && requiresReveal) {
 			const arrival = revealArrival(wasQuestion);
 			setExpanded(arrival.expanded);
@@ -3184,12 +3192,78 @@ export function DockOverlay({
 		});
 	};
 	const expandAndReveal = () => {
+		manualCollapsedRef.current = false;
 		setRevealed(true); // the teach-check invitation was accepted (W5)
 		setExpanded(true);
 		void suppressFoldDuringReveal();
 	};
+	const collapseDock = useCallback(() => {
+		manualCollapsedRef.current = true;
+		const active = document.activeElement;
+		if (active instanceof HTMLElement && blockRef.current?.contains(active)) {
+			active.blur();
+		}
+		setExpanded(false);
+	}, []);
 	const expandAndRevealRef = useRef(expandAndReveal);
 	expandAndRevealRef.current = expandAndReveal;
+
+	// Track which mobile field started dictation so inline waveform + errors appear
+	// strictly on that field while still sharing id:"main" with finishDictation().
+	const [dictationTarget, setDictationTarget] = useState<"reading" | "question" | null>(null);
+	useEffect(() => {
+		if (!dictation?.active && !dictation?.error) setDictationTarget(null);
+	}, [dictation?.active, dictation?.error]);
+	const readingOwnsDictation = Boolean(dictation?.active && (dictationTarget === "reading" || (dictationTarget === null && revealPending)));
+	const questionOwnsDictation = Boolean(dictation?.active && (dictationTarget === "question" || (dictationTarget === null && !revealPending)));
+	const readingDictation: Dictation | undefined = dictation ? {
+		...dictation,
+		phase: readingOwnsDictation ? dictation.phase : "idle",
+		active: readingOwnsDictation,
+		blocked: Boolean(dictation.blocked) || (dictation.active && !readingOwnsDictation),
+		error: dictationTarget === "question" ? null : dictation.error,
+	} : undefined;
+	const questionDictation: Dictation | undefined = dictation ? {
+		...dictation,
+		phase: questionOwnsDictation ? dictation.phase : "idle",
+		active: questionOwnsDictation,
+		blocked: Boolean(dictation.blocked) || (dictation.active && !questionOwnsDictation),
+		error: dictationTarget === "reading" ? null : dictation.error,
+		toggle: () => {
+			if (questionOwnsDictation) {
+				dictation.stop();
+				return;
+			}
+			if (!dictation.active) setDictationTarget("question");
+			dictation.toggle();
+		},
+	} : undefined;
+
+	// Keep focused inputs (e.g. "Your thinking" / "Thinking while reading") scrolled into view
+	// inside [data-dock-viewport] when the iOS virtual keyboard shrinks the visible height.
+	useEffect(() => {
+		const vp = viewportRef.current;
+		if (!vp || !ownsDock) return;
+		const keepFocusedVisible = () => {
+			const active = document.activeElement;
+			if (!(active instanceof HTMLElement) || !vp.contains(active)) return;
+			const field = active.closest<HTMLElement>(
+				'[data-testid="thinking-field"], [data-testid="answer-field"], [data-testid="reading-thinking-field"], [data-testid="practice-thinking-field"], [data-testid="other-option"]',
+			) ?? active;
+			requestAnimationFrame(() => {
+				if (vp.scrollHeight > vp.clientHeight + 1) {
+					field.scrollIntoView({ block: "nearest" });
+				}
+			});
+		};
+		vp.addEventListener("focusin", keepFocusedVisible);
+		const vv = window.visualViewport;
+		vv?.addEventListener("resize", keepFocusedVisible);
+		return () => {
+			vp.removeEventListener("focusin", keepFocusedVisible);
+			vv?.removeEventListener("resize", keepFocusedVisible);
+		};
+	}, [ownsDock]);
 	// ENTER OPENS THE WAITING CHECK (owner, keyboard round 2026-10-06):
 	// while a question waits with the dock CLOSED — behind its reveal
 	// invitation or collapsed by scroll — Enter is never dead. Any live
@@ -3225,6 +3299,16 @@ export function DockOverlay({
 	useEffect(() => {
 		const el = scrollRef.current;
 		if (!el) return;
+		// Stamp geometry mute on vertical viewport height changes (e.g. iOS keyboard open/close)
+		// so shrinking clientHeight never fires a phantom scroll-collapse under the user's finger.
+		let prevClientH = el.clientHeight;
+		const ro = new ResizeObserver(() => {
+			if (Math.abs(el.clientHeight - prevClientH) > 1) {
+				prevClientH = el.clientHeight;
+				geometryAtRef.current = Date.now();
+			}
+		});
+		ro.observe(el);
 		const onScroll = () => {
 			if (!pendingRef.current) return;
 			// Resize mute (owner, resize round): a geometry change re-clamps
@@ -3236,13 +3320,18 @@ export function DockOverlay({
 			// under a live turn is not the learner leaving.
 			if (Date.now() - growthAtRef.current < 400) return;
 			const d = el.scrollHeight - el.clientHeight - el.scrollTop;
+			const focusInsideDock = Boolean(document.activeElement && blockRef.current?.contains(document.activeElement));
+			const keyboardOpen = document.documentElement.dataset.keyboardOpen === "true";
 			if (expandedRef.current) {
 				// INTENT-GATED FOLD (owner ruling, 2026-10-05): distance alone
 				// folded on stick-to-bottom's catch-up transients; a real fold
 				// needs the distance AND stick-to-bottom agreeing the learner
-				// left the bottom.
-				if (d > COLLAPSE_DIST && !expandIntentRef.current && !atBottomRef.current) setExpanded(false);
+				// left the bottom. Never auto-fold while typing inside the dock
+				// or while the virtual keyboard is open.
+				if (!focusInsideDock && !keyboardOpen && d > COLLAPSE_DIST && !expandIntentRef.current && !atBottomRef.current) setExpanded(false);
 			} else if (d < EXPAND_DIST) {
+				// Explicit collapse stays collapsed until the user taps the bar to reopen.
+				if (manualCollapsedRef.current) return;
 				// Teach checks stay collapsed until the learner opens them (W5): the
 				// at-bottom auto-expand would pop the form over the teaching.
 				if (requiresRevealRef.current && !revealedRef.current) return;
@@ -3251,7 +3340,10 @@ export function DockOverlay({
 			}
 		};
 		el.addEventListener("scroll", onScroll, { passive: true });
-		return () => el.removeEventListener("scroll", onScroll);
+		return () => {
+			ro.disconnect();
+			el.removeEventListener("scroll", onScroll);
+		};
 	}, [scrollRef, scrollToBottom]);
 
 	// The settled block height (gradient excluded), offered to the spacer.
@@ -3325,6 +3417,8 @@ export function DockOverlay({
 							revision={readingThinkingRevision}
 							onChange={onReadingThinking}
 							onEscape={dictationCancel}
+							dictation={readingDictation}
+							onDictationStart={() => setDictationTarget("reading")}
 							onOpen={
 								!expanded
 									? () => {
@@ -3347,7 +3441,7 @@ export function DockOverlay({
 							className={mode === initialModeRef.current ? "flow-root" : "flow-root dock-variant"}
 						>
 							{pluginQuestion && pluginDraft ? (
-								<PluginQuestionDock viewReader={customViewReader} snapshot={pluginQuestion} chatId={chatId} draft={pluginDraft} expanded={expanded} reveal={revealPending} onExpand={expandAndReveal} ready={pluginReady} available={pluginAvailable} reconciliation={reconciliation} readingRef={readingInputRef} onMicAvailable={onPluginMicAvailable} send={onPluginSend} dismiss={onPluginDismiss} prepareSubmission={onPreparePluginQuestion} />
+								<PluginQuestionDock viewReader={customViewReader} snapshot={pluginQuestion} chatId={chatId} draft={pluginDraft} expanded={expanded} reveal={revealPending} onExpand={expandAndReveal} onCollapse={collapseDock} dictation={questionDictation} dictationDisabled={dictationDisabled} ready={pluginReady} available={pluginAvailable} reconciliation={reconciliation} readingRef={readingInputRef} onMicAvailable={onPluginMicAvailable} send={onPluginSend} dismiss={onPluginDismiss} prepareSubmission={onPreparePluginQuestion} />
 							) : unreadablePlugin ? (
 								<div className="px-4 py-3">
 									{reconciliation === "syncing" && <p role="status" className="text-sm text-muted-foreground">Preparing question…</p>}
@@ -3364,6 +3458,8 @@ export function DockOverlay({
 									reveal={revealPending}
 									phase={phase}
 									onExpand={expandAndReveal}
+									onCollapse={collapseDock}
+									dictation={questionDictation}
 									onSubmit={onSubmitAnswer}
 									onPrepareSubmission={onPrepareBuiltin}
 									hasPendingInput={onBuiltinPendingInput}
@@ -3378,7 +3474,7 @@ export function DockOverlay({
 									onLayout={setQuestionLayout}
 								/>
 							) : pluginPractice ? (
-								<PluginProblemDock {...pluginPractice} viewReader={customViewReader} expanded={expanded} onExpand={() => { setExpanded(true); void suppressFoldDuringReveal(); }} />
+								<PluginProblemDock {...pluginPractice} viewReader={customViewReader} expanded={expanded} onExpand={() => { manualCollapsedRef.current = false; setExpanded(true); void suppressFoldDuringReveal(); }} onCollapse={collapseDock} dictation={questionDictation} />
 							) : practice ? (
 								<PracticeDock
 									viewReader={practiceViewReader}
@@ -3386,9 +3482,12 @@ export function DockOverlay({
 									input={practice.input as { statement: string }}
 									expanded={expanded}
 									onExpand={() => {
+										manualCollapsedRef.current = false;
 										setExpanded(true);
 										void suppressFoldDuringReveal();
 									}}
+									onCollapse={collapseDock}
+									dictation={questionDictation}
 									onSubmit={onSubmitThinking}
 									onPrepareSubmission={onPrepareThinking}
 									hasPendingInput={pendingThinkingInput}
