@@ -470,11 +470,20 @@ describe("mobile graph helpers (P1-3)", () => {
 		assert.equal(effectiveCanvasDpr(2, false), 2);
 	});
 
-	it("shouldRestoreCamera drops saved camera when viewport dimensions shifted (desktop↔mobile or rotation)", () => {
+	it("shouldRestoreCamera drops saved camera when viewport dimensions shifted or legacy vw/vh is absent", () => {
 		// Same viewport → restore
 		assert.deepEqual(
 			shouldRestoreCamera({ k: 1.5, x: 100, y: 200, vw: 390, vh: 844 }, 390, 844),
 			{ k: 1.5, x: 100, y: 200 },
+		);
+		// Legacy camera missing vw/vh → reject & re-fit (P1-3)
+		assert.equal(
+			shouldRestoreCamera({ k: 1.5, x: 100, y: 200 }, 390, 844),
+			null,
+		);
+		assert.equal(
+			shouldRestoreCamera({ k: 1.5, x: 100, y: 200, vw: 0, vh: 844 }, 390, 844),
+			null,
 		);
 		// Desktop camera opened on phone → ignore & re-fit
 		assert.equal(
@@ -491,6 +500,21 @@ describe("mobile graph helpers (P1-3)", () => {
 			shouldRestoreCamera({ k: 1.2, x: 180, y: 400, vw: 390, vh: 844 }, 390, 760),
 			{ k: 1.2, x: 180, y: 400 },
 		);
+	});
+
+	it("scales cluster label font size and wrap width on narrow screens without affecting desktop", async () => {
+		const mod = await import("../components/graph-canvas.ts");
+		assert.equal(typeof mod.effectiveClusterLabelSize, "function");
+		assert.equal(typeof mod.effectiveRegionLabelMaxWidth, "function");
+		// Narrow phone (390px): tighter label size and wrap width to avoid collisions after Fit
+		const narrowSize = mod.effectiveClusterLabelSize(16, 390);
+		assert.ok(narrowSize >= 11 && narrowSize < 16, `expected 11 <= size < 16, got ${narrowSize}`);
+		assert.equal(mod.effectiveClusterLabelSize(12, 390), 11, "must clamp at minimum 11px");
+		const narrowWrap = mod.effectiveRegionLabelMaxWidth(390);
+		assert.ok(narrowWrap >= 96 && narrowWrap <= 136, `expected 96 <= wrap <= 136 on 390px, got ${narrowWrap}`);
+		// Desktop (>= 640px): untouched
+		assert.equal(mod.effectiveClusterLabelSize(16, 1440), 16);
+		assert.equal(mod.effectiveRegionLabelMaxWidth(1440), 220);
 	});
 });
 
@@ -671,6 +695,46 @@ describe("GraphCanvasRenderer touch pinch, pointercancel, and touch slop", () =>
 			// 3. DPR capped at 2 for coarse-pointer 3x canvas
 			assert.equal(canvas.width, 780);
 			assert.equal(canvas.height, 1688);
+			renderer.destroy();
+		} finally {
+			restore();
+		}
+	});
+
+	it("re-fits automatically when a restored initialCamera puts the graph bbox completely outside visible bounds", () => {
+		const { canvas, restore } = makeFakeCanvasEnv();
+		const cameras: { k: number; x: number; y: number }[] = [];
+		try {
+			const renderer = new GraphCanvasRenderer(
+				canvas as unknown as HTMLCanvasElement,
+				{
+					onSelect: () => {},
+					onContext: () => {},
+					onStageClick: () => {},
+					onCameraMove: (t) => cameras.push({ k: t.k, x: t.x, y: t.y }),
+					onCommit: () => {},
+				},
+				// Off-screen camera pushing nodes (100..250, 100..200) far to bottom-right off 390x844
+				{ k: 1, x: 500, y: 900 },
+			);
+			renderer.setSettings(DEFAULT_RENDER_SETTINGS);
+			renderer.setData({
+				nodes: [
+					{ id: "n1", x: 100, y: 100, label: "Alpha" },
+					{ id: "n2", x: 250, y: 200, label: "Beta" },
+				],
+				edges: [{ from: "n1", to: "n2" }],
+				clusters: [],
+				colors: { node: "#ffffff", edge: "#888888", label: "#888888", hoverText: "#ffffff", clusterLightness: { ring: 60, label: 78 } },
+				fontFamily: "sans-serif",
+			});
+			const last = cameras.at(-1);
+			assert.ok(last, "expected fit() to update camera");
+			// After auto-fit, graph center (175, 150) must project inside the 390x844 viewport
+			const cx = 175 * last.k + last.x;
+			const cy = 150 * last.k + last.y;
+			assert.ok(cx > 40 && cx < 350, `expected fitted center x inside viewport, got ${cx}`);
+			assert.ok(cy > 40 && cy < 804, `expected fitted center y inside viewport, got ${cy}`);
 			renderer.destroy();
 		} finally {
 			restore();

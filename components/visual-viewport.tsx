@@ -18,6 +18,11 @@ export interface VisualViewportMetrics {
 export interface ViewportWindowLike {
 	innerWidth: number;
 	innerHeight: number;
+	document?: {
+		documentElement?: {
+			clientHeight?: number;
+		};
+	};
 	visualViewport?: {
 		width: number;
 		height: number;
@@ -35,29 +40,38 @@ export function computeVisualViewportMetrics(win: ViewportWindowLike): VisualVie
 	const height = vv && vv.height > 0 ? Math.round(vv.height) : win.innerHeight;
 	const offsetTop = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
 	const offsetLeft = vv ? Math.max(0, Math.round(vv.offsetLeft)) : 0;
-	const keyboardInset = Math.max(0, Math.round(win.innerHeight - height - offsetTop));
+	const layoutHeight = Math.max(win.innerHeight, win.document?.documentElement?.clientHeight ?? 0);
+	const rawInset = Math.max(0, Math.round(layoutHeight - height - offsetTop));
+	const isKeyboardOpen = rawInset >= KEYBOARD_INSET_THRESHOLD;
 	return {
 		width,
 		height,
 		offsetTop,
 		offsetLeft,
-		keyboardInset,
+		keyboardInset: isKeyboardOpen ? rawInset : 0,
 		isShortViewport: height <= SHORT_VIEWPORT_MAX_HEIGHT,
-		isKeyboardOpen: keyboardInset >= KEYBOARD_INSET_THRESHOLD,
+		isKeyboardOpen,
 	};
 }
 
 /** Apply visual viewport CSS variables & data attributes to `<html>`.
- *  On desktop (visualViewport.height === innerHeight), `--vvh` equals full height
- *  and keyboard attributes stay absent so desktop behavior is unchanged. */
+ *  Only sets `--vvh` while a virtual keyboard actually shrinks the visual
+ *  viewport: in iOS Standalone PWA (`viewport-fit=cover`) at rest,
+ *  `visualViewport.height` under-reports by safe-area-inset-top (~47px), so
+ *  removing `--vvh` when closed lets CSS `--lh-app-height` fill the screen. */
 export function applyVisualViewportToRoot(root: HTMLElement, metrics: VisualViewportMetrics): void {
-	root.style.setProperty("--vvh", `${metrics.height}px`);
+	if (metrics.isKeyboardOpen) {
+		root.style.setProperty("--vvh", `${metrics.height}px`);
+		root.style.setProperty("--keyboard-inset", `${metrics.keyboardInset}px`);
+		root.dataset.keyboardOpen = "true";
+	} else {
+		root.style.removeProperty("--vvh");
+		root.style.setProperty("--keyboard-inset", "0px");
+		delete root.dataset.keyboardOpen;
+	}
 	root.style.setProperty("--vvw", `${metrics.width}px`);
-	root.style.setProperty("--keyboard-inset", `${metrics.keyboardInset}px`);
 	if (metrics.isShortViewport) root.dataset.shortViewport = "true";
 	else delete root.dataset.shortViewport;
-	if (metrics.isKeyboardOpen) root.dataset.keyboardOpen = "true";
-	else delete root.dataset.keyboardOpen;
 }
 
 /** Mounted once in the root layout to keep `--vvh` / `--keyboard-inset` /

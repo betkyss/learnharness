@@ -39,7 +39,7 @@ async function control<T>(providerId: string, op: string, fields: Record<string,
 }
 function onChange(hub: Hub, listener: () => void): () => void {
 	const offEvent = hub?.subscribe("subscriptions-changed", listener);
-	const offResync = hub?.onResync(listener);
+	const offResync = hub?.onResync((ctx) => { if (ctx.full) listener(); });
 	return () => { offEvent?.(); offResync?.(); };
 }
 /** Reserve the new tab synchronously in the click gesture. Only a one-use

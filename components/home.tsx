@@ -192,7 +192,7 @@ export function Home({
 		return () => observer.disconnect();
 	}, []);
 	return (
-		<div ref={homeRef} className="relative h-[var(--vvh,100dvh)] home-surface">
+		<div ref={homeRef} className="relative h-[var(--vvh,var(--lh-app-height,100dvh))] home-surface">
 			{/* Window-drag strip (merged chrome, owner 2026-09-17): a dedicated
 			    mask element, deliberately FIRST in the DOM. Electron's app-region
 			    mask resolves by DOM order — a no-drag element subtracts only drag

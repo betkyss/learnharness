@@ -198,6 +198,7 @@ describe("GET /api/chats/[id] single-read and ?tail=N pagination", () => {
 		};
 		assert.equal(tailBody.totalMessages, msgs.length);
 		assert.equal(tailBody.truncated, true);
+		assert.equal((tailBody as { omittedViewGroups?: number }).omittedViewGroups, 20, "must expose omittedViewGroups in view-group units");
 		assert.equal(tailBody.initialPhase, "plan", "probe_done happened before the tail window");
 		assert.equal(tailBody.messages.length, 4);
 		assert.equal(tailBody.messages[0]!.id, "msg_u_10");
@@ -326,5 +327,114 @@ describe("GET /api/chats/[id] lightweight views and signature stripping", () => 
 			assert.equal(res.status, 404, `view=${view}`);
 			assert.deepEqual(await res.json(), { error: "Not found" });
 		}
+	});
+
+	it("R2 P2-4: ?tail=N omits extractions and raw turns (sending aggregated pricing) and compacts historical read/grep details while leaving full GET & disk intact", async () => {
+		const record = chatStore.createChat("tail payload diet fixture");
+		const bigReadText = "LINE ".repeat(3000); // ~15 KB
+		const latestReadText = "LATEST ".repeat(1000); // ~7 KB in current turn
+		const msgs: LhMessage[] = [
+			{ id: "m_u0", role: "user", content: "Old turn", timestamp: 100 },
+			{
+				id: "m_a0",
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				timestamp: 110,
+				stopReason: "toolUse",
+				usage: { input: 100, output: 20, cacheRead: 80, cacheWrite: 0, totalTokens: 200, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				content: [{ type: "toolCall", id: "call_old_read", name: "read", arguments: { path: "big.md" } }],
+			},
+			{
+				id: "m_tr0",
+				role: "toolResult",
+				toolCallId: "call_old_read",
+				toolName: "read",
+				content: [{ type: "text", text: bigReadText }],
+				details: { text: bigReadText },
+				isError: false,
+				timestamp: 115,
+			},
+			{ id: "m_u1", role: "user", content: "Latest turn", timestamp: 200 },
+			{
+				id: "m_a1",
+				role: "assistant",
+				api: "anthropic-messages",
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				timestamp: 210,
+				stopReason: "toolUse",
+				usage: { input: 100, output: 20, cacheRead: 80, cacheWrite: 0, totalTokens: 200, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				content: [{ type: "toolCall", id: "call_new_read", name: "read", arguments: { path: "recent.md" } }],
+			},
+			{
+				id: "m_tr1",
+				role: "toolResult",
+				toolCallId: "call_new_read",
+				toolName: "read",
+				content: [{ type: "text", text: latestReadText }],
+				details: { text: latestReadText },
+				isError: false,
+				timestamp: 215,
+			},
+		];
+		chatStore.saveMessages(record.id, msgs);
+		chatStore.appendTurnUsage(record.id, {
+			id: "turn_1",
+			messageId: "m_a0",
+			at: "2026-11-27T00:00:00Z",
+			model: "chatgpt:gpt-5.4",
+			steps: [{ inputTokens: 200, outputTokens: 50, cacheReadTokens: 800, cacheWriteTokens: 0, reasoningTokens: 10 }],
+		});
+		chatStore.appendExtractionUsage(record.id, {
+			startedAt: 1000,
+			at: "2026-11-27T00:00:00Z",
+			durationMs: 1200,
+			stages: {
+				extractor: { model: "chatgpt:gpt-5.4", steps: [{ inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }] },
+				auditor: { model: "chatgpt:gpt-5.4", steps: [{ inputTokens: 50, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }] },
+			},
+		});
+
+		const tailRes = await GET(
+			new Request(`http://localhost/api/chats/${record.id}?tail=12`),
+			{ params: Promise.resolve({ id: record.id }) },
+		);
+		assert.equal(tailRes.status, 200);
+		const tailBody = (await tailRes.json()) as {
+			messages: LhMessage[];
+			extractions?: unknown;
+			turns?: unknown;
+			pricing?: { subscription?: number; turnCount?: number; cacheHitRate?: number | null; turnCosts?: Record<string, unknown> };
+		};
+		assert.equal("extractions" in tailBody, false, "?tail= must omit unused extractions");
+		assert.equal("turns" in tailBody, false, "?tail= must omit verbose turns array");
+		assert.equal(tailBody.pricing?.turnCount, 1);
+		assert.equal(tailBody.pricing?.subscription, 1);
+		assert.equal(tailBody.pricing?.cacheHitRate, 0.8);
+		assert.deepEqual(tailBody.pricing?.turnCosts, {});
+
+		const oldRead = tailBody.messages.find((m) => m.id === "m_tr0") as { details?: { text?: string } };
+		const newRead = tailBody.messages.find((m) => m.id === "m_tr1") as { details?: { text?: string } };
+		assert.ok((oldRead.details?.text?.length ?? 0) < 2500, `historical read details should be compacted in ?tail=, got ${oldRead.details?.text?.length}`);
+		assert.ok(oldRead.details?.text?.includes("truncated"), "compacted details should include truncation notice");
+		assert.equal(newRead.details?.text, latestReadText, "latest turn read details must stay intact");
+
+		// Full GET without ?tail= keeps full turns & untruncated read details
+		const fullRes = await GET(
+			new Request(`http://localhost/api/chats/${record.id}`),
+			{ params: Promise.resolve({ id: record.id }) },
+		);
+		const fullBody = (await fullRes.json()) as { messages: LhMessage[]; turns?: unknown[]; extractions?: unknown };
+		assert.equal("extractions" in fullBody, false, "unused extractions should be omitted from GET /api/chats/[id]");
+		assert.equal(fullBody.turns?.length, 1, "full GET must preserve turns array");
+		const fullOldRead = fullBody.messages.find((m) => m.id === "m_tr0") as { details?: { text?: string } };
+		assert.equal(fullOldRead.details?.text, bigReadText, "full GET must keep complete read details");
+
+		// Disk untouched
+		const onDisk = chatStore.getChat(record.id)!;
+		assert.equal((onDisk.messages.find((m) => m.id === "m_tr0") as { details?: { text?: string } }).details?.text, bigReadText);
+		assert.equal(onDisk.extractions?.length, 1);
 	});
 });

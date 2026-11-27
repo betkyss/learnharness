@@ -208,7 +208,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 	return (
 		<SidebarContext.Provider value={{ open: narrow ? (!IS_ELECTRON && drawerOpen) : open, toggle, overlay: narrow && !IS_ELECTRON, close: () => setDrawerOpen(false) }}>
 			{/* transitions gated on mount: no slide-in flash on page load */}
-			<div className={cn("flex h-[var(--vvh,100dvh)]", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity,transform]")}>{children}</div>
+			<div className={cn("flex h-[var(--vvh,var(--lh-app-height,100dvh))]", mounted && "[&_.sidebar-motion]:transition-[width,margin,opacity,transform]")}>{children}</div>
 		</SidebarContext.Provider>
 	);
 }
@@ -428,12 +428,35 @@ export function RenameRow({ chat, onCommit, onCancel, depth = 0, compact = false
 					}}
 					aria-label="Rename session"
 					data-testid="session-rename-input"
-					className={cn("w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none text-base md:text-sm", compact ? sidebarNameFont(true) : "font-ui font-semibold")}
+					className={cn("w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none", compact ? sidebarNameFont(true) : "font-ui font-semibold", "text-base md:text-sm")}
 				/>
 				{!compact && <span className="block truncate text-xs text-muted-foreground">{sessionMeta(chat)}</span>}
 			</span>
 		</div>
 	);
+}
+
+/** Coalesce window (ms) so a local `lh:turn-state` settle refresh and the
+ *  adjacent `turn-settled` SSE event trigger only one `GET /api/chats`. */
+export const SIDEBAR_SETTLE_COALESCE_MS = 1500;
+
+/** Pure helper: skip redundant `GET /api/chats` on `turn-started` when the
+ *  local optimistic `lh:turn-state` already marked this chat busy. */
+export function shouldSkipTurnStartedRefresh(
+	chats: readonly { id: string; busy?: boolean }[] | null | undefined,
+	chatId: string,
+): boolean {
+	return chats?.some((c) => c.id === chatId && c.busy === true) === true;
+}
+
+/** Pure helper: skip duplicate `GET /api/chats` on `turn-settled` when a local
+ *  settle refresh for the same chat already fired within the coalesce window. */
+export function shouldSkipTurnSettledRefresh(
+	lastSettled: { chatId: string; at: number } | null | undefined,
+	chatId: string,
+	nowMs: number,
+): boolean {
+	return Boolean(lastSettled && lastSettled.chatId === chatId && nowMs - lastSettled.at < SIDEBAR_SETTLE_COALESCE_MS);
 }
 
 /** The three-way kind filter (practice sessions, owner 2026-10-04):
@@ -548,6 +571,8 @@ function SessionsSidebar() {
 	   immediate refresh instead of a patch. */
 	const chatsRef = useRef(chats);
 	chatsRef.current = chats;
+	const eventDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const lastSettledRefreshRef = useRef<{ chatId: string; at: number } | null>(null);
 	useEffect(() => {
 		const onTurnState = (e: Event) => {
 			const { id, running } = (e as CustomEvent<{ id: string; running: boolean }>).detail;
@@ -560,6 +585,11 @@ function SessionsSidebar() {
 				return;
 			}
 			setChats((prev) => (prev ? prev.map((c) => (c.id === id ? { ...c, busy: false } : c)) : prev));
+			if (eventDebounceRef.current) {
+				clearTimeout(eventDebounceRef.current);
+				eventDebounceRef.current = undefined;
+			}
+			lastSettledRefreshRef.current = { chatId: id, at: Date.now() };
 			void refresh(); // settle: the server snapshot is now truthful — land it now
 		};
 		window.addEventListener("lh:turn-state", onTurnState);
@@ -577,7 +607,6 @@ function SessionsSidebar() {
 	   round-trip. */
 	const refreshRef = useRef(refresh);
 	refreshRef.current = refresh;
-	const eventDebounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const scheduleEventRefresh = () => {
 		if (eventDebounceRef.current) clearTimeout(eventDebounceRef.current);
 		eventDebounceRef.current = setTimeout(() => {
@@ -586,8 +615,16 @@ function SessionsSidebar() {
 		}, 250);
 	};
 	useServerEvent("chats-changed", scheduleEventRefresh);
-	useServerEvent("turn-started", scheduleEventRefresh);
-	useServerEvent("turn-settled", scheduleEventRefresh);
+	useServerEvent("turn-started", (p) => {
+		if (!shouldSkipTurnStartedRefresh(chatsRef.current, p.chatId)) {
+			scheduleEventRefresh();
+		}
+	});
+	useServerEvent("turn-settled", (p) => {
+		if (!shouldSkipTurnSettledRefresh(lastSettledRefreshRef.current, p.chatId, Date.now())) {
+			scheduleEventRefresh();
+		}
+	});
 	useServerEvent("compaction-changed", scheduleEventRefresh);
 	useServerResync(() => void refreshRef.current());
 	useEffect(
@@ -1128,7 +1165,7 @@ function SessionsSidebar() {
 								setRenamingId(ctxChatId);
 								setCtxChatId(null);
 							}}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
+							className="flex items-center rounded-lg px-2.5 py-1.5 max-md:min-h-10 max-md:py-2 text-left text-foreground transition-colors hover:bg-accent"
 						>
 							Rename
 						</button>
@@ -1150,7 +1187,7 @@ function SessionsSidebar() {
 								a.click();
 								a.remove();
 							}}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
+							className="flex items-center rounded-lg px-2.5 py-1.5 max-md:min-h-10 max-md:py-2 text-left text-foreground transition-colors hover:bg-accent"
 						>
 							Export as Markdown…
 						</button>
@@ -1162,7 +1199,7 @@ function SessionsSidebar() {
 								if (target) setDeleting(target);
 								setCtxChatId(null);
 							}}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-destructive transition-colors hover:bg-destructive/10"
+							className="flex items-center rounded-lg px-2.5 py-1.5 max-md:min-h-10 max-md:py-2 text-left text-destructive transition-colors hover:bg-destructive/10"
 						>
 							Delete…
 						</button>
@@ -1185,7 +1222,7 @@ function SessionsSidebar() {
 							type="button"
 							data-testid="folder-ctx-rename"
 							onClick={() => { setRenamingFolderId(ctxFolderId); setCtxFolderId(null); }}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
+							className="flex items-center rounded-lg px-2.5 py-1.5 max-md:min-h-10 max-md:py-2 text-left text-foreground transition-colors hover:bg-accent"
 						>
 							Rename
 						</button>
@@ -1199,7 +1236,7 @@ function SessionsSidebar() {
 								else setFolderOpen(id, true);
 								setCreatingFolder({ parentId: id });
 							}}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
+							className="flex items-center rounded-lg px-2.5 py-1.5 max-md:min-h-10 max-md:py-2 text-left text-foreground transition-colors hover:bg-accent"
 						>
 							New subfolder
 						</button>
@@ -1207,7 +1244,7 @@ function SessionsSidebar() {
 							type="button"
 							data-testid="folder-ctx-delete"
 							onClick={() => deleteFolder(ctxFolderId)}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
+							className="flex items-center rounded-lg px-2.5 py-1.5 max-md:min-h-10 max-md:py-2 text-left text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
 						>
 							Delete
 						</button>

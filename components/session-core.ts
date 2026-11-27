@@ -54,6 +54,7 @@ export interface SessionRecordSnapshot {
 	pluginProblemAvailability?: PluginProblemAvailability;
 	messages: LhMessage[];
 	totalMessages?: number;
+	omittedViewGroups?: number;
 	truncated?: boolean;
 	initialPhase?: Phase3;
 	tree?: PlanTree;
@@ -257,6 +258,8 @@ export interface SessionState {
 	canonicalMessages: LhMessage[];
 	/** Total native messages stored server-side (may exceed canonicalMessages.length in tail mode). */
 	totalMessageCount: number;
+	/** View groups omitted before the loaded tail window (unified unit for "Show earlier"). */
+	omittedViewGroups: number;
 	/** True when earlier server messages exist beyond the loaded tail window. */
 	hasEarlierMessages: boolean;
 	/** True while loading an expanded tail or full history from the server. */
@@ -301,6 +304,8 @@ export interface SessionModelOptions extends SessionModelDeps {
 	initialMessages: LhMessage[];
 	/** Total server native messages when SSR delivered a tail slice. */
 	initialTotalMessages?: number;
+	/** View groups omitted before the initial SSR tail slice. */
+	initialOmittedViewGroups?: number;
 	/** When set, canonical GETs request `?tail=N` until expanded or loaded in full. */
 	initialTailLimit?: number | null;
 	/** Retained, memory-only server failure when reopening a session. */
@@ -336,6 +341,7 @@ export class SessionModel {
 	private base: LhMessage[];
 	private tail: LhMessage[] = [];
 	private totalMessageCountValue: number;
+	private omittedViewGroupsValue: number;
 	private tailLimit: number | null;
 	private loadingEarlierValue = false;
 	private lastStreamActivityAtValue = 0;
@@ -397,6 +403,7 @@ export class SessionModel {
 		this.base = copyImmutableData(opts.initialMessages);
 		this.tail = copyImmutableData(this.tail);
 		this.totalMessageCountValue = Math.max(this.base.length, opts.initialTotalMessages ?? this.base.length);
+		this.omittedViewGroupsValue = Math.max(0, opts.initialOmittedViewGroups ?? 0);
 		this.tailLimit = opts.initialTailLimit ?? null;
 		if (pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) { this.reconciliationValue = "syncing"; this.readyRef = false; }
 		this.errorValue = opts.initialError === undefined ? null : { message: opts.initialError };
@@ -521,6 +528,7 @@ export class SessionModel {
 			nativeMessages: messages,
 			canonicalMessages: this.base,
 			totalMessageCount: Math.max(this.totalMessageCountValue, this.base.length),
+			omittedViewGroups: hasEarlierMessages ? this.omittedViewGroupsValue : 0,
 			hasEarlierMessages,
 			loadingEarlier: this.loadingEarlierValue,
 			hasConfirmedConversation: hasEarlierMessages || this.base.some(m => m.role === "user" || m.role === "assistant"),
@@ -618,12 +626,12 @@ export class SessionModel {
 		if (mode !== "none" && this.imagePostOwner) return undefined;
 		if (mode === "replace" && !options.allowInFlight && (this.statusValue === "submitted" || this.statusValue === "streaming")) return undefined;
 		if (mode === "append") {
-			if (!this.appendMessages(record.messages, record.pluginQuestionAvailability, true, record.pluginProblemAvailability, record.totalMessages, record.truncated)) return undefined;
+			if (!this.appendMessages(record.messages, record.pluginQuestionAvailability, true, record.pluginProblemAvailability, record.totalMessages, record.truncated, record.omittedViewGroups)) return undefined;
 			this.canonicalAcknowledged = Math.max(this.canonicalAcknowledged, ticket);
 			this.onRecordAdopted?.(record);
 		} else if (mode === "replace") {
 			this.canonicalAcknowledged = Math.max(this.canonicalAcknowledged, ticket);
-			this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability, record.totalMessages, record.truncated);
+			this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability, record.totalMessages, record.truncated, record.omittedViewGroups);
 			this.onRecordAdopted?.(record);
 		}
 		return record;
@@ -1472,12 +1480,14 @@ export class SessionModel {
 		problemAvailability?: PluginProblemAvailability,
 		totalMessages?: number,
 		truncated?: boolean,
+		omittedViewGroups?: number,
 	): void {
 		if (this.imagePostOwner) return;
 		record = copyImmutableData(record);
 		this.mutate(() => {
 			this.base = record;
 			this.totalMessageCountValue = Math.max(record.length, totalMessages ?? record.length);
+			this.omittedViewGroupsValue = truncated ? Math.max(0, omittedViewGroups ?? this.omittedViewGroupsValue) : 0;
 			if (truncated === false) this.tailLimit = null;
 			this.pluginQuestionAvailability = availability;
 			this.pluginProblemAvailability = problemAvailability;
@@ -1516,11 +1526,13 @@ export class SessionModel {
 		problemAvailability?: PluginProblemAvailability,
 		totalMessages?: number,
 		truncated?: boolean,
+		omittedViewGroups?: number,
 	): boolean {
 		if (this.imagePostOwner) return false;
 		record = copyImmutableData(record);
 		const recordIds = new Set(record.map((m) => (m as { id?: string }).id));
 		let nextBase: LhMessage[] = record;
+		let preservedHead = false;
 		if (truncated) {
 			// Sliding tail window: older head messages in `this.base` may have
 			// shifted off the front of the server's tail slice. Preserve them and
@@ -1532,6 +1544,7 @@ export class SessionModel {
 				const overlapId = (record[firstOverlapIdx]! as { id?: string }).id;
 				const baseCut = this.base.findIndex((m) => (m as { id?: string }).id === overlapId);
 				if (baseCut >= 0) {
+					preservedHead = baseCut > 0;
 					nextBase = [...this.base.slice(0, baseCut), ...record.slice(firstOverlapIdx)];
 				}
 			}
@@ -1543,6 +1556,8 @@ export class SessionModel {
 		this.mutate(() => {
 			this.base = nextBase;
 			this.totalMessageCountValue = Math.max(nextBase.length, totalMessages ?? nextBase.length);
+			if (!truncated) this.omittedViewGroupsValue = 0;
+			else if (!preservedHead && omittedViewGroups !== undefined) this.omittedViewGroupsValue = Math.max(0, omittedViewGroups);
 			if (updateAvailability) { this.pluginQuestionAvailability = availability; this.pluginProblemAvailability = problemAvailability; }
 			this.forgetResolvedDrafts(nextBase);
 			this.tail = this.tail.filter((m) => !(typeof m.id === "string" && mergedIds.has(m.id)) && !absorbed(m, nextBase));

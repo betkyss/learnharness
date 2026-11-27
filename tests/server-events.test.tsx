@@ -270,4 +270,72 @@ describe("connectManagedChannel — foreground resume reconnect & 401 auth probe
 
 		stop();
 	});
+
+	it("R2 P2-4: marks short (<60s) clean background returns as non-full resyncs while long (>=60s), online, pageshow, and post-error resumes stay full", () => {
+		const hub = createNotifyHub();
+		const sources: ReturnType<typeof fakeSource>[] = [];
+		const win = fakeTarget();
+		const doc = Object.assign(fakeTarget(), { visibilityState: "visible" });
+		let clock = 10_000;
+		const seen: Array<{ reason?: string; full?: boolean }> = [];
+		hub.onResync((ctx?: { reason?: string; full?: boolean }) => {
+			seen.push({ reason: ctx?.reason, full: ctx?.full });
+		});
+
+		const stop = connectManagedChannel({
+			connect: () => {
+				const s = fakeSource();
+				sources.push(s);
+				return s;
+			},
+			hub,
+			win,
+			doc,
+			now: () => clock,
+			reconnectThrottleMs: 1000,
+		});
+
+		// 1. Initial open → full
+		sources[0]!.open();
+		assert.deepEqual(seen.at(-1), { reason: "initial", full: true });
+
+		// 2. Short background switch (5s < 60s, clean channel) → short-resume (full: false)
+		clock += 5_000;
+		doc.visibilityState = "hidden";
+		doc.emit("visibilitychange");
+		clock += 5_000;
+		doc.visibilityState = "visible";
+		doc.emit("visibilitychange");
+		sources[1]!.open();
+		assert.deepEqual(seen.at(-1), { reason: "short-resume", full: false });
+
+		// 3. Long background switch (90s >= 60s) → long-resume (full: true)
+		clock += 2_000;
+		doc.visibilityState = "hidden";
+		doc.emit("visibilitychange");
+		clock += 90_000;
+		doc.visibilityState = "visible";
+		doc.emit("visibilitychange");
+		sources[2]!.open();
+		assert.deepEqual(seen.at(-1), { reason: "long-resume", full: true });
+
+		// 4. Short background switch AFTER a channel error → full: true
+		clock += 2_000;
+		sources[2]!.error();
+		doc.visibilityState = "hidden";
+		doc.emit("visibilitychange");
+		clock += 3_000;
+		doc.visibilityState = "visible";
+		doc.emit("visibilitychange");
+		sources[3]!.open();
+		assert.deepEqual(seen.at(-1), { reason: "long-resume", full: true });
+
+		// 5. Network online → full: true
+		clock += 5_000;
+		win.emit("online");
+		sources[4]!.open();
+		assert.deepEqual(seen.at(-1), { reason: "online", full: true });
+
+		stop();
+	});
 });

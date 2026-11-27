@@ -50,6 +50,7 @@ export function StatsBar({
 	chatId,
 	leadingSlot,
 	onModelChange,
+	onOpenDetail,
 	shortControls,
 }: {
 	turns: TurnUsage[];
@@ -64,6 +65,8 @@ export function StatsBar({
 	chatId?: string;
 	/** The same effective identity the visible model control owns. */
 	onModelChange?: (model: string | undefined) => void;
+	/** Lazy per-turn refresh when opening the stats popover after a compact tail read. */
+	onOpenDetail?: () => void;
 	/** The dictation strip (STT wave, 2026-09-17): the row's middle is dead
 	 *  space between the session data and the model control — the mic
 	 *  button lives there, and while recording the meter unfurls to fill
@@ -90,13 +93,19 @@ export function StatsBar({
 	const limits = useMemo(() => (catalog ? catalogLimits(catalog) : undefined), [catalog]);
 	const limit = contextLimitForModel(selectedModel, limits, cliContextWindow);
 	const contextLabel = formatContextMeasurement(contextTokens, limit);
-	const cacheHitRate = useMemo(() => sessionCacheHitRate({ turns }), [turns]);
-	const { cost = 0, unpriced = turns.length, subscription = 0 } = pricing ?? {};
+	const turnCount = turns.length > 0 ? turns.length : (pricing?.turnCount ?? 0);
+	const cacheHitRate = useMemo(
+		() => (turns.length > 0 ? sessionCacheHitRate({ turns }) : (pricing?.cacheHitRate ?? null)),
+		[turns, pricing?.cacheHitRate],
+	);
+	const { cost = 0, unpriced = turnCount, subscription = 0 } = pricing ?? {};
 	// Honest cost: show dollars only when at least one turn priced;
 	// otherwise "—" (never a fake $0.0000).
-	const pricedCount = turns.length - unpriced - subscription;
+	const pricedCount = Math.max(0, turnCount - unpriced - subscription);
 	const providers = pricing?.subscriptionProviders ?? subscriptionLabels(turns.map((turn) => turn.model));
-	const cliBilled = turns.some((turn) => turn.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`));
+	const cliBilled = turns.length > 0
+		? turns.some((turn) => turn.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`))
+		: Boolean(pricing?.cliBilled);
 	const costLabel = planCostLabel(pricedCount > 0 ? cost : null, cliBilled ? [...providers, "CLI"] : providers);
 
 	return (
@@ -125,10 +134,16 @@ export function StatsBar({
 			    speaks on click (owner, subtlety round 2026-09-25). */}
 			<button
 				type="button"
-				onClick={() => setOpen((o) => !o)}
+				onClick={() => {
+					const next = !open;
+					setOpen(next);
+					if (next && onOpenDetail && pricing?.turnCount !== undefined && turns.length !== pricing.turnCount) {
+						onOpenDetail();
+					}
+				}}
 				aria-expanded={open}
 				data-testid="stats-summary"
-				className="flex items-center gap-1.5 tabular-nums transition-colors hover:text-foreground"
+				className="flex items-center gap-1.5 max-md:min-h-9 max-md:py-1 tabular-nums transition-colors hover:text-foreground"
 			>
 				<span data-testid="stats-context">
 					{contextLabel}

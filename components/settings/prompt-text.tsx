@@ -31,7 +31,7 @@ export function PromptText({ text, preview, fieldRef, onChange, busy }: {
 		return () => observer.disconnect();
 	}, [fieldRef, preview]);
 	return <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-background">
-		<div className={cn("h-full font-mono text-xs leading-5", preview ? "hidden" : "flex")}>
+		<div className={cn("h-full font-mono text-base leading-6 md:text-xs md:leading-5", preview ? "hidden" : "flex")}>
 			<div aria-hidden="true" className="shrink-0 border-r border-border bg-muted/40 px-3">
 				<span className="invisible">{lines.length}</span>
 			</div>
@@ -39,7 +39,7 @@ export function PromptText({ text, preview, fieldRef, onChange, busy }: {
 				{/* Invisible text measures the same wrapped visual rows as the field;
 				    only the logical line numbers are visible in the gutter. */}
 				<div ref={gutter} aria-hidden="true" className="pointer-events-none absolute top-0 left-0 w-full select-none px-3 py-3">
-					{lines.map((line, i) => <div key={i} className="relative min-h-5">
+					{lines.map((line, i) => <div key={i} className="relative min-h-6 md:min-h-5">
 						<span className="absolute top-0 right-full mr-6 text-muted-foreground tabular-nums">{i + 1}</span>
 						<div className={cn("invisible", wrapping)}>{line}</div>
 					</div>)}

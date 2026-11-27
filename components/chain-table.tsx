@@ -333,7 +333,7 @@ export function ChainTableBody({
 						placeholder="Search knowledge…"
 						aria-label="Search knowledge"
 						spellCheck={false}
-						className="lh-no-drag h-8 w-32 sm:w-56 rounded-lg border bg-background pl-8 pr-3 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
+						className="lh-no-drag h-9 md:h-8 w-32 sm:w-56 rounded-lg border bg-background pl-8 pr-3 text-base md:text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
 					/>
 				</div>
 			<button

@@ -1,5 +1,5 @@
 import { compactionInFlight, deleteChatSession, getChat, isTurnRunning, sessionCoverage, sessionCost, stores, turnFailure, type ChatDeleteMode, pluginQuestionAvailabilityOf, reconcilePluginQuestionCompatibility, type QuestionTypeResolver, getPluginQuestionTypeResolver, getPluginHost, pluginProblemAvailabilityOf, type ProblemTypeResolver } from "@/src/server";
-import { pendingPluginQuestionOf, activeProblemOf, sanitizeMessagesForClient, sliceChatTailForClient } from "@/src/core";
+import { CLAUDE_CODE_PROVIDER, pendingPluginQuestionOf, activeProblemOf, sanitizeMessagesForClient, sessionCacheHitRate, sliceChatTailForClient } from "@/src/core";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
@@ -55,22 +55,39 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	const tailSlice = Number.isFinite(tailParsed) && tailParsed > 0
 		? sliceChatTailForClient(chat.messages, Math.min(tailParsed, 2000))
 		: null;
-	const responseMessages = sanitizeMessagesForClient(tailSlice ? tailSlice.messages : chat.messages);
-	// Snapshot bytes have a session-scoped endpoint; do not resend the whole image pool on every poll.
-	const { imageSnapshots: _imageSnapshots, ...record } = chat;
+	const responseMessages = sanitizeMessagesForClient(
+		tailSlice ? tailSlice.messages : chat.messages,
+		tailSlice ? { compactHistoricalToolDetails: true } : undefined,
+	);
+	// Omit binary snapshot pools and unused extraction logs from chat reads;
+	// on `?tail=N` also replace the verbose `turns` array with aggregated pricing
+	// summary fields (StatsBar lazily pulls `?view=stats` for per-turn details).
+	const { imageSnapshots: _imageSnapshots, extractions: _extractions, turns: rawTurns, ...record } = chat;
+	const fullPricing = sessionCost(chat);
+	const pricing = tailSlice
+		? {
+				...fullPricing,
+				turnCosts: {},
+				turnCount: rawTurns?.length ?? 0,
+				cliBilled: rawTurns?.some((t) => t.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`)) ?? false,
+				cacheHitRate: sessionCacheHitRate({ turns: rawTurns }),
+			}
+		: fullPricing;
 	return Response.json({
 		...record,
+		...(tailSlice ? {} : { turns: rawTurns }),
 		messages: responseMessages,
 		...(tailSlice
 			? {
 					totalMessages: tailSlice.totalMessages,
+					omittedViewGroups: tailSlice.omittedViewGroups,
 					truncated: tailSlice.truncated,
 					initialPhase: tailSlice.startPhase,
 				}
 			: {}),
 		pluginQuestionAvailability: pluginQuestionAvailabilityOf(chat, questionResolver),
 		pluginProblemAvailability: pluginProblemAvailabilityOf(chat, problemResolver),
-		pricing: sessionCost(chat),
+		pricing,
 		turnInFlight: isTurnRunning(id),
 		// Also reaches idle views that missed the failing turn's stream.
 		turnError: turnFailure(id),

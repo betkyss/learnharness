@@ -90,6 +90,7 @@ export function DeleteSessionDialog({
 }) {
 	const [traces, setTraces] = useState(false);
 	const [busy, setBusy] = useState(false);
+	const [stopping, setStopping] = useState(false);
 	// Retry IS pressing Delete again: the mode always derives from the
 	// checkbox's current state (a toggle between failure and retry is a
 	// change of intent, honored as such — the checkbox is disabled while
@@ -101,18 +102,19 @@ export function DeleteSessionDialog({
 		if (!chat) {
 			setTraces(false);
 			setBusy(false);
+			setStopping(false);
 			setFailure(null);
 		}
 	}, [chat]);
 
 	const run = async () => {
-		if (!chat || busy) return;
+		if (!chat || busy || stopping) return;
 		const mode: ChatDeleteMode = traces ? "delete-nodes" : "preserve-graph";
 		setBusy(true);
 		setFailure(null);
 		try {
 			const res = await fetch(`/api/chats/${chat.id}?mode=${mode}`, { method: "DELETE" });
-			const body = (await res.json()) as {
+			const body = (await res.json().catch(() => ({}))) as {
 				ok?: boolean;
 				error?: string;
 				code?: string;
@@ -120,8 +122,12 @@ export function DeleteSessionDialog({
 			};
 			if (!res.ok) {
 				// 409 (turn/jobs running) and 503 (extraction winding down) are
-				// both retryable — keep the dialog open, show the server's line.
-				setFailure({ code: body.code ?? "error", error: body.error ?? `Delete failed (${res.status})` });
+				// both retryable — keep the dialog open, show a clear inline message.
+				const code = body.code ?? (res.status === 409 ? "turn_in_flight" : "error");
+				const fallback = res.status === 409
+					? "This session is currently busy — stop the active turn or wait for it to finish, then try again."
+					: `Delete failed (${res.status})`;
+				setFailure({ code, error: body.error ?? fallback });
 				setBusy(false);
 				return;
 			}
@@ -133,18 +139,52 @@ export function DeleteSessionDialog({
 		}
 	};
 
+	const stopActiveTurn = async () => {
+		if (!chat || busy || stopping) return;
+		setStopping(true);
+		try {
+			const res = await fetch("/api/activity/abort", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kind: "turn", id: chat.id }),
+			});
+			if (res.ok || res.status === 409) {
+				setFailure({
+					code: "turn_stopped",
+					error: res.ok
+						? "Active turn stopped — wait a moment for it to settle, then press Try again."
+						: "No active turn is running anymore — press Try again to delete.",
+				});
+			} else {
+				setFailure({
+					code: "turn_in_flight",
+					error: "Could not stop the active turn — wait for it to finish, then try again.",
+				});
+			}
+		} catch {
+			setFailure({
+				code: "turn_in_flight",
+				error: "Network error while stopping the active turn. Try again.",
+			});
+		} finally {
+			setStopping(false);
+		}
+	};
+
 	if (!chat) return null;
 
 	return <DeleteSessionBody
 				chat={chat}
 				traces={traces}
 				busy={busy}
+				stopping={stopping}
 				failure={failure}
 				onTraces={(next) => setTraces(next)}
 				onClose={onClose}
 				onRun={() => void run()}
+				onStopTurn={() => void stopActiveTurn()}
 				renderFrame={(frame) => <HostDialog open frame={frame} onClose={() => {
-					if (busy) return "blocked";
+					if (busy || stopping) return "blocked";
 					onClose(); return "closed";
 				}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80" }}>{frame.props.children}</HostDialog>}
 			/>;
@@ -156,10 +196,12 @@ export function DeleteSessionBody({
 	chat,
 	traces,
 	busy,
+	stopping = false,
 	failure,
 	onTraces,
 	onClose,
 	onRun,
+	onStopTurn,
 	renderFrame,
 	copy = SESSION_DELETE_COPY,
 }: {
@@ -167,14 +209,17 @@ export function DeleteSessionBody({
 	/** The graph-traces checkbox — unchecked by default (preserve-graph). */
 	traces: boolean;
 	busy: boolean;
+	stopping?: boolean;
 	failure: { code: string; error: string } | null;
 	onTraces: (next: boolean) => void;
 	onClose: () => void;
 	onRun: () => void;
+	onStopTurn?: () => void;
 	renderFrame?: (frame: ReactElement<{ children: ReactNode }>) => ReactNode;
 	/** The wording; the folder Delete reuses this exact surface. */
 	copy?: DeleteDialogCopy;
 }) {
+	const disabled = busy || stopping;
 	const frame = (
 		<div
 			role="dialog"
@@ -196,7 +241,7 @@ export function DeleteSessionBody({
 						data-testid={TRACES_COPY.checkbox}
 						checked={traces}
 						onChange={(e) => onTraces(e.target.checked)}
-						disabled={busy}
+						disabled={disabled}
 						className="mt-0.5 size-4 shrink-0 accent-primary"
 					/>
 					<span className="min-w-0">
@@ -222,18 +267,31 @@ export function DeleteSessionBody({
 					<div
 						role="alert"
 						data-testid="delete-failure"
-						className="mt-3 rounded-sm border border-border/60 px-3 py-2 text-xs"
+						className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-sm border border-border/60 px-3 py-2 text-xs"
 					>
-						<span className="text-foreground">{failure.error}</span>
-						<button
-							type="button"
-							data-testid="delete-retry"
-							onClick={onRun}
-							disabled={busy}
-							className="ml-3 text-xs text-foreground underline-offset-2 hover:underline disabled:opacity-40"
-						>
-							Try again
-						</button>
+						<span className="min-w-0 flex-1 text-foreground">{failure.error}</span>
+						<span className="flex shrink-0 flex-wrap items-center gap-2">
+							{failure.code === "turn_in_flight" && onStopTurn && (
+								<button
+									type="button"
+									data-testid="delete-stop-turn"
+									onClick={onStopTurn}
+									disabled={disabled}
+									className="rounded-sm border border-border px-2.5 py-1 max-md:min-h-9 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-40"
+								>
+									{stopping ? "Stopping…" : "Stop active turn"}
+								</button>
+							)}
+							<button
+								type="button"
+								data-testid="delete-retry"
+								onClick={onRun}
+								disabled={disabled}
+								className="max-md:min-h-9 max-md:px-2 text-xs text-foreground underline-offset-2 hover:underline disabled:opacity-40"
+							>
+								Try again
+							</button>
+						</span>
 					</div>
 				)}
 			</div>
@@ -245,8 +303,8 @@ export function DeleteSessionBody({
 					type="button"
 					data-testid="delete-cancel"
 					onClick={onClose}
-					disabled={busy}
-					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+					disabled={disabled}
+					className="rounded-sm px-3 py-1.5 max-md:min-h-10 max-md:px-4 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
 				>
 					Cancel
 				</button>
@@ -254,8 +312,8 @@ export function DeleteSessionBody({
 					type="button"
 					data-testid="delete-confirm"
 					onClick={onRun}
-					disabled={busy}
-					className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40"
+					disabled={disabled}
+					className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 max-md:min-h-10 max-md:px-4 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40"
 				>
 					{busy ? "Deleting…" : "Delete"}
 				</button>
@@ -299,7 +357,7 @@ export function DeleteFolderDialog({
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(folder.scope),
 			});
-			const body = (await res.json()) as { error?: string; code?: string; graphRevision?: number; deletedChatIds?: string[] };
+			const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string; graphRevision?: number; deletedChatIds?: string[] };
 			if (body.code === "folder_scope_changed" || body.code === "not_found") {
 				onStale(body.error ?? "This folder changed. Nothing was deleted.");
 				return;

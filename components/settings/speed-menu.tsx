@@ -56,7 +56,7 @@ export function SpeedControl({ provider, modelId, value, inherited, inheritLabel
 			aria-controls={open ? menuId : undefined}
 			title={`Speed: ${label}`}
 			value={label}
-			className={compact ? "h-auto rounded-full bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur" : undefined}
+			className={compact ? "h-auto max-md:min-h-9 rounded-full bg-card/85 px-2.5 py-1 shadow-lg backdrop-blur" : undefined}
 			onClick={() => { onOpen?.(); window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: testid })); setOpen(!open); }}
 		/>
 		{open && <MenuShell anchorRef={anchor} testid={menuId} preferredSide={compact ? "up" : "down"} menuClass="flex w-52 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl">

@@ -26,7 +26,7 @@ export function PluginViewScreen({ pluginId, viewId }: { pluginId: string; viewI
 	usePluginShortcutPage(viewPath, () => view && plugin?.info.enabled && pathname === viewPath
 		? { surface: "plugin-view", pluginId, viewId } : undefined);
 	const unavailable = !plugin ? "Plugin is not installed." : !plugin.info.enabled ? "This plugin is disabled." : "This plugin view is not available.";
-	return <div className="flex h-dvh min-w-0 flex-col">
+	return <div data-plugin-view-surface="" className="flex h-dvh min-w-0 flex-col">
 		<TopBar>
 			<h1 data-plugin-chrome-title className="min-w-0 truncate font-title text-3xl tracking-tight">{view?.name ?? plugin?.info.manifest?.name ?? "Plugin"}</h1>
 			<div className="min-w-4 flex-1" aria-hidden="true" />

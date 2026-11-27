@@ -103,7 +103,7 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
 			else manager.appEvent({ type, ...payload } as ServerEvent);
 			if (type === "plugins-changed") void manager.reload();
 		}));
-		offs.push(hub.onResync(() => manager.resync()));
+		offs.push(hub.onResync((ctx) => { if (ctx.full) manager.resync(); }));
 		return () => { for (const off of offs) off(); };
 	}, [hub, manager]);
 	const snapshot = useSyncExternalStore(manager?.subscribe ?? emptySubscribe, manager?.getSnapshot ?? emptySnapshot, emptySnapshot);

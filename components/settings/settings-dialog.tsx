@@ -391,7 +391,7 @@ export function SettingsDialogBody({
 			aria-modal="true"
 			aria-label="Settings"
 			data-testid="settings-dialog"
-			className="settings-dialog-pop flex h-[620px] max-h-[min(90dvh,calc(var(--vvh,100dvh)-16px))] w-[920px] max-w-[90vw] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
+			className="settings-dialog-pop flex h-[620px] max-h-[min(90dvh,calc(var(--vvh,var(--lh-app-height,100dvh))-16px))] w-[920px] max-w-[90vw] flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl"
 			onClick={(e) => e.stopPropagation()}
 		>
 			{/* Header — the app's quiet CMU title language. */}
@@ -407,7 +407,7 @@ export function SettingsDialogBody({
 					type="button"
 					aria-label="Close settings"
 					data-testid="settings-close"
-					className="ml-auto size-7 rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					className="ml-auto size-7 max-md:size-10 rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 					onClick={onClose}
 				>
 					<svg
@@ -431,7 +431,7 @@ export function SettingsDialogBody({
 					data-testid="settings-section-select"
 					value={selected}
 					onChange={(event) => setActive(event.target.value as SectionId)}
-					className="m-2 min-h-10 rounded-sm border bg-card px-2 text-base md:hidden"
+					className="m-2 h-10 rounded-sm border bg-card px-2 text-base md:hidden"
 				>
 					<optgroup label="Settings">
 						{SECTIONS.map((section) => (

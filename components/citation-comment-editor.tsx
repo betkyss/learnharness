@@ -56,7 +56,7 @@ export function CitationCommentEditor({ initial, onDraftChange, onSave, onCancel
 				aria-label="Comment on selected text"
 				aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
 				placeholder="Add an optional comment..."
-				className="field-sizing-content max-h-40 min-h-16 w-full resize-none rounded-md border bg-background px-2 py-1.5 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+				className="field-sizing-content max-h-40 min-h-16 w-full resize-none rounded-md border bg-background px-2 py-1.5 text-base md:text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
 				onChange={(event) => { setDraft(event.target.value); onDraftChange(event.target.value); }}
 				onKeyDown={(event) => {
 					if (!isInteractionScopeEligible(areaRef.current, controller)) return;

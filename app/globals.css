@@ -33,6 +33,7 @@
 /* Neutral dark factory palette. Appearance overrides these tokens at runtime. */
 :root,
 .dark {
+	--lh-app-height: 100dvh;
 	--lh-chat-max-width: 46rem;
 	color-scheme: dark;
 	--radius: 8px;
@@ -389,8 +390,17 @@ body {
 	min-width: 0;
 	max-width: 100%;
 }
-[data-session-surface] {
-	height: var(--vvh, 100dvh);
+/* iOS Standalone PWA (viewport-fit=cover): 100dvh subtracts safe-area-inset-top
+   (~47px on notched iPhones), leaving a dead strip at the bottom. 100vh fills
+   the real WebView height while keyboard-open overrides via --vvh. */
+@media (display-mode: standalone) {
+	:root {
+		--lh-app-height: 100vh;
+	}
+}
+[data-session-surface],
+[data-plugin-view-surface] {
+	height: var(--vvh, var(--lh-app-height, 100dvh));
 }
 /* The same well on the light page, gentler: 14% black over #f5f5f3 reads as
    a heavy gray slab, 4% keeps it just darker than the page. Inline code
@@ -403,12 +413,32 @@ body {
 	display: none;
 }
 [data-streamdown="code-block-body"] {
+	--lh-code-well: color-mix(in oklab, var(--background) 86%, black);
 	border: 0;
-	background: transparent;
 	padding: 0.75rem 1rem;
 	max-width: 100%;
 	overflow-x: auto;
 	-webkit-overflow-scrolling: touch;
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
+	background:
+		linear-gradient(to right, var(--lh-code-well) 30%, transparent) left center / 28px 100% no-repeat local,
+		linear-gradient(to left, var(--lh-code-well) 30%, transparent) right center / 28px 100% no-repeat local,
+		radial-gradient(farthest-side at 0 50%, color-mix(in oklab, var(--foreground) 18%, transparent), transparent) left center / 14px 100% no-repeat scroll,
+		radial-gradient(farthest-side at 100% 50%, color-mix(in oklab, var(--foreground) 18%, transparent), transparent) right center / 14px 100% no-repeat scroll;
+}
+.light [data-streamdown="code-block-body"] {
+	--lh-code-well: color-mix(in oklab, var(--background) 96%, black);
+}
+[data-streamdown="code-block-body"]::-webkit-scrollbar {
+	height: 6px;
+}
+[data-streamdown="code-block-body"]::-webkit-scrollbar-thumb {
+	background: color-mix(in oklab, var(--muted-foreground) 40%, transparent);
+	border-radius: 9999px;
+}
+[data-streamdown="code-block-body"]::-webkit-scrollbar-track {
+	background: transparent;
 }
 [data-streamdown="code-block-body"] pre {
 	max-width: 100%;
@@ -819,7 +849,7 @@ body {
 .graph-detail { overflow-wrap: anywhere; }
 
 /* A confirmation has one scroll region between its title and actions. */
-.lh-confirm { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); padding: 16px; overflow: hidden; overflow-wrap: anywhere; }
+.lh-confirm { display: flex; flex-direction: column; max-height: calc(var(--vvh, var(--lh-app-height, 100dvh)) - 32px); padding: 16px; overflow: hidden; overflow-wrap: anywhere; }
 .lh-confirm > h2, .lh-confirm-actions { flex: none; }
 .lh-confirm-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
 .lh-confirm-actions { padding-top: 12px; margin-top: 0; }
@@ -839,7 +869,7 @@ body {
  [data-testid="composer-actions"], [data-testid="model-controls"] { flex-wrap: wrap; }
 }
 @media (max-height: 500px) {
- [data-testid="settings-dialog"], [data-testid="setup-dialog"] { max-height: calc(var(--vvh, 100dvh) - 16px); max-width: calc(100vw - 16px); }
+ [data-testid="settings-dialog"], [data-testid="setup-dialog"] { max-height: calc(var(--vvh, var(--lh-app-height, 100dvh)) - 16px); max-width: calc(100vw - 16px); }
  [data-testid="settings-dialog"] > header, [data-testid="setup-dialog"] > header { height: 40px; padding-inline: 16px; }
  [data-testid="settings-dialog"] > header h2, [data-testid="setup-dialog"] > header h2 { font-size: var(--text-base); }
  [data-testid="settings-section-select"] { margin: 4px 12px; flex-shrink: 0; }
@@ -853,7 +883,7 @@ body {
 }
 /* Mirror short-viewport rules when iOS virtual keyboard shrinks window.visualViewport <= 500px. */
 html[data-short-viewport="true"] [data-testid="settings-dialog"],
-html[data-short-viewport="true"] [data-testid="setup-dialog"] { max-height: calc(var(--vvh, 100dvh) - 16px); max-width: calc(100vw - 16px); }
+html[data-short-viewport="true"] [data-testid="setup-dialog"] { max-height: calc(var(--vvh, var(--lh-app-height, 100dvh)) - 16px); max-width: calc(100vw - 16px); }
 html[data-short-viewport="true"] [data-testid="settings-dialog"] > header,
 html[data-short-viewport="true"] [data-testid="setup-dialog"] > header { height: 40px; padding-inline: 16px; }
 html[data-short-viewport="true"] [data-testid="settings-dialog"] > header h2,
@@ -873,7 +903,7 @@ html[data-short-viewport="true"] [data-home-dock] { padding-bottom: 8px; }
 .short-controls-panel [data-testid="stats-model"]::before { content: "Model"; color: var(--muted-foreground); }
 .short-controls-panel [data-testid="stats-thinking"]::before { content: "Thinking"; color: var(--muted-foreground); }
 .short-controls-panel [data-testid="stats-speed"]::before { content: "Speed"; color: var(--muted-foreground); }
-.connection-panel { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
+.connection-panel { display: flex; flex-direction: column; max-height: calc(var(--vvh, var(--lh-app-height, 100dvh)) - 32px); overflow-y: auto; overscroll-behavior: contain; }
 .connection-panel > h2 { position: sticky; top: -16px; z-index: 1; margin: -16px -16px 0; padding: 16px; background: var(--card); }
 .connection-footer, .connection-panel [data-testid="chatgpt-disconnect-confirmation"] > div:last-child { position: sticky; bottom: -16px; flex-shrink: 0; margin-bottom: -16px; padding: 12px 0 16px; background: var(--card); }
 .setup-keys-scroll > div > div:last-child { position: sticky; bottom: -20px; background: var(--card); padding-block: 12px; }
@@ -928,7 +958,8 @@ html:not(.lh-electron) .lh-dock-block,
 html:not(.lh-electron) [data-home-dock] {
 	padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
 }
-html:not(.lh-electron) .home-surface > header {
+html:not(.lh-electron) .home-surface > header,
+html:not(.lh-electron) .lh-floating-header {
 	padding-top: calc(0.5rem + env(safe-area-inset-top, 0px));
 }
 @media (max-width: 767px) {

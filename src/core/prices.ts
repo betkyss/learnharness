@@ -11,6 +11,10 @@ export interface SessionPricing {
 	subscriptionProviders?: string[];
 	/** Derived at read time, keyed by the persisted turn's id. Never stored. */
 	turnCosts: Record<string, number | null>;
+	/** Summary fields populated on `?tail=` responses where verbose `turns` are omitted. */
+	turnCount?: number;
+	cliBilled?: boolean;
+	cacheHitRate?: number | null;
 }
 
 export function isChatGPTPlan(model: string | undefined): boolean {

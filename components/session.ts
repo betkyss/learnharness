@@ -30,6 +30,8 @@ export interface UseChatSessionOptions {
 	initialMessages: LhMessage[];
 	/** Total server native messages when SSR delivered a tail slice. */
 	initialTotalMessages?: number;
+	/** View groups omitted before the initial SSR tail slice. */
+	initialOmittedViewGroups?: number;
 	/** Tail window size for canonical GETs until expanded or loaded in full. */
 	initialTailLimit?: number | null;
 	/** Transient settlement failure retained by the server, not the transcript. */
@@ -42,6 +44,7 @@ export function useChatSession({
 	chatId,
 	initialMessages,
 	initialTotalMessages,
+	initialOmittedViewGroups,
 	initialTailLimit,
 	initialError,
 	initiallyInFlight,
@@ -54,6 +57,7 @@ export function useChatSession({
 			chatId,
 			initialMessages,
 			initialTotalMessages,
+			initialOmittedViewGroups,
 			initialTailLimit,
 			initialError,
 			maxStreamRecoveries: 3,
@@ -178,6 +182,7 @@ export function useChatSession({
 		nativeMessages: state.nativeMessages,
 		canonicalMessages: state.canonicalMessages,
 		totalMessageCount: state.totalMessageCount,
+		omittedViewGroups: state.omittedViewGroups,
 		hasEarlierMessages: state.hasEarlierMessages,
 		loadingEarlier: state.loadingEarlier,
 		reconciliation: state.reconciliation,

@@ -56,7 +56,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 			style={vars as React.CSSProperties}
 			suppressHydrationWarning
 		>
-			<body className="min-h-dvh antialiased">
+			<body className="min-h-[var(--lh-app-height,100dvh)] antialiased">
 			<VisualViewportSync />
 			{/* The notification channel rides OUTSIDE everything: sidebar, dock,
 				 and pages all subscribe as the polls retire (push S3, 2026-10-02). */}

@@ -46,8 +46,8 @@ export function GraphOutline({ snapshot, query, visibleIds, onFocus }: { snapsho
  const matches = query.trim() ? snapshot.propositions.filter(node => visibleIds.has(node.id)) : [];
  const pick = (ids: string[], selectNode = false) => { setOpen(false); onFocus(ids, selectNode); };
  return <div ref={anchor} className="graph-outline flex max-w-full flex-wrap justify-end gap-1 text-xs">
-  <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="rounded-lg border bg-card px-3 py-1.5 hover:bg-accent">{query.trim() ? `${matches.length} results` : `${groups.length} sources · ${snapshot.chains.length} chains`}</button>
-  <div className="graph-source-anchors flex flex-wrap justify-end gap-1">{groups.slice(0, 2).map(group => <button type="button" key={group.id} title={group.name} onClick={() => pick(group.nodeIds)} className="max-w-52 truncate rounded-lg border bg-card px-2 py-1.5 text-muted-foreground hover:text-foreground">{group.name} · {group.nodeIds.length}</button>)}</div>
+  <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="rounded-lg border bg-card px-3 py-1.5 max-md:min-h-9 hover:bg-accent">{query.trim() ? `${matches.length} results` : `${groups.length} sources · ${snapshot.chains.length} chains`}</button>
+  <div className="graph-source-anchors flex flex-wrap justify-end gap-1">{groups.slice(0, 2).map(group => <button type="button" key={group.id} title={group.name} onClick={() => pick(group.nodeIds)} className="max-w-52 truncate rounded-lg border bg-card px-2 py-1.5 max-md:min-h-9 text-muted-foreground hover:text-foreground">{group.name} · {group.nodeIds.length}</button>)}</div>
   {open && <MenuShell anchorRef={anchor} testid="graph-outline-menu" preferredSide="down" menuClass="w-80 rounded-xl border bg-card p-3 text-xs shadow-lg">
    <h2 className="mb-2 font-medium">{query.trim() ? "Search results" : "Sources and chains"}</h2>
    {chain && <section ref={reading} data-testid="graph-chain-reading" className="mb-3 border-b pb-3">

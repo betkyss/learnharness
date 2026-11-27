@@ -464,9 +464,60 @@ export function normalizeFitPadding(padding: FitPadding): { top: number; right: 
 	return padding;
 }
 
+/** Scale cluster region labels down on narrow screens (<640px) so adjacent
+ *  clusters stay legible without colliding after Fit; desktop (>=640px) untouched. */
+export function effectiveClusterLabelSize(baseSize: number, viewportW: number): number {
+	if (viewportW > 0 && viewportW < 640) {
+		return Math.max(11, Math.round(baseSize * 0.84 * 10) / 10);
+	}
+	return baseSize;
+}
+
+/** Wrap width for cluster region labels: tighter on phones (<640px) to prevent
+ *  center collisions between neighboring clusters; desktop keeps 220px. */
+export function effectiveRegionLabelMaxWidth(viewportW: number): number {
+	if (viewportW > 0 && viewportW < 640) {
+		return Math.min(130, Math.max(96, Math.round(viewportW * 0.34)));
+	}
+	return REGION_LABEL_MAX_WIDTH;
+}
+
+/** True when a restored camera places a meaningful portion of `bbox` inside
+ *  the visible safe rectangle between toolbars and dock. Guards against stale
+ *  saved cameras that shove the graph into a corner or off-screen. */
+export function isBBoxVisibleInViewport(
+	bbox: { minX: number; maxX: number; minY: number; maxY: number },
+	transform: { k: number; x: number; y: number },
+	w: number,
+	h: number,
+	padding: FitPadding,
+): boolean {
+	if (w <= 0 || h <= 0) return true;
+	const pad = normalizeFitPadding(padding);
+	const visMinX = Math.min(pad.left, w / 2);
+	const visMaxX = Math.max(w - pad.right, w / 2);
+	const visMinY = Math.min(pad.top, h / 2);
+	const visMaxY = Math.max(h - pad.bottom, h / 2);
+	const sxMin = bbox.minX * transform.k + transform.x;
+	const sxMax = bbox.maxX * transform.k + transform.x;
+	const syMin = bbox.minY * transform.k + transform.y;
+	const syMax = bbox.maxY * transform.k + transform.y;
+	const overlapW = Math.min(sxMax, visMaxX) - Math.max(sxMin, visMinX);
+	const overlapH = Math.min(syMax, visMaxY) - Math.max(syMin, visMinY);
+	if (overlapW <= 0 || overlapH <= 0) return false;
+	const bboxW = Math.max(sxMax - sxMin, 1);
+	const bboxH = Math.max(syMax - syMin, 1);
+	const visW = Math.max(visMaxX - visMinX, 1);
+	const visH = Math.max(visMaxY - visMinY, 1);
+	const fracX = overlapW / Math.min(bboxW, visW);
+	const fracY = overlapH / Math.min(bboxH, visH);
+	return fracX >= 0.2 && fracY >= 0.2;
+}
+
 /** Validate a persisted camera against the current viewport dimensions.
- *  Drops stale transforms when the viewport switched form-factor or orientation
- *  (e.g. desktop↔mobile or portrait↔landscape) so the graph re-fits cleanly. */
+ *  Requires valid saved `vw`/`vh` (rejects legacy records lacking viewport
+ *  dimensions) and drops stale transforms when the viewport switched
+ *  form-factor or orientation so the graph re-fits cleanly. */
 export function shouldRestoreCamera(
 	stored: { k?: unknown; x?: unknown; y?: unknown; vw?: unknown; vh?: unknown } | null | undefined,
 	currentW: number,
@@ -476,15 +527,13 @@ export function shouldRestoreCamera(
 		!stored ||
 		typeof stored.k !== "number" || !Number.isFinite(stored.k) || stored.k <= 0 ||
 		typeof stored.x !== "number" || !Number.isFinite(stored.x) ||
-		typeof stored.y !== "number" || !Number.isFinite(stored.y)
+		typeof stored.y !== "number" || !Number.isFinite(stored.y) ||
+		typeof stored.vw !== "number" || !Number.isFinite(stored.vw) || stored.vw <= 0 ||
+		typeof stored.vh !== "number" || !Number.isFinite(stored.vh) || stored.vh <= 0
 	) {
 		return null;
 	}
-	if (
-		typeof stored.vw === "number" && Number.isFinite(stored.vw) && stored.vw > 0 &&
-		typeof stored.vh === "number" && Number.isFinite(stored.vh) && stored.vh > 0 &&
-		currentW > 0 && currentH > 0
-	) {
+	if (currentW > 0 && currentH > 0) {
 		if (Math.abs(stored.vw - currentW) > 120 || Math.abs(stored.vh - currentH) > 120) {
 			return null;
 		}
@@ -646,6 +695,8 @@ export class GraphCanvasRenderer {
 	private transform: ZoomTransform = zoomIdentity;
 	/** Set once the first fit happens; the camera then survives setData. */
 	private hasFit = false;
+	/** True until the first setData verifies a restored initialCamera frames the graph. */
+	private restoredFromInitial = false;
 	/** Last-synced CSS size — the resize anchor computes the world point
 	 *  under the PRE-resize viewport center from these (ResizeObserver
 	 *  callbacks already see the NEW size in clientWidth/Height). */
@@ -795,6 +846,7 @@ export class GraphCanvasRenderer {
 			typeof initialCamera.y === "number" && Number.isFinite(initialCamera.y)
 		) {
 			this.hasFit = true;
+			this.restoredFromInitial = true;
 			select(canvas).call(
 				this.zoomBehavior.transform,
 				zoomIdentity.translate(initialCamera.x, initialCamera.y).scale(initialCamera.k),
@@ -811,6 +863,9 @@ export class GraphCanvasRenderer {
 			const wx = (prevW / 2 - tx) / k;
 			const wy = (prevH / 2 - ty) / k;
 			this.syncSize();
+			if (prevW !== this.viewW && (prevW < 640 || this.viewW < 640)) {
+				this.geoVersion++;
+			}
 			if (!this.hasFit) this.fit(); // first real size → fit once
 			else {
 				this.refreshFitZoom(); // the gate's "1×" is viewport-bound
@@ -851,6 +906,16 @@ export class GraphCanvasRenderer {
 		}
 		this.worldBBox = { minX, maxX, minY, maxY };
 		if (!this.hasFit && data.nodes.length > 0) this.fit();
+		else if (this.restoredFromInitial && data.nodes.length > 0) {
+			this.restoredFromInitial = false;
+			const w = this.canvas.clientWidth;
+			const h = this.canvas.clientHeight;
+			if (w >= 10 && h >= 10 && !isBBoxVisibleInViewport(this.worldBBox, this.transform, w, h, this.resolveFitPadding(w, h))) {
+				this.fit();
+			} else {
+				this.refreshFitZoom();
+			}
+		}
 		// The camera may be user-restored (constructor initialCamera) — the
 		// gate's "1×" reference still needs the fresh bbox's fit zoom.
 		else this.refreshFitZoom();
@@ -934,7 +999,7 @@ export class GraphCanvasRenderer {
 		}
 		const ctx = this.ctx;
 		const prevFont = ctx.font;
-		ctx.font = `${LABEL_WEIGHT} ${settings.clusterLabelSize}px ${data.fontFamily}`;
+		ctx.font = `${LABEL_WEIGHT} ${this.clusterLabelFontSize(settings.clusterLabelSize)}px ${data.fontFamily}`;
 		const changed = applyClusterLabels(
 			data.clusters,
 			this.regionMeta,
@@ -982,12 +1047,12 @@ export class GraphCanvasRenderer {
 		return { top, right, bottom, left };
 	}
 
+	private clusterLabelFontSize(baseSize: number): number {
+		return effectiveClusterLabelSize(baseSize, this.viewW || this.canvas.clientWidth);
+	}
+
 	private regionLabelMaxWidth(): number {
-		const w = this.viewW || this.canvas.clientWidth;
-		if (w > 0 && w < 640) {
-			return Math.min(REGION_LABEL_MAX_WIDTH, Math.max(120, Math.round(w * 0.42)));
-		}
-		return REGION_LABEL_MAX_WIDTH;
+		return effectiveRegionLabelMaxWidth(this.viewW || this.canvas.clientWidth);
 	}
 
 	private isCoarsePointer(): boolean {
@@ -1010,6 +1075,7 @@ export class GraphCanvasRenderer {
 		const t = fitTransform(this.worldBBox, w, h, pad);
 		this.kFit = t.k;
 		this.hasFit = true;
+		this.restoredFromInitial = false;
 		select(this.canvas).call(
 			this.zoomBehavior.transform,
 			zoomIdentity.translate(t.x, t.y).scale(t.k),
@@ -1724,7 +1790,7 @@ export class GraphCanvasRenderer {
 			const ctx = this.ctx;
 			const prevFont = ctx.font;
 			const maxLabelWidth = this.regionLabelMaxWidth();
-			ctx.font = `${LABEL_WEIGHT} ${settings.clusterLabelSize}px ${data.fontFamily}`;
+			ctx.font = `${LABEL_WEIGHT} ${this.clusterLabelFontSize(settings.clusterLabelSize)}px ${data.fontFamily}`;
 			for (const rm of this.regionMeta) {
 				rm.lines = rm.label
 					? wrapRegionLabel(rm.label, maxLabelWidth, REGION_LABEL_MAX_LINES, (s) => ctx.measureText(s).width)
@@ -2019,12 +2085,13 @@ export class GraphCanvasRenderer {
 		if (settings.clusterLabels && regionAlpha > 0.01) {
 			ctx.save();
 			ctx.globalAlpha = regionAlpha;
-			ctx.font = `${LABEL_WEIGHT} ${settings.clusterLabelSize / k}px ${data.fontFamily}`;
+			const labelSize = this.clusterLabelFontSize(settings.clusterLabelSize);
+			ctx.font = `${LABEL_WEIGHT} ${labelSize / k}px ${data.fontFamily}`;
 			ctx.textAlign = "center";
 			ctx.textBaseline = "middle";
 			// Screen px ÷ k = world units — the lines stay evenly spaced
 			// at a constant on-screen pitch at any zoom.
-			const lineH = (settings.clusterLabelSize * REGION_LABEL_LINE_HEIGHT) / k;
+			const lineH = (labelSize * REGION_LABEL_LINE_HEIGHT) / k;
 			for (const rm of this.regionMeta) {
 				if (!rm.lines) continue;
 				ctx.fillStyle = `hsla(${rm.hue}, 55%, ${data.colors.clusterLightness.label}%, 0.85)`;

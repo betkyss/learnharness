@@ -168,12 +168,67 @@ const CLIENT_DETAILS_ONLY_TOOLS = new Set<string>([
 	"find_candidates",
 ]);
 
+const COMPACTABLE_HISTORICAL_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const HISTORICAL_TOOL_TEXT_LIMIT = 2048;
+const HISTORICAL_TOOL_JSON_LIMIT = 3072;
+const TAIL_TRUNCATION_SUFFIX = "\n… [truncated in tail view — load full history for complete output]";
+
+function compactToolDetails(details: unknown): unknown {
+	if (typeof details === "string") {
+		return details.length > HISTORICAL_TOOL_TEXT_LIMIT
+			? `${details.slice(0, HISTORICAL_TOOL_TEXT_LIMIT)}${TAIL_TRUNCATION_SUFFIX}`
+			: details;
+	}
+	if (details && typeof details === "object") {
+		const record = details as Record<string, unknown>;
+		if (typeof record.text === "string") {
+			if (record.text.length <= HISTORICAL_TOOL_TEXT_LIMIT) return details;
+			return {
+				...record,
+				text: `${record.text.slice(0, HISTORICAL_TOOL_TEXT_LIMIT)}${TAIL_TRUNCATION_SUFFIX}`,
+				truncatedInTail: true,
+			};
+		}
+		try {
+			const serialized = JSON.stringify(details);
+			if (serialized.length > HISTORICAL_TOOL_JSON_LIMIT) {
+				return {
+					text: `${serialized.slice(0, HISTORICAL_TOOL_TEXT_LIMIT)}${TAIL_TRUNCATION_SUFFIX}`,
+					truncatedInTail: true,
+				};
+			}
+		} catch {
+			/* unserializable object — pass through untouched */
+		}
+	}
+	return details;
+}
+
+/** Index of the latest turn boundary (last user prompt or settled question answer)
+ *  so historical collapsed filesystem reads before it can be compacted in tail views
+ *  without touching the most recent turn. */
+function latestTurnBoundaryIndex(messages: readonly LhMessage[]): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i]!;
+		if (m.role === "user") return i;
+		if (m.role === "toolResult" && (m.toolName === "quiz" || m.toolName === "ask_user_question")) return i;
+	}
+	return 0;
+}
+
 /** Strip opaque provider-replay signatures (`thinkingSignature`, `textSignature`)
  *  from assistant content blocks and duplicated model-facing `content` from
  *  builtin non-error `toolResult` messages whose structured `details` already
- *  powers the UI. Never mutates input messages or blocks; disk storage stays intact. */
-export function sanitizeMessagesForClient(messages: readonly LhMessage[]): LhMessage[] {
-	return messages.map((message) => {
+ *  powers the UI. When `compactHistoricalToolDetails` is enabled (tail SSR/API),
+ *  also truncates oversized collapsed `read`/`grep`/`find`/`ls` details from
+ *  earlier turns. Never mutates input messages or blocks; disk storage stays intact. */
+export function sanitizeMessagesForClient(
+	messages: readonly LhMessage[],
+	options?: { compactHistoricalToolDetails?: boolean },
+): LhMessage[] {
+	const compactDetails = options?.compactHistoricalToolDetails === true;
+	const latestBoundary = compactDetails ? latestTurnBoundaryIndex(messages) : 0;
+	return messages.map((message, index) => {
 		if (message.role === "custom") {
 			// Compaction summaries are model-facing plumbing (40–60 KB each) and
 			// are deliberately unrendered in the browser UI (CompactionCutDivider /
@@ -184,14 +239,27 @@ export function sanitizeMessagesForClient(messages: readonly LhMessage[]): LhMes
 			return message;
 		}
 		if (message.role === "toolResult") {
-			if (
+			const stripContent =
 				!message.isError &&
 				message.details != null &&
 				CLIENT_DETAILS_ONLY_TOOLS.has(message.toolName) &&
 				Array.isArray(message.content) &&
-				message.content.length > 0
-			) {
-				return { ...message, content: [] } as LhMessage;
+				message.content.length > 0;
+			const nextDetails =
+				compactDetails &&
+				index < latestBoundary &&
+				!message.isError &&
+				message.details != null &&
+				COMPACTABLE_HISTORICAL_TOOLS.has(message.toolName)
+					? compactToolDetails(message.details)
+					: message.details;
+			const detailsChanged = nextDetails !== message.details;
+			if (stripContent || detailsChanged) {
+				return {
+					...message,
+					...(stripContent ? { content: [] } : {}),
+					...(detailsChanged ? { details: nextDetails } : {}),
+				} as LhMessage;
 			}
 			return message;
 		}

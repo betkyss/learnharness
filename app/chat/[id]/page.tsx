@@ -29,8 +29,9 @@ export default async function ChatPage({
 			// Wave D: the record IS native agent history — ship only the active
 			// tail window on SSR so long sessions hydrate fast on mobile; earlier
 			// messages load on demand via ?tail=N or full GET.
-			initialMessages={sanitizeMessagesForClient(tail.messages)}
+			initialMessages={sanitizeMessagesForClient(tail.messages, { compactHistoricalToolDetails: true })}
 			initialTotalMessages={tail.totalMessages}
+			initialOmittedViewGroups={tail.omittedViewGroups}
 			initialTruncated={tail.truncated}
 			initialPhase={tail.startPhase}
 			initialPlanTree={chat.tree ?? null}

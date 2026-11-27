@@ -153,6 +153,43 @@ const EXPAND_DIST = 16;
 const INITIAL_VISIBLE_MESSAGES = CLIENT_DEFAULT_TAIL_GROUPS;
 const LOAD_OLDER_STEP = 40;
 
+/** Pure scroll-anchor math for "Show earlier messages": keeps the saved anchor
+ *  row at its exact pre-prepend viewport offset inside the scroll container,
+ *  even when `content-visibility: auto` makes raw `scrollHeight` deltas drift. */
+export function computeAnchorScrollTop({
+	currentScrollTop,
+	anchorTopBefore,
+	scrollerTopBefore,
+	anchorTopAfter,
+	scrollerTopAfter,
+}: {
+	currentScrollTop: number;
+	anchorTopBefore: number;
+	scrollerTopBefore: number;
+	anchorTopAfter: number;
+	scrollerTopAfter: number;
+}): number {
+	const offsetBefore = anchorTopBefore - scrollerTopBefore;
+	const offsetAfter = anchorTopAfter - scrollerTopAfter;
+	return Math.max(0, Math.round(currentScrollTop + (offsetAfter - offsetBefore)));
+}
+
+/** Unified view-group counter for the "Show earlier messages" pill so local
+ *  slicing and server tail truncation never mix view groups with raw native
+ *  `toolResult` counts. */
+export function formatEarlierMessagesCount({
+	localHiddenGroups,
+	serverOmittedGroups,
+	hasEarlierMessages,
+}: {
+	localHiddenGroups: number;
+	serverOmittedGroups: number;
+	hasEarlierMessages: boolean;
+}): string {
+	const total = Math.max(0, localHiddenGroups) + (hasEarlierMessages ? Math.max(0, serverOmittedGroups) : 0);
+	return total > 0 ? `${total} earlier` : "earlier";
+}
+
 /**
  * Server-sync channel for artifact renderers: the CENTRAL jobs poll in Chat
  * calls syncFromServer() when a background job settles — the wake turn's
@@ -436,6 +473,7 @@ export function Chat({
 	title,
 	initialMessages,
 	initialTotalMessages,
+	initialOmittedViewGroups = 0,
 	initialTruncated = false,
 	initialPhase = "probe",
 	initialPlanTree = null,
@@ -451,6 +489,8 @@ export function Chat({
 	initialMessages: LhMessage[];
 	/** Total native messages stored server-side when SSR delivered a tail slice. */
 	initialTotalMessages?: number;
+	/** View groups omitted before the initial SSR tail slice. */
+	initialOmittedViewGroups?: number;
 	/** True when SSR sliced earlier messages out of the initial payload. */
 	initialTruncated?: boolean;
 	/** Starting phase right before the initial tail slice. */
@@ -489,6 +529,7 @@ export function Chat({
 		activeMessageId,
 		canonicalMessages,
 		totalMessageCount,
+		omittedViewGroups,
 		hasEarlierMessages,
 		loadingEarlier,
 		reconciliation,
@@ -528,6 +569,7 @@ export function Chat({
 		chatId,
 		initialMessages,
 		initialTotalMessages,
+		initialOmittedViewGroups,
 		initialTailLimit: initialTruncated ? INITIAL_VISIBLE_MESSAGES : null,
 		initialError,
 		initiallyInFlight,
@@ -581,7 +623,15 @@ export function Chat({
 		setVisibleCount(Infinity);
 		if (hasEarlierMessagesRef.current) void loadAllMessages();
 	}, [loadAllMessages]);
-	const pendingScrollRestoreRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+	const pendingScrollRestoreRef = useRef<{
+		anchorRowId: string | null;
+		anchorTopBefore: number;
+		scrollerTopBefore: number;
+		scrollHeight: number;
+		scrollTop: number;
+		prevFirstVisibleId: string | null;
+		serverDone: boolean;
+	} | null>(null);
 	useIsoLayoutEffect(() => {
 		const hasHash = typeof window !== "undefined" && Boolean(window.location.hash);
 		setVisibleCount(hasHash ? Infinity : INITIAL_VISIBLE_MESSAGES);
@@ -600,22 +650,46 @@ export function Chat({
 		};
 	}, [showAllMessages]);
 	const visibleStart = Math.max(0, messages.length - visibleCount);
+	const firstVisibleRowId = messages[visibleStart]?.id ?? null;
 	const visibleStartRef = useRef(visibleStart);
 	visibleStartRef.current = visibleStart;
+	const firstVisibleRowIdRef = useRef(firstVisibleRowId);
+	firstVisibleRowIdRef.current = firstVisibleRowId;
 	const loadEarlierMessages = useCallback(() => {
 		const scroller = scrollContextRef.current?.scrollRef.current;
+		const willFetchServer = visibleStartRef.current === 0 && hasEarlierMessagesRef.current;
 		if (scroller) {
 			scrollContextRef.current?.stopScroll();
+			const scrollerRect = scroller.getBoundingClientRect();
+			const rows = scroller.querySelectorAll<HTMLElement>("[data-transcript-row-id]");
+			let anchorEl: HTMLElement | null = null;
+			for (const row of rows) {
+				if (row.getBoundingClientRect().bottom > scrollerRect.top + 1) {
+					anchorEl = row;
+					break;
+				}
+			}
+			if (!anchorEl && rows.length > 0) anchorEl = rows[0]!;
 			pendingScrollRestoreRef.current = {
+				anchorRowId: anchorEl?.dataset.transcriptRowId ?? null,
+				anchorTopBefore: anchorEl ? anchorEl.getBoundingClientRect().top : scrollerRect.top,
+				scrollerTopBefore: scrollerRect.top,
 				scrollHeight: scroller.scrollHeight,
 				scrollTop: scroller.scrollTop,
+				prevFirstVisibleId: firstVisibleRowIdRef.current,
+				serverDone: !willFetchServer,
 			};
 		}
 		if (visibleStartRef.current > 0) {
 			setVisibleCount((prev) => prev + LOAD_OLDER_STEP);
-		} else if (hasEarlierMessagesRef.current) {
+		} else if (willFetchServer) {
 			setVisibleCount((prev) => prev + LOAD_OLDER_STEP);
-			void loadEarlierFromServer(LOAD_OLDER_STEP);
+			const savedToken = pendingScrollRestoreRef.current;
+			void loadEarlierFromServer(LOAD_OLDER_STEP).finally(() => {
+				if (savedToken && pendingScrollRestoreRef.current === savedToken) {
+					savedToken.serverDone = true;
+				}
+			});
 		}
 	}, [loadEarlierFromServer]);
 	useIsoLayoutEffect(() => {
@@ -623,14 +697,45 @@ export function Chat({
 		if (!saved) return;
 		const scroller = scrollContextRef.current?.scrollRef.current;
 		if (!scroller) return;
-		const delta = scroller.scrollHeight - saved.scrollHeight;
-		if (delta !== 0) {
-			pendingScrollRestoreRef.current = null;
-			scroller.scrollTop = saved.scrollTop + delta;
-		} else if (!loadingEarlier) {
-			pendingScrollRestoreRef.current = null;
+		const prepended = firstVisibleRowId !== saved.prevFirstVisibleId;
+		if (!prepended) {
+			if (saved.serverDone && !loadingEarlier) {
+				pendingScrollRestoreRef.current = null;
+			}
+			return;
 		}
-	}, [visibleStart, messages.length, loadingEarlier]);
+		const restoreAnchor = () => {
+			if (saved.anchorRowId) {
+				const rows = scroller.querySelectorAll<HTMLElement>("[data-transcript-row-id]");
+				for (const row of rows) {
+					if (row.dataset.transcriptRowId === saved.anchorRowId) {
+						const nextTop = computeAnchorScrollTop({
+							currentScrollTop: scroller.scrollTop,
+							anchorTopBefore: saved.anchorTopBefore,
+							scrollerTopBefore: saved.scrollerTopBefore,
+							anchorTopAfter: row.getBoundingClientRect().top,
+							scrollerTopAfter: scroller.getBoundingClientRect().top,
+						});
+						scroller.scrollTop = nextTop;
+						return true;
+					}
+				}
+			}
+			const delta = scroller.scrollHeight - saved.scrollHeight;
+			if (delta !== 0) scroller.scrollTop = Math.max(0, saved.scrollTop + delta);
+			return false;
+		};
+		pendingScrollRestoreRef.current = null;
+		const usedAnchor = restoreAnchor();
+		if (usedAnchor && typeof requestAnimationFrame === "function") {
+			const settledTop = scroller.scrollTop;
+			requestAnimationFrame(() => {
+				if (Math.abs(scroller.scrollTop - settledTop) < 2) {
+					restoreAnchor();
+				}
+			});
+		}
+	}, [visibleStart, firstVisibleRowId, messages.length, loadingEarlier]);
 	const sourceTextParts = useMemo(() => firstSourceTextParts(messages), [messages]);
 	const newestTurnFrom = newestLearnerTurnFrom(messages);
 	const sideEntries = useMemo(() => sideEntryPoints(nativeMessages, messages), [nativeMessages, messages]);
@@ -1859,11 +1964,12 @@ export function Chat({
 	const renderSideEntryRef = useRef(renderSideEntry);
 	renderSideEntryRef.current = renderSideEntry;
 	const emptyMalformedRef = useRef<ReturnType<typeof malformedQuestionsOf>>([]);
-	const serverHiddenNativeCount = Math.max(0, totalMessageCount - canonicalMessages.length);
 	const showEarlierControl = visibleStart > 0 || hasEarlierMessages;
-	const hiddenMessagesLabel = visibleStart > 0
-		? `${visibleStart + (hasEarlierMessages ? serverHiddenNativeCount : 0)} older`
-		: `${serverHiddenNativeCount} older`;
+	const hiddenMessagesLabel = formatEarlierMessagesCount({
+		localHiddenGroups: visibleStart,
+		serverOmittedGroups: omittedViewGroups,
+		hasEarlierMessages,
+	});
 
 	const onSend = () => {
 		if (!isInteractionScopeEligible(sessionFindScopeRef.current, controller) || submissionRunner.occupied) return;
@@ -2006,7 +2112,7 @@ export function Chat({
 							}}
 							title={titleText}
 							data-plugin-chrome-title
-							className="lh-no-drag -mx-1.5 min-w-0 flex-1 shrink cursor-text truncate rounded-md px-1.5 text-left font-title text-xl sm:text-3xl tracking-tight transition-colors hover:bg-accent"
+							className="lh-no-drag -mx-1.5 min-w-0 flex-1 shrink cursor-text truncate rounded-md px-1.5 max-md:min-h-9 text-left font-title text-lg sm:text-3xl tracking-tight transition-colors hover:bg-accent"
 						>
 							{titleText}
 							</button>
@@ -2024,14 +2130,15 @@ export function Chat({
 <button
 							type="button"
 							data-testid="plan-chip"
+							aria-label="Open the full plan"
 							onClick={(e) => {
 								blurAfterPointerClick(e);
 								setPlanOpen(true);
 							}}
-							className="lh-no-drag flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 max-md:min-h-9 max-md:px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+							className="lh-no-drag flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 max-md:min-h-9 max-md:min-w-9 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:border-border hover:text-foreground"
 						>
 							<WaypointsIcon className="size-3.5 text-primary" aria-hidden />
-							Plan
+							<span className="hidden sm:inline">Plan</span>
 						</button>
 </Hint>
 					)}
@@ -2092,35 +2199,34 @@ export function Chat({
 							{messages.slice(visibleStart).map((m, offset) => {
 								const mi = visibleStart + offset;
 								const isLastRow = mi === messages.length - 1;
-								const rowKey = m.role === "user" && (isSubagentSteer(m) || m.parts.some((p) => p.type === "data-probe-handoff") || (m.parts.length > 0 && m.parts.every((p) => p.type.startsWith("data-"))))
-									? (m.id || `m-${mi}`)
-									: m.role === "assistant" ? `assistant-${mi}` : m.id || `m-${mi}`;
+								const rowKey = m.id || (m.role === "assistant" ? `assistant-${mi}` : `m-${mi}`);
 								const subPart = m.role === "user" ? m.parts.find((p) => p.type === "data-plugin-problem-submission") : undefined;
 								const submitted = subPart ? readPluginProblemSubmission(subPart.data) : null;
 								const problemSnapshot = submitted ? pluginProblemById(nativeMessages, submitted.problemId) : null;
 								const rowActiveId = isLastRow && m.role === "assistant" ? activeMessageId : null;
 								const rowMalformed = !busy && malformedQuestions.length > 0 ? malformedQuestions : emptyMalformedRef.current;
 								return (
-									<TranscriptRow
-										key={rowKey}
-										m={m}
-										mi={mi}
-										chatId={chatId}
-										isOlderRow={mi < newestTurnFrom}
-										phase={phases[mi]}
-										prevPhase={mi > 0 ? phases[mi - 1] : sessionStartPhase}
-										activeMessageId={rowActiveId}
-										sourceTextParts={sourceTextParts}
-										sideEntryMap={sideEntries.get(m.id)}
-										renderSideEntry={renderSideEntryStable}
-										problemSnapshot={problemSnapshot}
-										busy={busy}
-										compacting={compacting}
-										hasPending={!!pending}
-										malformedQuestions={rowMalformed}
-										onOpenPlan={handleOpenPlan}
-										onRetryMalformed={handleRetryMalformed}
-									/>
+									<div key={rowKey} data-transcript-row-id={rowKey} className="flex flex-col gap-4">
+										<TranscriptRow
+											m={m}
+											mi={mi}
+											chatId={chatId}
+											isOlderRow={mi < newestTurnFrom}
+											phase={phases[mi]}
+											prevPhase={mi > 0 ? phases[mi - 1] : sessionStartPhase}
+											activeMessageId={rowActiveId}
+											sourceTextParts={sourceTextParts}
+											sideEntryMap={sideEntries.get(m.id)}
+											renderSideEntry={renderSideEntryStable}
+											problemSnapshot={problemSnapshot}
+											busy={busy}
+											compacting={compacting}
+											hasPending={!!pending}
+											malformedQuestions={rowMalformed}
+											onOpenPlan={handleOpenPlan}
+											onRetryMalformed={handleRetryMalformed}
+										/>
+									</div>
 								);
 							})}
 
@@ -2232,6 +2338,7 @@ export function Chat({
 					contextTokens={contextTokens}
 					cliContextWindow={cliContextWindowOf(nativeMessages)}
 					pricing={pricing}
+					onOpenStatsDetail={syncTurns}
 					onReserve={setDockReserve}
 					dictationSlot={<DictationBar dictation={dictation} disabled={pluginOwnsDock && !pluginMicAvailable} />}
 					dictationCancel={dictation.cancel}
@@ -2546,6 +2653,7 @@ export function DockOverlay({
 	contextTokens,
 	cliContextWindow,
 	pricing,
+	onOpenStatsDetail,
 	composer,
 	onSubmitAnswer,
 	chatId,
@@ -2608,6 +2716,7 @@ export function DockOverlay({
 	contextTokens: number | null;
 	cliContextWindow: ReturnType<typeof cliContextWindowOf>;
 	pricing?: SessionPricing;
+	onOpenStatsDetail?: () => void;
 	composer: React.ReactNode;
 	onSubmitAnswer: (output: QuestionAnswerData) => void;
 	/** The model control's pass-through (the stats bar hosts it). */
@@ -3162,6 +3271,7 @@ export function DockOverlay({
 						dictationSlot={dictationSlot}
 						chatId={chatId}
 						onModelChange={onModelChange}
+						onOpenDetail={onOpenStatsDetail}
 					/>
 					{/* The scroll-down disc (moved here from the Conversation,
 					    owner refinement round 2026-09-24): anchored to the BLOCK's

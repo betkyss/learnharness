@@ -342,7 +342,7 @@ export function CommitInput({
 					e.currentTarget.blur();
 				}
 			}}
-			className="h-10 md:h-8 w-40 rounded-sm border border-border bg-background px-2 font-ui text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+			className="h-10 md:h-8 w-full max-w-40 sm:w-40 rounded-sm border border-border bg-background px-2 font-ui text-base md:text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
 		/>
 	);
 }
