@@ -174,6 +174,15 @@ const CLIENT_DETAILS_ONLY_TOOLS = new Set<string>([
  *  powers the UI. Never mutates input messages or blocks; disk storage stays intact. */
 export function sanitizeMessagesForClient(messages: readonly LhMessage[]): LhMessage[] {
 	return messages.map((message) => {
+		if (message.role === "custom") {
+			// Compaction summaries are model-facing plumbing (40–60 KB each) and
+			// are deliberately unrendered in the browser UI (CompactionCutDivider /
+			// CompactionMomentDivider read only `details`).
+			if (message.customType === "compaction" && typeof message.content === "string" && message.content.length > 0) {
+				return { ...message, content: "" } as LhMessage;
+			}
+			return message;
+		}
 		if (message.role === "toolResult") {
 			if (
 				!message.isError &&

@@ -94,6 +94,15 @@ describe("sanitizeMessagesForClient", () => {
 			details: { chatId: "chat_1" },
 			timestamp: 1200,
 		};
+		const compactionMsg: LhMessage = {
+			id: "msg_compaction_1",
+			role: "custom",
+			customType: "compaction",
+			content: "[SESSION HISTORY COMPACTED]\n" + "x".repeat(50_000),
+			display: true,
+			details: { tokensBefore: 160_000, firstKeptMessageId: "msg_u_1", at: "2026-11-27T00:00:00Z" },
+			timestamp: 1250,
+		};
 		const input = [
 			userMsg,
 			assistantMsg,
@@ -102,6 +111,7 @@ describe("sanitizeMessagesForClient", () => {
 			pluginToolResultMsg,
 			noDetailsToolResultMsg,
 			markerMsg,
+			compactionMsg,
 		];
 		const snapshotBefore = JSON.stringify(input);
 
@@ -120,6 +130,10 @@ describe("sanitizeMessagesForClient", () => {
 		assert.equal(sanitized[4], pluginToolResultMsg);
 		assert.equal(sanitized[5], noDetailsToolResultMsg);
 		assert.equal(sanitized[6], markerMsg);
+		// Compaction marker strips unrendered summary content while preserving details
+		assert.notEqual(sanitized[7], compactionMsg);
+		assert.equal((sanitized[7]! as { content?: unknown }).content, "");
+		assert.deepEqual((sanitized[7]! as { details?: unknown }).details, compactionMsg.details);
 
 		const outAssistant = sanitized[1]!;
 		assert.equal(outAssistant.role, "assistant");

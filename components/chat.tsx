@@ -113,6 +113,7 @@ import {
 import { CoverageRing } from "@/components/extraction-coverage";
 import { Button } from "@/components/ui/button";
 import {
+	CLIENT_DEFAULT_TAIL_GROUPS,
 	activeProblemOf,
 	pendingQuestionOf,
 	malformedQuestionsOf,
@@ -149,7 +150,7 @@ const GRADIENT_H = 24;
 // vs EXPAND_DIST absorbs trackpad drift.
 const COLLAPSE_DIST = 96;
 const EXPAND_DIST = 16;
-const INITIAL_VISIBLE_MESSAGES = 30;
+const INITIAL_VISIBLE_MESSAGES = CLIENT_DEFAULT_TAIL_GROUPS;
 const LOAD_OLDER_STEP = 40;
 
 /**

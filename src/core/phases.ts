@@ -179,8 +179,8 @@ export function phaseAt3Lh(messages: readonly LhMessage[], upToIndex?: number): 
 	return phase;
 }
 
-/** Default number of projected view groups shipped on initial SSR and tail GETs. */
-export const CLIENT_DEFAULT_TAIL_GROUPS = 30;
+/** Default number of projected view/turn groups shipped on initial SSR and tail GETs. */
+export const CLIENT_DEFAULT_TAIL_GROUPS = 12;
 
 export interface ChatTailSlice {
 	messages: LhMessage[];
@@ -192,10 +192,11 @@ export interface ChatTailSlice {
 }
 
 /**
- * Slice a native message history to the last `maxViewGroups` projected view
- * groups at a clean group boundary (never splitting an assistant group from
- * its toolResults, plan-blocks, or side-question markers, and always keeping
- * any active problem or pending question posing message inside the tail).
+ * Slice a native message history to the last `maxViewGroups` projected turn
+ * groups at a clean boundary (never splitting an assistant call from its
+ * toolResults, plan-blocks, or side-question markers, and always keeping
+ * any active problem, pending question, or visible conclude→problem pair
+ * inside the tail).
  */
 export function sliceChatTailForClient(messages: readonly LhMessage[], maxViewGroups: number): ChatTailSlice {
 	const total = messages.length;
@@ -213,6 +214,11 @@ export function sliceChatTailForClient(messages: readonly LhMessage[], maxViewGr
 			}
 		} else if (m.role === "toolResult") {
 			if (groupStarts.length === 0) groupStarts.push(i);
+			// Settled learner answers to quiz / ask_user_question end the turn so
+			// long question-driven teaching sessions slice cleanly per learner turn.
+			if (m.toolName === "quiz" || m.toolName === "ask_user_question") {
+				inAssistantGroup = false;
+			}
 		} else if (
 			m.role === "custom" &&
 			(m.customType === "plan-block" || m.customType === "side-question" || m.customType === "side-question-told")
@@ -229,7 +235,8 @@ export function sliceChatTailForClient(messages: readonly LhMessage[], maxViewGr
 	let targetGroup = groupStarts.length - maxViewGroups;
 	let cutIndex = groupStarts[targetGroup]!;
 
-	// Never cut off an active problem or pending question's posing message.
+	// Never cut off an active problem, pending question, or the posing problem
+	// for any `conclude` card inside the tail slice.
 	const mustIncludeIds: string[] = [];
 	const activeProb = activeProblemOccurrenceOf(messages);
 	if (activeProb?.messageId) mustIncludeIds.push(activeProb.messageId);
@@ -237,6 +244,20 @@ export function sliceChatTailForClient(messages: readonly LhMessage[], maxViewGr
 	if (pendingQ?.messageId) mustIncludeIds.push(pendingQ.messageId);
 	const pendingPluginQ = pendingPluginQuestionOf(messages);
 	if (pendingPluginQ?.occurrence.messageId) mustIncludeIds.push(pendingPluginQ.occurrence.messageId);
+	for (let i = cutIndex; i < total; i++) {
+		const m = messages[i]!;
+		if (m.role !== "assistant" || !Array.isArray(m.content)) continue;
+		if (m.content.some((b) => b.type === "toolCall" && b.name === "conclude")) {
+			// Walk back to include the most recent `problem` pose before this conclude.
+			for (let j = i - 1; j >= 0; j--) {
+				const prev = messages[j]!;
+				if (prev.role === "assistant" && Array.isArray(prev.content) && prev.content.some((b) => b.type === "toolCall" && b.name === "problem")) {
+					mustIncludeIds.push(prev.id);
+					break;
+				}
+			}
+		}
+	}
 	for (const reqId of mustIncludeIds) {
 		const idx = messages.findIndex((m) => m.id === reqId);
 		if (idx >= 0 && idx < cutIndex) {

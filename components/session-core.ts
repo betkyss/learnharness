@@ -694,7 +694,7 @@ export class SessionModel {
 		this.loadingEarlierValue = true;
 		this.onChange?.();
 		try {
-			const nextLimit = (this.tailLimit ?? 30) + step;
+			const nextLimit = (this.tailLimit ?? 12) + step;
 			this.tailLimit = nextLimit;
 			this.invalidateCanonicalReads();
 			const record = await this.readRecord();
